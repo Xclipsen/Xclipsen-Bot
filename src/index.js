@@ -12,6 +12,7 @@ const {
   GatewayIntentBits,
   MessageFlags,
   ModalBuilder,
+  Partials,
   PermissionsBitField,
   SlashCommandBuilder,
   TextInputBuilder,
@@ -31,6 +32,7 @@ for (const key of REQUIRED_ENV_VARS) {
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DEFAULT_DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || null;
 const DEFAULT_DISCORD_ROLE_ID = process.env.DISCORD_ROLE_ID || null;
+const MOCK_MODE = process.env.MOCK_MODE === 'true';
 const CHECK_INTERVAL_MINUTES = Math.max(
   1,
   Number.parseInt(process.env.CHECK_INTERVAL_MINUTES || '5', 10)
@@ -47,6 +49,7 @@ const ELECTION_OPEN_START_DAY = 181;
 const ELECTION_CLOSE_DAY = 88;
 const CONFIG_FILE_PATH = path.join(__dirname, '..', 'data', 'config.json');
 const STATE_FILE_PATH = path.join(__dirname, '..', 'data', 'state.json');
+const MOCK_DATA_FILE_PATH = path.join(__dirname, '..', 'data', 'mock-election.json');
 const SETUP_OPEN_MODAL_ID = 'setup-open-modal';
 const SETUP_MODAL_ID = 'setup-modal';
 const SETUP_CHANNEL_INPUT_ID = 'setup-channel-id';
@@ -59,9 +62,76 @@ const SETUP_COMMAND = new SlashCommandBuilder()
   .setName('setup')
   .setDescription('Open the setup panel for this server.')
   .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+const SIMULATE_COMMAND = new SlashCommandBuilder()
+  .setName('simulate')
+  .setDescription('Simulate election states for testing.')
+  .addStringOption((option) => option
+    .setName('scenario')
+    .setDescription('Scenario to apply')
+    .setRequired(true)
+    .addChoices(
+      { name: 'booth-open', value: 'booth-open' },
+      { name: 'booth-closed', value: 'booth-closed' },
+      { name: 'mayor-diaz', value: 'mayor-diaz' },
+      { name: 'mayor-paul', value: 'mayor-paul' },
+      { name: 'clear', value: 'clear' }
+    ))
+  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+
+const SIMULATION_SCENARIOS = {
+  'booth-open': 'booth-open.json',
+  'booth-closed': 'booth-closed.json',
+  'mayor-diaz': 'mayor-diaz.json',
+  'mayor-paul': 'mayor-paul.json'
+};
+const REACTION_ROLE_COMMAND = new SlashCommandBuilder()
+  .setName('reactionrole')
+  .setDescription('Configure reaction roles for a specific message.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('add')
+    .setDescription('Add a reaction role binding.')
+    .addChannelOption((option) => option
+      .setName('channel')
+      .setDescription('Channel containing the target message')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('message_id')
+      .setDescription('Target message ID')
+      .setRequired(true))
+    .addRoleOption((option) => option
+      .setName('role')
+      .setDescription('Role to assign when reacting')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('emoji')
+      .setDescription('Emoji to watch, e.g. ✅ or <:diaz:123>')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('remove')
+    .setDescription('Remove a reaction role binding.')
+    .addChannelOption((option) => option
+      .setName('channel')
+      .setDescription('Channel containing the target message')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('message_id')
+      .setDescription('Target message ID')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('emoji')
+      .setDescription('Emoji to remove from the binding')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('list')
+    .setDescription('List all configured reaction roles for this server.'))
+  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMessageReactions
+  ],
+  partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
 const MAYOR_HEADS = {
@@ -187,7 +257,16 @@ function saveState() {
 function getGuildConfig(guildId) {
   return guildConfig.guilds[guildId] || {
     channelId: null,
-    roleId: null
+    roleId: null,
+    reactionRoles: []
+  };
+}
+
+function normalizeGuildConfig(config) {
+  return {
+    channelId: config?.channelId || null,
+    roleId: config?.roleId || null,
+    reactionRoles: Array.isArray(config?.reactionRoles) ? config.reactionRoles : []
   };
 }
 
@@ -197,7 +276,7 @@ function setGuildConfig(guildId, partialConfig) {
     guilds: {
       ...guildConfig.guilds,
       [guildId]: {
-        ...getGuildConfig(guildId),
+        ...normalizeGuildConfig(getGuildConfig(guildId)),
         ...partialConfig
       }
     }
@@ -215,6 +294,13 @@ function getGuildRuntimeState(guildId) {
   };
 }
 
+function getMockState() {
+  return guildState.mock || {
+    scenario: null,
+    enabled: false
+  };
+}
+
 function setGuildRuntimeState(guildId, partialState) {
   guildState = {
     ...guildState,
@@ -229,6 +315,25 @@ function setGuildRuntimeState(guildId, partialState) {
   saveState();
 }
 
+function setMockState(partialState) {
+  guildState = {
+    ...guildState,
+    mock: {
+      ...getMockState(),
+      ...partialState
+    }
+  };
+  saveState();
+}
+
+function getReactionRoleEntries(guildId) {
+  return normalizeGuildConfig(getGuildConfig(guildId)).reactionRoles;
+}
+
+function setReactionRoleEntries(guildId, reactionRoles) {
+  setGuildConfig(guildId, { reactionRoles });
+}
+
 function getConfiguredGuildIds() {
   return Object.entries(guildConfig.guilds)
     .filter(([, config]) => config.channelId)
@@ -236,6 +341,16 @@ function getConfiguredGuildIds() {
 }
 
 async function fetchElectionData() {
+  const mockState = getMockState();
+
+  if (mockState.enabled && mockState.scenario) {
+    return loadMockElectionData(path.join(path.dirname(MOCK_DATA_FILE_PATH), 'mock-scenarios', mockState.scenario));
+  }
+
+  if (MOCK_MODE) {
+    return loadMockElectionData(MOCK_DATA_FILE_PATH);
+  }
+
   const response = await fetch(ELECTION_URL, {
     headers: {
       'User-Agent': 'hypixel-mayor-discord-bot/1.0.0'
@@ -253,6 +368,24 @@ async function fetchElectionData() {
   }
 
   return data;
+}
+
+function loadMockElectionData(filePath) {
+  const data = loadJsonFile(filePath, null);
+
+  if (!data || !data.success || !data.mayor) {
+    throw new Error(`Mock election data is invalid: ${filePath}`);
+  }
+
+  return data;
+}
+
+function getBoothOpen(data) {
+  if (typeof data?._mock?.boothOpen === 'boolean') {
+    return data._mock.boothOpen;
+  }
+
+  return getElectionSchedule().boothOpen;
 }
 
 async function getTargetChannel(guildId) {
@@ -455,6 +588,158 @@ async function handleSetupCommand(interaction) {
   });
 }
 
+async function handleSimulateCommand(interaction) {
+  if (!(await ensureSetupAccess(interaction, 'simulate command'))) {
+    return;
+  }
+
+  const scenario = interaction.options.getString('scenario', true);
+
+  if (scenario === 'clear') {
+    setMockState({ enabled: false, scenario: null });
+    await interaction.reply({
+      content: 'Simulation cleared. The bot will use the real Hypixel API again.',
+      flags: MessageFlags.Ephemeral
+    });
+    await checkElectionState();
+    await sendScheduledStatusUpdate();
+    return;
+  }
+
+  const scenarioFile = SIMULATION_SCENARIOS[scenario];
+  if (!scenarioFile) {
+    await interaction.reply({
+      content: 'Unknown simulation scenario.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  setMockState({ enabled: true, scenario: scenarioFile });
+
+  await interaction.reply({
+    content: `Simulation scenario set to \`${scenario}\`. Triggering a fresh check now.`,
+    flags: MessageFlags.Ephemeral
+  });
+
+  await checkElectionState();
+  await sendScheduledStatusUpdate();
+}
+
+function buildReactionRoleSummary(guildId) {
+  const reactionRoles = getReactionRoleEntries(guildId);
+
+  if (reactionRoles.length === 0) {
+    return 'No reaction roles configured yet.';
+  }
+
+  return reactionRoles
+    .map((entry, index) => `${index + 1}. ${entry.emoji} -> <@&${entry.roleId}> on ${entry.channelId}/${entry.messageId}`)
+    .join('\n');
+}
+
+async function handleReactionRoleCommand(interaction) {
+  if (!(await ensureSetupAccess(interaction, 'reaction role command'))) {
+    return;
+  }
+
+  const subcommand = interaction.options.getSubcommand();
+
+  if (subcommand === 'list') {
+    await interaction.reply({
+      content: buildReactionRoleSummary(interaction.guildId),
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const channel = interaction.options.getChannel('channel', true);
+  const messageId = interaction.options.getString('message_id', true).trim();
+  const emojiInput = interaction.options.getString('emoji', true);
+  const emoji = normalizeEmojiIdentifier(emojiInput);
+
+  if (!channel.isTextBased()) {
+    await interaction.reply({
+      content: 'The selected channel must be text-based.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  if (!isSnowflake(messageId)) {
+    await interaction.reply({
+      content: 'Message ID must be a valid Discord snowflake.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const targetMessage = await fetchGuildMessage(channel, messageId).catch((error) => error);
+  if (targetMessage instanceof Error) {
+    await interaction.reply({
+      content: targetMessage.message,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const existingEntries = getReactionRoleEntries(interaction.guildId);
+
+  if (subcommand === 'add') {
+    const role = interaction.options.getRole('role', true);
+    const duplicate = existingEntries.find((entry) => (
+      entry.channelId === channel.id &&
+      entry.messageId === messageId &&
+      entry.emoji === emoji
+    ));
+
+    if (duplicate) {
+      await interaction.reply({
+        content: 'That reaction role binding already exists for this message and emoji.',
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    await targetMessage.react(emojiInput).catch(() => null);
+    setReactionRoleEntries(interaction.guildId, [
+      ...existingEntries,
+      {
+        channelId: channel.id,
+        messageId,
+        roleId: role.id,
+        emoji
+      }
+    ]);
+
+    await interaction.reply({
+      content: `Saved reaction role: ${emojiInput} gives <@&${role.id}> on [this message](${targetMessage.url}).`,
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  const nextEntries = existingEntries.filter((entry) => !(
+    entry.channelId === channel.id &&
+    entry.messageId === messageId &&
+    entry.emoji === emoji
+  ));
+
+  if (nextEntries.length === existingEntries.length) {
+    await interaction.reply({
+      content: 'No matching reaction role binding was found to remove.',
+      flags: MessageFlags.Ephemeral
+    });
+    return;
+  }
+
+  setReactionRoleEntries(interaction.guildId, nextEntries);
+  await interaction.reply({
+    content: `Removed reaction role binding for ${emojiInput} on [this message](${targetMessage.url}).`,
+    flags: MessageFlags.Ephemeral
+  });
+}
+
 function createSetupModal(existingConfig) {
   return new ModalBuilder()
     .setCustomId(SETUP_MODAL_ID)
@@ -483,6 +768,31 @@ function createSetupModal(existingConfig) {
 
 function isSnowflake(value) {
   return /^\d{16,20}$/.test(String(value || '').trim());
+}
+
+function normalizeEmojiIdentifier(value) {
+  const raw = String(value || '').trim();
+  const customEmojiMatch = raw.match(/^<a?:[^:]+:(\d+)>$/);
+
+  if (customEmojiMatch) {
+    return customEmojiMatch[1];
+  }
+
+  return raw;
+}
+
+function getReactionEmojiIdentifier(reaction) {
+  return reaction.emoji.id || reaction.emoji.name || null;
+}
+
+async function fetchGuildMessage(channel, messageId) {
+  const message = await channel.messages.fetch(messageId).catch(() => null);
+
+  if (!message) {
+    throw new Error('The message ID is invalid or not found in that channel.');
+  }
+
+  return message;
 }
 
 async function handleSetupButton(interaction) {
@@ -546,8 +856,69 @@ async function handleSetupModalSubmit(interaction) {
 async function registerGuildCommands(guild) {
   await guild.commands.set([
     CONFIG_COMMAND.toJSON(),
-    SETUP_COMMAND.toJSON()
+    SETUP_COMMAND.toJSON(),
+    SIMULATE_COMMAND.toJSON(),
+    REACTION_ROLE_COMMAND.toJSON()
   ]);
+}
+
+async function resolveReactionContext(reaction) {
+  if (reaction.partial) {
+    await reaction.fetch();
+  }
+
+  if (reaction.message.partial) {
+    await reaction.message.fetch();
+  }
+
+  return reaction.message;
+}
+
+async function applyReactionRoleChange(reaction, user, shouldAdd) {
+  if (user.bot) {
+    return;
+  }
+
+  const message = await resolveReactionContext(reaction).catch(() => null);
+  if (!message?.guildId) {
+    return;
+  }
+
+  const emoji = getReactionEmojiIdentifier(reaction);
+  if (!emoji) {
+    return;
+  }
+
+  const reactionRole = getReactionRoleEntries(message.guildId).find((entry) => (
+    entry.channelId === message.channelId &&
+    entry.messageId === message.id &&
+    entry.emoji === emoji
+  ));
+
+  if (!reactionRole) {
+    return;
+  }
+
+  const guild = message.guild || await client.guilds.fetch(message.guildId).catch(() => null);
+  if (!guild) {
+    return;
+  }
+
+  const member = await guild.members.fetch(user.id).catch(() => null);
+  if (!member) {
+    return;
+  }
+
+  if (shouldAdd) {
+    await member.roles.add(reactionRole.roleId).catch((error) => {
+      console.error(`Failed to add role ${reactionRole.roleId} to ${user.id}:`, error);
+    });
+    return;
+  }
+
+  await member.roles.remove(reactionRole.roleId).catch((error) => {
+    console.error(`Failed to remove role ${reactionRole.roleId} from ${user.id}:`, error);
+  });
 }
 
 async function ensureLegacyEnvConfig() {
@@ -776,7 +1147,7 @@ async function getMayorEmoji(guildId, mayor) {
 function createMayorEmbed(title, emoji, mayor, boothOpen) {
   const skyBlockDate = formatSkyBlockDate(title === 'SkyBlock Status Update' ? STATUS_UPDATE_MINUTES : CHECK_INTERVAL_MINUTES);
   const embed = new EmbedBuilder()
-    .setColor(0xf1c40f)
+    .setColor(0x3498db)
     .setTitle(`${emoji} ${title}`)
     .addFields(
       {
@@ -894,8 +1265,7 @@ async function checkElectionState() {
     const mayor = data.mayor;
     const currentElection = data.current || null;
     const currentMayorKey = String(mayor.key || '').toLowerCase();
-    const schedule = getElectionSchedule();
-    const boothOpen = schedule.boothOpen;
+    const boothOpen = getBoothOpen(data);
     const configuredGuildIds = getConfiguredGuildIds();
 
     for (const guildId of configuredGuildIds) {
@@ -947,7 +1317,7 @@ async function sendScheduledStatusUpdate() {
   try {
     const data = await fetchElectionData();
     const mayor = data.mayor;
-    const boothOpen = getElectionSchedule().boothOpen;
+    const boothOpen = getBoothOpen(data);
 
     for (const guildId of getConfiguredGuildIds()) {
       await sendMayorStatusUpdate(guildId, mayor, boothOpen);
@@ -980,6 +1350,14 @@ client.on(Events.GuildCreate, async (guild) => {
   await registerGuildCommands(guild);
 });
 
+client.on(Events.MessageReactionAdd, async (reaction, user) => {
+  await applyReactionRoleChange(reaction, user, true);
+});
+
+client.on(Events.MessageReactionRemove, async (reaction, user) => {
+  await applyReactionRoleChange(reaction, user, false);
+});
+
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (
@@ -987,6 +1365,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (interaction.commandName === 'config' || interaction.commandName === 'setup')
     ) {
       await handleSetupCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'simulate') {
+      await handleSimulateCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === 'reactionrole') {
+      await handleReactionRoleCommand(interaction);
       return;
     }
 

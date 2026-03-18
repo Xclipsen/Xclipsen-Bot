@@ -12,6 +12,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
 - Includes an in-Discord `/setup` panel so each server can choose its own channel and role.
+- Supports Discord-configurable reaction roles via `/reactionrole`.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 
@@ -31,8 +32,10 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `CHECK_INTERVAL_MINUTES` - interval for election and mayor checks
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
+- `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
 - If your server already has emojis named like `diaz`, `cole`, or `mayor_diaz`, the bot can detect them automatically.
+- The bot now needs permission to manage roles if you use reaction roles.
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
@@ -40,6 +43,7 @@ DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_ROLE_ID=123456789012345678
 CHECK_INTERVAL_MINUTES=5
 STATUS_UPDATE_MINUTES=30
+MOCK_MODE=false
 EMOJI_DIAZ=<:diaz:123456789012345678>
 ```
 
@@ -56,6 +60,28 @@ After the bot is online, run `/setup` in your Discord server and fill in:
 - the role ID that should be pinged for election and mayor changes
 
 Only members with the `Manage Server` permission can use the setup panel.
+
+## Reaction Roles
+
+- Use `/reactionrole add` with a channel, message ID, role, and emoji.
+- Use `/reactionrole remove` to delete a binding.
+- Use `/reactionrole list` to see all current bindings for the server.
+- When someone adds the configured reaction, the bot gives the role.
+- When they remove the reaction, the bot removes the role.
+- The bot needs `Manage Roles`, and the target role must be lower than the bot's top role.
+
+## Testing Scenarios
+
+- Use `/simulate` to force test states without waiting for the live Hypixel cycle.
+- Built-in scenarios:
+  - `booth-open`
+  - `booth-closed`
+  - `mayor-diaz`
+  - `mayor-paul`
+  - `clear`
+- `clear` switches the bot back to the live API.
+- Example mock payloads live in `data/mock-scenarios/`.
+- If you want the whole bot to stay in local test mode after restart, set `MOCK_MODE=true` and edit `data/mock-election.json`.
 
 ## Docker Compose
 
