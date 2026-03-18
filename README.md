@@ -9,8 +9,11 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Pings a configured role when the Election Booth opens.
 - Pings a configured role when a new mayor becomes active.
 - Posts a status embed with the current mayor and perks.
+- Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
+- Includes an in-Discord `/setup` panel so each server can choose its own channel and role.
 - Persists booth state and the status message ID in `data/state.json`.
+- Stores server configuration in `data/config.json`.
 
 ## Setup
 
@@ -18,13 +21,14 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 2. Make sure the bot can send messages in your target channel.
 3. Invite the bot to your server.
 4. Copy `.env.example` to `.env`.
-5. Fill in your real values.
+5. Fill in your token and optional defaults.
+6. In Discord, run `/setup` and enter the target channel ID and role ID.
 
 ## Configuration
 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
-- `DISCORD_CHANNEL_ID` - channel where the bot should post updates
-- `DISCORD_ROLE_ID` - role to ping for election and mayor changes
+- `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
+- `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `CHECK_INTERVAL_MINUTES` - interval for election and mayor checks
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
@@ -46,14 +50,22 @@ npm install
 npm start
 ```
 
+After the bot is online, run `/setup` in your Discord server and fill in:
+
+- the channel ID where updates should be posted
+- the role ID that should be pinged for election and mayor changes
+- optionally the current token for verification; token changes still belong in `.env`
+
+Only members with the `Manage Server` permission can use the setup panel.
+
 ## Docker Compose
 
 ```bash
 docker compose up -d --build
 ```
 
-- The bot loads its configuration from `.env`.
-- `./data` is mounted to `/app/data` so the stored status message ID and booth state survive restarts.
+- The bot loads its token and optional legacy defaults from `.env`.
+- `./data` is mounted to `/app/data` so server config, the stored status message ID, and booth state survive restarts.
 - View logs with `docker compose logs -f`.
 - Stop the bot with `docker compose down`.
 
@@ -62,5 +74,6 @@ docker compose up -d --build
 - This election endpoint currently does not require a Hypixel API key.
 - If you want to use other Hypixel endpoints later, you can extend the bot with an API key.
 - The bot only needs the `Guilds` intent because it does not read messages.
+- The `/setup` command is registered per server when the bot starts or joins a new guild.
 - For custom emojis, upload them to your Discord server and paste the full emoji tag into `.env`.
 - As an alternative, you can simply name your server emojis `diaz`, `cole`, `foxy`, or `mayor_diaz` and the bot will try to resolve them automatically.
