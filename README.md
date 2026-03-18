@@ -11,8 +11,9 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Posts a status embed with the current mayor and perks.
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
-- Includes an in-Discord `/setup` panel so each server can choose its own channel and role.
+- Includes an in-Discord `/setup` hub with sections for mayor alerts and reaction roles.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
+- Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 
@@ -23,11 +24,13 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 3. Invite the bot to your server.
 4. Copy `.env.example` to `.env`.
 5. Fill in your token and optional defaults.
-6. In Discord, run `/setup` and enter the target channel ID and role ID.
+6. In Discord, run `/setup`, open `Discord -> Mayor Alerts`, and enter the target channel ID and role ID.
+7. Use `Discord -> Reload Status` any time you want to force-refresh the current mayor embed.
 
 ## Configuration
 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
+- `HYPIXEL_API_KEY` - required for `/cata` and `/catacombs` using the official Hypixel API
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
@@ -40,6 +43,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
+HYPIXEL_API_KEY=your_hypixel_api_key
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_ROLE_ID=123456789012345678
 ADMIN_USER_IDS=885542911511515146
@@ -56,16 +60,25 @@ npm install
 npm start
 ```
 
+## Project Structure
+
+- `src/index.js` wires the client and events together.
+- `src/config/` contains environment loading, slash commands, and interaction IDs.
+- `src/features/` contains setup, mayor alerts, access control, and reaction role logic.
+- `src/storage/` contains the config/state store helpers.
+- `src/utils/` contains shared SkyBlock time formatting helpers.
+
 After the bot is online, run `/setup` in your Discord server and fill in:
 
 - the channel ID where updates should be posted
 - the role ID that should be pinged for election and mayor changes
 
-Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can use the setup panel.
+Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can use the setup hub.
 
 ## Reaction Roles
 
 - Use `/reactionrole add` with a channel, message ID, role, and emoji.
+- Or open `/setup -> Discord -> Reaction Roles` and manage bindings from the interactive panel.
 - You can optionally set `required_role` so only members with that role can use the reaction to get the target role.
 - Use `/reactionrole remove` to delete a binding.
 - Use `/reactionrole list` to see all current bindings for the server.
