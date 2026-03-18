@@ -1,0 +1,17 @@
+{
+  "name": "hypixel-mayor-discord-bot",
+  "version": "1.0.0",
+  "description": "Discord bot that pings a role when a configured Hypixel SkyBlock mayor appears.",
+  "main": "src/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "discord.js": "^14.18.0",
+    "dotenv": "^16.4.7"
+  }
+}
