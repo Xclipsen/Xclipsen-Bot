@@ -54,7 +54,6 @@ After the bot is online, run `/setup` in your Discord server and fill in:
 
 - the channel ID where updates should be posted
 - the role ID that should be pinged for election and mayor changes
-- optionally the current token for verification; token changes still belong in `.env`
 
 Only members with the `Manage Server` permission can use the setup panel.
 

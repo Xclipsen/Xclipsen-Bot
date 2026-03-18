@@ -42,15 +42,13 @@ const STATUS_UPDATE_MINUTES = Math.max(
 const ELECTION_URL = 'https://api.hypixel.net/v2/resources/skyblock/election';
 const SKYBLOCK_EPOCH_SECONDS = 1560275700;
 const SKYBLOCK_DAY_SECONDS = 20 * 60;
-const SKYBLOCK_YEAR_DAYS = 372;
-const SKYBLOCK_YEAR_SECONDS = SKYBLOCK_DAY_SECONDS * SKYBLOCK_YEAR_DAYS;
+const SKYBLOCK_YEAR_SECONDS = SKYBLOCK_DAY_SECONDS * 372;
 const ELECTION_OPEN_START_DAY = 181;
 const ELECTION_CLOSE_DAY = 88;
 const CONFIG_FILE_PATH = path.join(__dirname, '..', 'data', 'config.json');
 const STATE_FILE_PATH = path.join(__dirname, '..', 'data', 'state.json');
 const SETUP_OPEN_MODAL_ID = 'setup-open-modal';
 const SETUP_MODAL_ID = 'setup-modal';
-const SETUP_TOKEN_INPUT_ID = 'setup-token';
 const SETUP_CHANNEL_INPUT_ID = 'setup-channel-id';
 const SETUP_ROLE_INPUT_ID = 'setup-role-id';
 const CONFIG_COMMAND = new SlashCommandBuilder()
@@ -109,8 +107,22 @@ const MAYOR_EMOJIS = {
   seraphine: process.env.EMOJI_SERAPHINE || '🗳️'
 };
 
+const SKYBLOCK_MONTHS = [
+  'Early Spring',
+  'Spring',
+  'Late Spring',
+  'Early Summer',
+  'Summer',
+  'Late Summer',
+  'Early Autumn',
+  'Autumn',
+  'Late Autumn',
+  'Early Winter',
+  'Winter',
+  'Late Winter'
+];
+
 let lastMayorKey = null;
-let lastElectionId = null;
 let initializedMayorState = false;
 let guildConfig = loadConfig();
 let guildState = loadState();
@@ -260,47 +272,84 @@ async function getTargetChannel(guildId) {
 }
 
 async function getStoredStatusMessage(guildId, channel) {
-  const state = getGuildRuntimeState(guildId);
-
-  if (!state.statusMessageId) {
-    return null;
-  }
-
-  if (state.statusChannelId && state.statusChannelId !== channel.id) {
-    return null;
-  }
-
-  try {
-    return await channel.messages.fetch(state.statusMessageId);
-  } catch {
-    setGuildRuntimeState(guildId, {
-      alertMessageId: null,
-      alertChannelId: null,
+  return getStoredMessage(guildId, channel, {
+    idKey: 'statusMessageId',
+    channelKey: 'statusChannelId',
+    resetState: {
       statusMessageId: null,
       statusChannelId: null
-    });
+    }
+  });
+}
+
+function isStatusUpdateMessage(message) {
+  if (!message || message.author?.id !== client.user?.id) {
+    return false;
+  }
+
+  if (typeof message.content === 'string' && message.content.includes('Current SkyBlock mayor update.')) {
+    return true;
+  }
+
+  return message.embeds.some((embed) => embed.title?.includes('SkyBlock Status Update'));
+}
+
+async function findExistingStatusMessage(guildId, channel) {
+  const storedMessage = await getStoredStatusMessage(guildId, channel);
+
+  if (storedMessage) {
+    return storedMessage;
+  }
+
+  const recentMessages = await channel.messages.fetch({ limit: 25 });
+  const statusMessages = recentMessages
+    .filter((message) => isStatusUpdateMessage(message))
+    .sort((left, right) => right.createdTimestamp - left.createdTimestamp);
+
+  if (statusMessages.size === 0) {
     return null;
   }
+
+  const [latestMessage, ...olderMessages] = [...statusMessages.values()];
+
+  await Promise.all(
+    olderMessages.map((message) => message.delete().catch(() => null))
+  );
+
+  setGuildRuntimeState(guildId, {
+    statusMessageId: latestMessage.id,
+    statusChannelId: latestMessage.channelId
+  });
+
+  return latestMessage;
 }
 
 async function getStoredAlertMessage(guildId, channel) {
+  return getStoredMessage(guildId, channel, {
+    idKey: 'alertMessageId',
+    channelKey: 'alertChannelId',
+    resetState: {
+      alertMessageId: null,
+      alertChannelId: null
+    }
+  });
+}
+
+async function getStoredMessage(guildId, channel, { idKey, channelKey, resetState }) {
   const state = getGuildRuntimeState(guildId);
 
-  if (!state.alertMessageId) {
+  if (!state[idKey]) {
     return null;
   }
 
-  if (state.alertChannelId && state.alertChannelId !== channel.id) {
+  if (state[channelKey] && state[channelKey] !== channel.id) {
     return null;
   }
 
   try {
-    return await channel.messages.fetch(state.alertMessageId);
+    return await channel.messages.fetch(state[idKey]);
   } catch {
-    setGuildRuntimeState(guildId, {
-      alertMessageId: null,
-      alertChannelId: null
-    });
+    setGuildRuntimeState(guildId, resetState);
     return null;
   }
 }
@@ -374,13 +423,13 @@ function hasManageGuildPermission(interaction) {
   return interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild) === true;
 }
 
-async function handleSetupCommand(interaction) {
+async function ensureSetupAccess(interaction, sourceLabel) {
   if (!interaction.inGuild() || !interaction.guild) {
     await interaction.reply({
-      content: 'This command can only be used inside a server.',
+      content: `This ${sourceLabel} can only be used inside a server.`,
       flags: MessageFlags.Ephemeral
     });
-    return;
+    return false;
   }
 
   if (!hasManageGuildPermission(interaction)) {
@@ -388,6 +437,14 @@ async function handleSetupCommand(interaction) {
       content: 'You need the Manage Server permission to configure this bot.',
       flags: MessageFlags.Ephemeral
     });
+    return false;
+  }
+
+  return true;
+}
+
+async function handleSetupCommand(interaction) {
+  if (!(await ensureSetupAccess(interaction, 'command'))) {
     return;
   }
 
@@ -403,14 +460,6 @@ function createSetupModal(existingConfig) {
     .setCustomId(SETUP_MODAL_ID)
     .setTitle('Bot Setup')
     .addComponents(
-      new ActionRowBuilder().addComponents(
-        new TextInputBuilder()
-          .setCustomId(SETUP_TOKEN_INPUT_ID)
-          .setLabel('Bot Token (optional verification only)')
-          .setStyle(TextInputStyle.Short)
-          .setRequired(false)
-          .setPlaceholder('Leave empty to keep using the current token')
-      ),
       new ActionRowBuilder().addComponents(
         new TextInputBuilder()
           .setCustomId(SETUP_CHANNEL_INPUT_ID)
@@ -437,19 +486,7 @@ function isSnowflake(value) {
 }
 
 async function handleSetupButton(interaction) {
-  if (!interaction.inGuild() || !interaction.guild) {
-    await interaction.reply({
-      content: 'This setup button can only be used inside a server.',
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  if (!hasManageGuildPermission(interaction)) {
-    await interaction.reply({
-      content: 'You need the Manage Server permission to configure this bot.',
-      flags: MessageFlags.Ephemeral
-    });
+  if (!(await ensureSetupAccess(interaction, 'setup button'))) {
     return;
   }
 
@@ -457,23 +494,10 @@ async function handleSetupButton(interaction) {
 }
 
 async function handleSetupModalSubmit(interaction) {
-  if (!interaction.inGuild() || !interaction.guild) {
-    await interaction.reply({
-      content: 'This setup form can only be used inside a server.',
-      flags: MessageFlags.Ephemeral
-    });
+  if (!(await ensureSetupAccess(interaction, 'setup form'))) {
     return;
   }
 
-  if (!hasManageGuildPermission(interaction)) {
-    await interaction.reply({
-      content: 'You need the Manage Server permission to configure this bot.',
-      flags: MessageFlags.Ephemeral
-    });
-    return;
-  }
-
-  const providedToken = interaction.fields.getTextInputValue(SETUP_TOKEN_INPUT_ID).trim();
   const channelId = interaction.fields.getTextInputValue(SETUP_CHANNEL_INPUT_ID).trim();
   const roleId = interaction.fields.getTextInputValue(SETUP_ROLE_INPUT_ID).trim();
 
@@ -503,11 +527,6 @@ async function handleSetupModalSubmit(interaction) {
     return;
   }
 
-  let note = 'Setup saved successfully.';
-  if (providedToken && providedToken !== DISCORD_TOKEN) {
-    note = 'Channel and role were saved. Token changes still need to be made in `.env` and require a bot restart.';
-  }
-
   setGuildConfig(interaction.guildId, {
     channelId,
     roleId
@@ -518,7 +537,7 @@ async function handleSetupModalSubmit(interaction) {
   });
 
   await interaction.reply({
-    embeds: [createSetupEmbed(interaction.guild, note)],
+    embeds: [createSetupEmbed(interaction.guild, 'Setup saved successfully.')],
     components: createSetupComponents(),
     flags: MessageFlags.Ephemeral
   });
@@ -573,6 +592,63 @@ function toDiscordTimestamp(timestamp, style = 'f') {
   return `<t:${Math.floor(timestamp / 1000)}:${style}>`;
 }
 
+function getOrdinal(value) {
+  const remainder = value % 100;
+
+  if (remainder >= 11 && remainder <= 13) {
+    return `${value}th`;
+  }
+
+  switch (value % 10) {
+    case 1:
+      return `${value}st`;
+    case 2:
+      return `${value}nd`;
+    case 3:
+      return `${value}rd`;
+    default:
+      return `${value}th`;
+  }
+}
+
+function getSkyBlockDateParts(now = Date.now()) {
+  const skyblockOffsetMs = now - (SKYBLOCK_EPOCH_SECONDS * 1000);
+  const skyblockYear = Math.floor(skyblockOffsetMs / 446400000) + 1;
+  const skyblockMonthIndex = Math.floor(skyblockOffsetMs / 37200000) % 12;
+  const skyblockDay = (Math.floor(skyblockOffsetMs / 1200000) % 31) + 1;
+  const skyblockHour = ((Math.floor(skyblockOffsetMs / 50000) % 24) + 24) % 24;
+  const skyblockMinute = ((Math.floor((6 * skyblockOffsetMs) / 50000) % 60) + 60) % 60;
+
+  return {
+    year: skyblockYear,
+    month: SKYBLOCK_MONTHS[(skyblockMonthIndex + 12) % 12],
+    day: skyblockDay,
+    hour: skyblockHour,
+    minute: skyblockMinute
+  };
+}
+
+function formatSkyBlockTime(hour, minute) {
+  const suffix = hour >= 12 ? 'pm' : 'am';
+  const normalizedHour = hour % 12 === 0 ? 12 : hour % 12;
+  return `${normalizedHour}:${String(minute).padStart(2, '0')}${suffix}`;
+}
+
+function formatSkyBlockDate(maxAgeMinutes) {
+  const skyblockDate = getSkyBlockDateParts();
+  const baseDate = `${getOrdinal(skyblockDate.day)} of ${skyblockDate.month}, Year ${skyblockDate.year}`;
+
+  if (maxAgeMinutes <= 120) {
+    return `${baseDate} - ${formatSkyBlockTime(skyblockDate.hour, skyblockDate.minute)}`;
+  }
+
+  if (maxAgeMinutes <= 720) {
+    return baseDate;
+  }
+
+  return `${skyblockDate.month}, Year ${skyblockDate.year}`;
+}
+
 function getElectionSchedule(now = Date.now()) {
   const unixSeconds = now / 1000;
   const secondsSinceEpoch = unixSeconds - SKYBLOCK_EPOCH_SECONDS;
@@ -599,19 +675,15 @@ function getElectionSchedule(now = Date.now()) {
   };
 }
 
-function getElectionTimingLines(isOpen) {
+function getElectionTimingLine(isOpen) {
   const schedule = getElectionSchedule();
   const targetTimestamp = schedule.nextTransitionAt;
 
   if (isOpen) {
-    return [
-      `Election ends: ${toDiscordTimestamp(targetTimestamp)} (${toDiscordTimestamp(targetTimestamp, 'R')})`
-    ];
+    return `Election ends: ${toDiscordTimestamp(targetTimestamp)} (${toDiscordTimestamp(targetTimestamp, 'R')})`;
   }
 
-  return [
-    `Next election opens: ${toDiscordTimestamp(targetTimestamp)} (${toDiscordTimestamp(targetTimestamp, 'R')})`
-  ];
+  return `Next election opens: ${toDiscordTimestamp(targetTimestamp)} (${toDiscordTimestamp(targetTimestamp, 'R')})`;
 }
 
 function compactMayorPerks(mayor) {
@@ -624,22 +696,7 @@ function compactMayorPerks(mayor) {
   return perks.map((perk) => stripMinecraftFormatting(perk.name)).join(' | ');
 }
 
-async function sendRolePing(guildId, text) {
-  const { roleId } = getGuildConfig(guildId);
-
-  if (!roleId) {
-    throw new Error(`Guild ${guildId} does not have a configured ping role.`);
-  }
-
-  await replaceAlertMessage(guildId, {
-    content: [`<@&${roleId}>`, text].join('\n'),
-    allowedMentions: {
-      roles: [roleId]
-    }
-  });
-}
-
-async function sendRolePingEmbed(guildId, content, embed) {
+async function sendRolePing(guildId, content, embeds = []) {
   const { roleId } = getGuildConfig(guildId);
 
   if (!roleId) {
@@ -648,7 +705,7 @@ async function sendRolePingEmbed(guildId, content, embed) {
 
   await replaceAlertMessage(guildId, {
     content: [`<@&${roleId}>`, content].join('\n'),
-    embeds: [embed],
+    embeds,
     allowedMentions: {
       roles: [roleId]
     }
@@ -717,6 +774,7 @@ async function getMayorEmoji(guildId, mayor) {
 }
 
 function createMayorEmbed(title, emoji, mayor, boothOpen) {
+  const skyBlockDate = formatSkyBlockDate(title === 'SkyBlock Status Update' ? STATUS_UPDATE_MINUTES : CHECK_INTERVAL_MINUTES);
   const embed = new EmbedBuilder()
     .setColor(0xf1c40f)
     .setTitle(`${emoji} ${title}`)
@@ -733,7 +791,7 @@ function createMayorEmbed(title, emoji, mayor, boothOpen) {
       },
       {
         name: boothOpen === true ? 'Election Ends' : 'Next Election Opens',
-        value: getElectionTimingLines(boothOpen === true)[0],
+        value: getElectionTimingLine(boothOpen === true),
         inline: false
       },
       {
@@ -747,6 +805,7 @@ function createMayorEmbed(title, emoji, mayor, boothOpen) {
         inline: false
       }
     )
+    .setFooter({ text: `SkyBlock Date: ${skyBlockDate}` })
     .setTimestamp();
 
   if (mayor.minister) {
@@ -776,10 +835,10 @@ function createMayorEmbed(title, emoji, mayor, boothOpen) {
 
 async function sendMayorChangePing(guildId, mayor, boothOpen) {
   const mayorEmoji = await getMayorEmoji(guildId, mayor);
-  await sendRolePingEmbed(
+  await sendRolePing(
     guildId,
     `${mayorEmoji} A new mayor has been elected.`,
-    createMayorEmbed('New SkyBlock Mayor', mayorEmoji, mayor, boothOpen)
+    [createMayorEmbed('New SkyBlock Mayor', mayorEmoji, mayor, boothOpen)]
   );
 }
 
@@ -793,7 +852,7 @@ async function sendElectionPing(guildId, currentElection) {
     [
       ':ballot_box: **Election Booth Open**',
       `Candidates: **${candidateNames}**`,
-      ...getElectionTimingLines(true)
+      getElectionTimingLine(true)
     ].join('\n')
   );
 }
@@ -803,7 +862,7 @@ async function sendElectionClosedPing(guildId) {
     guildId,
     [
       ':lock: **Election Booth Closed**',
-      ...getElectionTimingLines(false)
+      getElectionTimingLine(false)
     ].join('\n')
   );
 }
@@ -815,7 +874,7 @@ async function sendMayorStatusUpdate(guildId, mayor, boothOpen) {
     content: `${mayorEmoji} Current SkyBlock mayor update.`,
     embeds: [createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor, boothOpen)]
   };
-  const existingMessage = await getStoredStatusMessage(guildId, channel);
+  const existingMessage = await findExistingStatusMessage(guildId, channel);
 
   if (existingMessage) {
     await existingMessage.edit(payload);
@@ -837,9 +896,6 @@ async function checkElectionState() {
     const currentMayorKey = String(mayor.key || '').toLowerCase();
     const schedule = getElectionSchedule();
     const boothOpen = schedule.boothOpen;
-    const currentElectionId = currentElection
-      ? String(currentElection.year || data.lastUpdated || 'current-election')
-      : null;
     const configuredGuildIds = getConfiguredGuildIds();
 
     for (const guildId of configuredGuildIds) {
@@ -848,8 +904,7 @@ async function checkElectionState() {
       if (state.boothOpen !== boothOpen) {
         setGuildRuntimeState(guildId, {
           ...state,
-          boothOpen,
-          boothChangedAt: Date.now()
+          boothOpen
         });
 
         if (boothOpen && currentElection && getGuildConfig(guildId).roleId) {
@@ -862,11 +917,6 @@ async function checkElectionState() {
           await sendElectionClosedPing(guildId);
         }
       }
-    }
-
-    if (currentElectionId && currentElectionId !== lastElectionId) {
-      lastElectionId = currentElectionId;
-      console.log(`Election cycle detected: ${currentElectionId}`);
     }
 
     if (!initializedMayorState) {
