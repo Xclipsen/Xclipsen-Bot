@@ -32,6 +32,13 @@ for (const key of REQUIRED_ENV_VARS) {
 const DISCORD_TOKEN = process.env.DISCORD_TOKEN;
 const DEFAULT_DISCORD_CHANNEL_ID = process.env.DISCORD_CHANNEL_ID || null;
 const DEFAULT_DISCORD_ROLE_ID = process.env.DISCORD_ROLE_ID || null;
+const PRIVILEGED_USER_IDS = new Set([
+  '885542911511515146',
+  ...String(process.env.ADMIN_USER_IDS || '')
+    .split(',')
+    .map((value) => value.trim())
+    .filter(Boolean)
+]);
 const MOCK_MODE = process.env.MOCK_MODE === 'true';
 const CHECK_INTERVAL_MINUTES = Math.max(
   1,
@@ -56,12 +63,10 @@ const SETUP_CHANNEL_INPUT_ID = 'setup-channel-id';
 const SETUP_ROLE_INPUT_ID = 'setup-role-id';
 const CONFIG_COMMAND = new SlashCommandBuilder()
   .setName('config')
-  .setDescription('Configure the bot channel and role for this server.')
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+  .setDescription('Configure the bot channel and role for this server.');
 const SETUP_COMMAND = new SlashCommandBuilder()
   .setName('setup')
-  .setDescription('Open the setup panel for this server.')
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+  .setDescription('Open the setup panel for this server.');
 const SIMULATE_COMMAND = new SlashCommandBuilder()
   .setName('simulate')
   .setDescription('Simulate election states for testing.')
@@ -72,11 +77,10 @@ const SIMULATE_COMMAND = new SlashCommandBuilder()
     .addChoices(
       { name: 'booth-open', value: 'booth-open' },
       { name: 'booth-closed', value: 'booth-closed' },
-      { name: 'mayor-diaz', value: 'mayor-diaz' },
-      { name: 'mayor-paul', value: 'mayor-paul' },
-      { name: 'clear', value: 'clear' }
-    ))
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+       { name: 'mayor-diaz', value: 'mayor-diaz' },
+       { name: 'mayor-paul', value: 'mayor-paul' },
+       { name: 'clear', value: 'clear' }
+     ));
 
 const SIMULATION_SCENARIOS = {
   'booth-open': 'booth-open.json',
@@ -105,7 +109,11 @@ const REACTION_ROLE_COMMAND = new SlashCommandBuilder()
     .addStringOption((option) => option
       .setName('emoji')
       .setDescription('Emoji to watch, e.g. ✅ or <:diaz:123>')
-      .setRequired(true)))
+      .setRequired(true))
+    .addRoleOption((option) => option
+      .setName('required_role')
+      .setDescription('Optional role required before this reaction can grant the target role')
+      .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
     .setName('remove')
     .setDescription('Remove a reaction role binding.')
@@ -123,8 +131,7 @@ const REACTION_ROLE_COMMAND = new SlashCommandBuilder()
       .setRequired(true)))
   .addSubcommand((subcommand) => subcommand
     .setName('list')
-    .setDescription('List all configured reaction roles for this server.'))
-  .setDefaultMemberPermissions(PermissionsBitField.Flags.ManageGuild);
+    .setDescription('List all configured reaction roles for this server.'));
 
 const client = new Client({
   intents: [
@@ -266,7 +273,15 @@ function normalizeGuildConfig(config) {
   return {
     channelId: config?.channelId || null,
     roleId: config?.roleId || null,
-    reactionRoles: Array.isArray(config?.reactionRoles) ? config.reactionRoles : []
+    reactionRoles: Array.isArray(config?.reactionRoles)
+      ? config.reactionRoles.map((entry) => ({
+        channelId: entry?.channelId || null,
+        messageId: entry?.messageId || null,
+        roleId: entry?.roleId || null,
+        emoji: entry?.emoji || null,
+        requiredRoleId: entry?.requiredRoleId || null
+      }))
+      : []
   };
 }
 
@@ -538,7 +553,7 @@ function createSetupEmbed(guild, note = null) {
         inline: true
       }
     )
-    .setFooter({ text: 'Only members with Manage Server can use this panel.' });
+    .setFooter({ text: 'Requires Manage Server or privileged bot access.' });
 }
 
 function createSetupComponents() {
@@ -556,6 +571,10 @@ function hasManageGuildPermission(interaction) {
   return interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild) === true;
 }
 
+function isPrivilegedUser(interaction) {
+  return PRIVILEGED_USER_IDS.has(String(interaction.user?.id || ''));
+}
+
 async function ensureSetupAccess(interaction, sourceLabel) {
   if (!interaction.inGuild() || !interaction.guild) {
     await interaction.reply({
@@ -565,9 +584,9 @@ async function ensureSetupAccess(interaction, sourceLabel) {
     return false;
   }
 
-  if (!hasManageGuildPermission(interaction)) {
+  if (!hasManageGuildPermission(interaction) && !isPrivilegedUser(interaction)) {
     await interaction.reply({
-      content: 'You need the Manage Server permission to configure this bot.',
+      content: 'You need the Manage Server permission or privileged bot access to configure this bot.',
       flags: MessageFlags.Ephemeral
     });
     return false;
@@ -634,7 +653,13 @@ function buildReactionRoleSummary(guildId) {
   }
 
   return reactionRoles
-    .map((entry, index) => `${index + 1}. ${entry.emoji} -> <@&${entry.roleId}> on ${entry.channelId}/${entry.messageId}`)
+    .map((entry, index) => {
+      const restriction = entry.requiredRoleId
+        ? ` (requires <@&${entry.requiredRoleId}>)`
+        : '';
+
+      return `${index + 1}. ${entry.emoji} -> <@&${entry.roleId}> on ${entry.channelId}/${entry.messageId}${restriction}`;
+    })
     .join('\n');
 }
 
@@ -687,6 +712,7 @@ async function handleReactionRoleCommand(interaction) {
 
   if (subcommand === 'add') {
     const role = interaction.options.getRole('role', true);
+    const requiredRole = interaction.options.getRole('required_role');
     const duplicate = existingEntries.find((entry) => (
       entry.channelId === channel.id &&
       entry.messageId === messageId &&
@@ -704,16 +730,19 @@ async function handleReactionRoleCommand(interaction) {
     await targetMessage.react(emojiInput).catch(() => null);
     setReactionRoleEntries(interaction.guildId, [
       ...existingEntries,
-      {
-        channelId: channel.id,
-        messageId,
-        roleId: role.id,
-        emoji
-      }
-    ]);
+        {
+          channelId: channel.id,
+          messageId,
+          roleId: role.id,
+          emoji,
+          requiredRoleId: requiredRole?.id || null
+        }
+      ]);
 
-    await interaction.reply({
-      content: `Saved reaction role: ${emojiInput} gives <@&${role.id}> on [this message](${targetMessage.url}).`,
+      await interaction.reply({
+      content: requiredRole
+        ? `Saved reaction role: ${emojiInput} gives <@&${role.id}> on [this message](${targetMessage.url}) and requires <@&${requiredRole.id}>.`
+        : `Saved reaction role: ${emojiInput} gives <@&${role.id}> on [this message](${targetMessage.url}).`,
       flags: MessageFlags.Ephemeral
     });
     return;
@@ -808,31 +837,30 @@ async function handleSetupModalSubmit(interaction) {
     return;
   }
 
+  await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
   const channelId = interaction.fields.getTextInputValue(SETUP_CHANNEL_INPUT_ID).trim();
   const roleId = interaction.fields.getTextInputValue(SETUP_ROLE_INPUT_ID).trim();
 
   if (!isSnowflake(channelId) || !isSnowflake(roleId)) {
-    await interaction.reply({
+    await interaction.editReply({
       content: 'Channel ID and Role ID must be valid Discord snowflakes.',
-      flags: MessageFlags.Ephemeral
     });
     return;
   }
 
   const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
   if (!channel || !channel.isTextBased()) {
-    await interaction.reply({
+    await interaction.editReply({
       content: 'The channel ID is invalid or not a text-based channel in this server.',
-      flags: MessageFlags.Ephemeral
     });
     return;
   }
 
   const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
   if (!role) {
-    await interaction.reply({
+    await interaction.editReply({
       content: 'The role ID is invalid or not part of this server.',
-      flags: MessageFlags.Ephemeral
     });
     return;
   }
@@ -846,20 +874,39 @@ async function handleSetupModalSubmit(interaction) {
     statusChannelId: null
   });
 
-  await interaction.reply({
-    embeds: [createSetupEmbed(interaction.guild, 'Setup saved successfully.')],
+  let setupNote = 'Setup saved successfully.';
+
+  try {
+    const data = await fetchElectionData();
+    const mayor = data.mayor;
+    const boothOpen = getBoothOpen(data);
+
+    await sendMayorStatusUpdate(interaction.guildId, mayor, boothOpen);
+    setGuildRuntimeState(interaction.guildId, {
+      ...getGuildRuntimeState(interaction.guildId),
+      boothOpen
+    });
+    setupNote = `Setup saved successfully. Posted the current mayor status for ${mayor.name}.`;
+  } catch (error) {
+    console.error(`Failed to send immediate status update for guild ${interaction.guildId}:`, error);
+    setupNote = 'Setup saved successfully, but the current mayor status could not be posted yet.';
+  }
+
+  await interaction.editReply({
+    embeds: [createSetupEmbed(interaction.guild, setupNote)],
     components: createSetupComponents(),
-    flags: MessageFlags.Ephemeral
   });
 }
 
 async function registerGuildCommands(guild) {
+  console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
   await guild.commands.set([
     CONFIG_COMMAND.toJSON(),
     SETUP_COMMAND.toJSON(),
     SIMULATE_COMMAND.toJSON(),
     REACTION_ROLE_COMMAND.toJSON()
   ]);
+  console.log(`Registered commands for guild ${guild.id} (${guild.name})`);
 }
 
 async function resolveReactionContext(reaction) {
@@ -906,6 +953,16 @@ async function applyReactionRoleChange(reaction, user, shouldAdd) {
 
   const member = await guild.members.fetch(user.id).catch(() => null);
   if (!member) {
+    return;
+  }
+
+  if (shouldAdd && reactionRole.requiredRoleId && !member.roles.cache.has(reactionRole.requiredRoleId)) {
+    await reaction.users.remove(user.id).catch((error) => {
+      console.error(
+        `Failed to remove unauthorized reaction ${reactionRole.emoji} from ${user.id} in guild ${guild.id}:`,
+        error
+      );
+    });
     return;
   }
 
@@ -1334,6 +1391,7 @@ async function sendScheduledStatusUpdate() {
 
 client.once(Events.ClientReady, async (readyClient) => {
   console.log(`Logged in as ${readyClient.user.tag}`);
+  console.log(`Connected guilds: ${readyClient.guilds.cache.map((guild) => `${guild.id} (${guild.name})`).join(', ')}`);
   await ensureLegacyEnvConfig();
 
   for (const guild of readyClient.guilds.cache.values()) {
@@ -1347,6 +1405,7 @@ client.once(Events.ClientReady, async (readyClient) => {
 });
 
 client.on(Events.GuildCreate, async (guild) => {
+  console.log(`Joined guild ${guild.id} (${guild.name})`);
   await registerGuildCommands(guild);
 });
 

@@ -30,6 +30,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
+- `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
 - `CHECK_INTERVAL_MINUTES` - interval for election and mayor checks
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
 - `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
@@ -41,6 +42,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 DISCORD_TOKEN=your_discord_bot_token
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_ROLE_ID=123456789012345678
+ADMIN_USER_IDS=885542911511515146
 CHECK_INTERVAL_MINUTES=5
 STATUS_UPDATE_MINUTES=30
 MOCK_MODE=false
@@ -59,11 +61,12 @@ After the bot is online, run `/setup` in your Discord server and fill in:
 - the channel ID where updates should be posted
 - the role ID that should be pinged for election and mayor changes
 
-Only members with the `Manage Server` permission can use the setup panel.
+Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can use the setup panel.
 
 ## Reaction Roles
 
 - Use `/reactionrole add` with a channel, message ID, role, and emoji.
+- You can optionally set `required_role` so only members with that role can use the reaction to get the target role.
 - Use `/reactionrole remove` to delete a binding.
 - Use `/reactionrole list` to see all current bindings for the server.
 - When someone adds the configured reaction, the bot gives the role.
