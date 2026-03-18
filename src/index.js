@@ -61,9 +61,6 @@ const SETUP_OPEN_MODAL_ID = 'setup-open-modal';
 const SETUP_MODAL_ID = 'setup-modal';
 const SETUP_CHANNEL_INPUT_ID = 'setup-channel-id';
 const SETUP_ROLE_INPUT_ID = 'setup-role-id';
-const CONFIG_COMMAND = new SlashCommandBuilder()
-  .setName('config')
-  .setDescription('Configure the bot channel and role for this server.');
 const SETUP_COMMAND = new SlashCommandBuilder()
   .setName('setup')
   .setDescription('Open the setup panel for this server.');
@@ -763,6 +760,7 @@ async function handleReactionRoleCommand(interaction) {
   }
 
   setReactionRoleEntries(interaction.guildId, nextEntries);
+  await targetMessage.reactions.resolve(emoji)?.remove().catch(() => null);
   await interaction.reply({
     content: `Removed reaction role binding for ${emojiInput} on [this message](${targetMessage.url}).`,
     flags: MessageFlags.Ephemeral
@@ -901,7 +899,6 @@ async function handleSetupModalSubmit(interaction) {
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
   await guild.commands.set([
-    CONFIG_COMMAND.toJSON(),
     SETUP_COMMAND.toJSON(),
     SIMULATE_COMMAND.toJSON(),
     REACTION_ROLE_COMMAND.toJSON()
@@ -1421,7 +1418,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
   try {
     if (
       interaction.isChatInputCommand() &&
-      (interaction.commandName === 'config' || interaction.commandName === 'setup')
+      interaction.commandName === 'setup'
     ) {
       await handleSetupCommand(interaction);
       return;
