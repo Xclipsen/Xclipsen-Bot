@@ -95,7 +95,9 @@ function loadState() {
     return JSON.parse(raw);
   } catch {
     return {
-      boothOpen: null
+      boothOpen: null,
+      statusMessageId: null,
+      statusChannelId: null
     };
   }
 }
@@ -133,6 +135,31 @@ async function getTargetChannel() {
   }
 
   return channel;
+}
+
+async function getStoredStatusMessage(channel) {
+  if (!electionBoothState.statusMessageId) {
+    return null;
+  }
+
+  if (
+    electionBoothState.statusChannelId &&
+    electionBoothState.statusChannelId !== channel.id
+  ) {
+    return null;
+  }
+
+  try {
+    return await channel.messages.fetch(electionBoothState.statusMessageId);
+  } catch {
+    electionBoothState = {
+      ...electionBoothState,
+      statusMessageId: null,
+      statusChannelId: null
+    };
+    saveState();
+    return null;
+  }
 }
 
 function formatMayorPerks(mayor) {
@@ -395,11 +422,24 @@ async function sendElectionClosedPing() {
 async function sendMayorStatusUpdate(mayor) {
   const channel = await getTargetChannel();
   const mayorEmoji = await getMayorEmoji(mayor);
-
-  await channel.send({
+  const payload = {
     content: `${mayorEmoji} Current SkyBlock mayor update.`,
     embeds: [createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor)]
-  });
+  };
+  const existingMessage = await getStoredStatusMessage(channel);
+
+  if (existingMessage) {
+    await existingMessage.edit(payload);
+    return;
+  }
+
+  const sentMessage = await channel.send(payload);
+  electionBoothState = {
+    ...electionBoothState,
+    statusMessageId: sentMessage.id,
+    statusChannelId: sentMessage.channelId
+  };
+  saveState();
 }
 
 async function checkElectionState() {

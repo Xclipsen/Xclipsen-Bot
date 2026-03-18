@@ -1,0 +1,10 @@
+services:
+  xclipsen-bot:
+    build:
+      context: .
+    container_name: xclipsen-bot
+    env_file:
+      - .env
+    restart: unless-stopped
+    volumes:
+      - ./data:/app/data
