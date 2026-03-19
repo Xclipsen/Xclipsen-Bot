@@ -11,6 +11,7 @@ const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
 const { createShitterListFeature } = require('./features/shitterList');
+const { createSimulationFeature } = require('./features/simulation');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions],
@@ -19,6 +20,7 @@ const client = new Client({
 
 const store = createStore({
   configFilePath: env.CONFIG_FILE_PATH,
+  shitterFilePath: env.SHITTER_FILE_PATH,
   stateFilePath: env.STATE_FILE_PATH
 });
 
@@ -42,6 +44,7 @@ const shitterList = createShitterListFeature({
   store,
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
+const simulation = createSimulationFeature({ store });
 
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
@@ -90,25 +93,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
       }
 
-      const scenario = interaction.options.getString('scenario', true);
-      if (scenario === 'clear') {
-        store.setMockState({ enabled: false, scenario: null });
-        await interaction.reply({ content: 'Simulation cleared. The bot will use the real Hypixel API again.', flags: 64 });
-        await mayorAlerts.checkElectionState();
-        await mayorAlerts.sendScheduledStatusUpdate();
-        return;
-      }
-
-      const scenarioFile = env.SIMULATION_SCENARIOS[scenario];
-      if (!scenarioFile) {
-        await interaction.reply({ content: 'Unknown simulation scenario.', flags: 64 });
-        return;
-      }
-
-      store.setMockState({ enabled: true, scenario: scenarioFile });
-      await interaction.reply({ content: `Simulation scenario set to \`${scenario}\`. Triggering a fresh check now.`, flags: 64 });
-      await mayorAlerts.checkElectionState();
-      await mayorAlerts.sendScheduledStatusUpdate();
+      await simulation.handleSimulateCommand(interaction, mayorAlerts);
       return;
     }
 
@@ -125,14 +110,23 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.shitterAdd) {
-      await shitterList.handleShitterAddCommand(interaction);
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.shitter) {
+      await shitterList.handleShitterCommand(interaction);
       return;
     }
 
-    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.shitterQuery) {
-      await shitterList.handleShitterQueryCommand(interaction);
-      return;
+    if (interaction.isStringSelectMenu()) {
+      if (await mayorAlerts.handleCandidateSelect(interaction)) {
+        return;
+      }
+
+      if (await shitterList.handleShitterPlayerSelect(interaction)) {
+        return;
+      }
+
+      if (await shitterList.handleShitterEntrySelect(interaction)) {
+        return;
+      }
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('setup-view-')) {
@@ -147,7 +141,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (
       interaction.isButton() &&
-      (interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID || interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID)
+      (
+        interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID ||
+        interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID ||
+        interaction.customId === interactionIds.SETUP_MAYOR_EDIT_ID ||
+        interaction.customId === interactionIds.SETUP_MAYOR_RESET_ID ||
+        interaction.customId === interactionIds.SETUP_SHITTER_MODAL_ID
+      )
     ) {
       await setupHub.handleSetupActionButton(interaction);
       return;
@@ -165,6 +165,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID) {
       await setupHub.handleReactionRoleModalSubmit(interaction, 'remove');
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_SHITTER_MODAL_ID) {
+      await setupHub.handleShitterSetupModalSubmit(interaction);
     }
   } catch (error) {
     console.error('Interaction handling failed:', error);

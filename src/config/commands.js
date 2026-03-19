@@ -1,4 +1,5 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { simulatedMayors } = require('./simulationData');
 
 const setupCommand = new SlashCommandBuilder()
   .setName('setup')
@@ -7,17 +8,27 @@ const setupCommand = new SlashCommandBuilder()
 const simulateCommand = new SlashCommandBuilder()
   .setName('simulate')
   .setDescription('Simulate election states for testing.')
-  .addStringOption((option) => option
-    .setName('scenario')
-    .setDescription('Scenario to apply')
-    .setRequired(true)
-    .addChoices(
-      { name: 'booth-open', value: 'booth-open' },
-      { name: 'booth-closed', value: 'booth-closed' },
-      { name: 'mayor-diaz', value: 'mayor-diaz' },
-      { name: 'mayor-paul', value: 'mayor-paul' },
-      { name: 'clear', value: 'clear' }
-    ));
+  .addSubcommand((subcommand) => subcommand
+    .setName('custom')
+    .setDescription('Simulate a mayor with a random perk set.')
+    .addStringOption((option) => option
+      .setName('mayor')
+      .setDescription('Mayor to simulate')
+      .setRequired(true)
+      .addChoices(...simulatedMayors.map((mayor) => ({ name: mayor.name, value: mayor.key }))))
+    .addIntegerOption((option) => option
+      .setName('perk_count')
+      .setDescription('How many random perks to assign')
+      .setRequired(true)
+      .setMinValue(1)
+      .setMaxValue(5))
+    .addBooleanOption((option) => option
+      .setName('booth_open')
+      .setDescription('Whether the election booth should be open')
+      .setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('clear')
+    .setDescription('Clear the current simulation and use the real API again.'));
 
 const reactionRoleCommand = new SlashCommandBuilder()
   .setName('reactionrole')
@@ -56,29 +67,41 @@ const catacombsCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
-const shitterAddCommand = new SlashCommandBuilder()
-  .setName('shitteradd')
-  .setDescription('Add or update a shitter list entry.')
-  .addStringOption((option) => option
-    .setName('name')
-    .setDescription('Minecraft IGN')
-    .setRequired(true))
-  .addStringOption((option) => option
-    .setName('reason')
-    .setDescription('Why this IGN is on the list')
-    .setRequired(true))
-  .addAttachmentOption((option) => option
-    .setName('screenshot')
-    .setDescription('Optional screenshot proof')
-    .setRequired(false));
-
-const shitterQueryCommand = new SlashCommandBuilder()
-  .setName('shitterquery')
-  .setDescription('Check whether an IGN is on the shitter list.')
-  .addStringOption((option) => option
-    .setName('name')
-    .setDescription('Minecraft IGN')
-    .setRequired(true));
+const shitterCommand = new SlashCommandBuilder()
+  .setName('shitter')
+  .setDescription('Manage and query the shitter list.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('add')
+    .setDescription('Add or update a shitter list entry.')
+    .addStringOption((option) => option
+      .setName('name')
+      .setDescription('Minecraft IGN')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('reason')
+      .setDescription('Why this IGN is on the list')
+      .setRequired(true))
+    .addAttachmentOption((option) => option
+      .setName('screenshot')
+      .setDescription('Optional screenshot proof')
+      .setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('query')
+    .setDescription('Check whether an IGN is on the shitter list.')
+    .addStringOption((option) => option
+      .setName('name')
+      .setDescription('Minecraft IGN')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('remove')
+    .setDescription('Mark an IGN as no longer on the shitter list.')
+    .addStringOption((option) => option
+      .setName('name')
+      .setDescription('Minecraft IGN')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('list')
+    .setDescription('List all shitter entries for this server.'));
 
 const commands = [
   setupCommand,
@@ -86,8 +109,7 @@ const commands = [
   reactionRoleCommand,
   cataCommand,
   catacombsCommand,
-  shitterAddCommand,
-  shitterQueryCommand
+  shitterCommand
 ];
 
 module.exports = {
@@ -98,7 +120,6 @@ module.exports = {
     reactionRole: 'reactionrole',
     cata: 'cata',
     catacombs: 'catacombs',
-    shitterAdd: 'shitteradd',
-    shitterQuery: 'shitterquery'
+    shitter: 'shitter'
   }
 };

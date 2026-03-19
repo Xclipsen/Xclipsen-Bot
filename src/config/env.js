@@ -32,6 +32,7 @@ const env = {
   ELECTION_OPEN_START_DAY: 181,
   ELECTION_CLOSE_DAY: 88,
   CONFIG_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'config.json'),
+  SHITTER_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'shitter-list.json'),
   STATE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'state.json'),
   MOCK_DATA_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'mock-election.json'),
   MAYOR_HEADS: {
@@ -74,6 +75,8 @@ const env = {
     scorpius: process.env.EMOJI_SCORPIUS || '🦂',
     seraphine: process.env.EMOJI_SERAPHINE || '🗳️'
   },
+  VOTE_BAR_FILLED_EMOJI: process.env.VOTE_BAR_FILLED_EMOJI || '█',
+  VOTE_BAR_EMPTY_EMOJI: process.env.VOTE_BAR_EMPTY_EMOJI || '░',
   SKYBLOCK_MONTHS: [
     'Early Spring',
     'Spring',
@@ -87,13 +90,7 @@ const env = {
     'Early Winter',
     'Winter',
     'Late Winter'
-  ],
-  SIMULATION_SCENARIOS: {
-    'booth-open': 'booth-open.json',
-    'booth-closed': 'booth-closed.json',
-    'mayor-diaz': 'mayor-diaz.json',
-    'mayor-paul': 'mayor-paul.json'
-  }
+  ]
 };
 
 module.exports = { env };

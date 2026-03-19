@@ -11,12 +11,13 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Posts a status embed with the current mayor and perks.
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
-- Includes an in-Discord `/setup` hub with sections for mayor alerts and reaction roles.
+- Includes an in-Discord `/setup` hub with sections for mayor alerts, reaction roles, and shitter permissions.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
-- Includes `/shitteradd` and `/shitterquery` for a guild-local IGN watchlist with reasons and optional screenshots.
+- Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
+- Stores shitter list entries in `data/shitter-list.json`.
 
 ## Setup
 
@@ -26,7 +27,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 4. Copy `.env.example` to `.env`.
 5. Fill in your token and optional defaults.
 6. In Discord, run `/setup`, open `Discord -> Mayor Alerts`, and enter the target channel ID and role ID.
-7. Use `Discord -> Reload Status` any time you want to force-refresh the current mayor embed.
+7. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
 
 ## Configuration
 
@@ -39,6 +40,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
 - `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
+- `VOTE_BAR_FILLED_EMOJI` / `VOTE_BAR_EMPTY_EMOJI` - optional custom emojis for the mayor vote bar chart
 - If your server already has emojis named like `diaz`, `cole`, or `mayor_diaz`, the bot can detect them automatically.
 - The bot now needs permission to manage roles if you use reaction roles.
 
@@ -52,6 +54,8 @@ CHECK_INTERVAL_MINUTES=5
 STATUS_UPDATE_MINUTES=30
 MOCK_MODE=false
 EMOJI_DIAZ=<:diaz:123456789012345678>
+VOTE_BAR_FILLED_EMOJI=<:barfill:123456789012345678>
+VOTE_BAR_EMPTY_EMOJI=<:barempty:123456789012345678>
 ```
 
 ## Run Locally
@@ -65,8 +69,8 @@ npm start
 
 - `src/index.js` wires the client and events together.
 - `src/config/` contains environment loading, slash commands, and interaction IDs.
-- `src/features/` contains setup, mayor alerts, access control, and reaction role logic.
-- The shitter list is stored per guild in `data/config.json`.
+- `src/features/` contains setup, mayor alerts, access control, reaction roles, simulation, and shitter logic.
+- The shitter list is stored per guild in `data/shitter-list.json`.
 - `src/storage/` contains the config/state store helpers.
 - `src/utils/` contains shared SkyBlock time formatting helpers.
 
@@ -90,22 +94,21 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Shitter List
 
-- Use `/shitteradd name:<ign> reason:<text>` to add or update an entry.
-- `/shitteradd` also accepts an optional `screenshot` image attachment.
+- Use `/shitter add name:<ign> reason:<text>` to add or update an entry.
+- `/shitter add` also accepts an optional `screenshot` image attachment.
+- IGNs are validated like Minecraft names: 3-16 characters, letters, numbers, and `_` only.
+- Multiple active entries can be stored for the same IGN, and `/shitter query` lets you select which one to view.
 - The bot automatically stores the current date and time for each entry.
-- Use `/shitterquery name:<ign>` to check whether an IGN is listed.
+- Use `/shitter query name:<ign>` to check whether an IGN is listed.
+- Use `/shitter remove name:<ign>` to mark all active entries for that IGN as removed while keeping history.
+- Use `/shitter list` to show unique names for the server and select one from a menu.
+- In `/setup -> Discord -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
 
 ## Testing Scenarios
 
-- Use `/simulate` to force test states without waiting for the live Hypixel cycle.
-- Built-in scenarios:
-  - `booth-open`
-  - `booth-closed`
-  - `mayor-diaz`
-  - `mayor-paul`
-  - `clear`
-- `clear` switches the bot back to the live API.
-- Example mock payloads live in `data/mock-scenarios/`.
+- Use `/simulate custom mayor:<name> perk_count:<number>` to generate a random perk set for a selected mayor.
+- `/simulate custom` also accepts `booth_open:true/false`.
+- `/simulate clear` switches the bot back to the live API.
 - If you want the whole bot to stay in local test mode after restart, set `MOCK_MODE=true` and edit `data/mock-election.json`.
 
 ## Docker Compose
