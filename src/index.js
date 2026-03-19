@@ -10,6 +10,7 @@ const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
+const { createShitterListFeature } = require('./features/shitterList');
 
 const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions],
@@ -37,6 +38,10 @@ const setupHub = createSetupHub({
   interactionIds
 });
 const catacombs = createCatacombsFeature(env);
+const shitterList = createShitterListFeature({
+  store,
+  ensureSetupAccess: accessControl.ensureSetupAccess
+});
 
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
@@ -117,6 +122,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (interaction.commandName === commandNames.cata || interaction.commandName === commandNames.catacombs)
     ) {
       await catacombs.handleCatacombsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.shitterAdd) {
+      await shitterList.handleShitterAddCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.shitterQuery) {
+      await shitterList.handleShitterQueryCommand(interaction);
       return;
     }
 

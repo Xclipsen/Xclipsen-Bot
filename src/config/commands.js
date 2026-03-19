@@ -56,7 +56,39 @@ const catacombsCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
-const commands = [setupCommand, simulateCommand, reactionRoleCommand, cataCommand, catacombsCommand];
+const shitterAddCommand = new SlashCommandBuilder()
+  .setName('shitteradd')
+  .setDescription('Add or update a shitter list entry.')
+  .addStringOption((option) => option
+    .setName('name')
+    .setDescription('Minecraft IGN')
+    .setRequired(true))
+  .addStringOption((option) => option
+    .setName('reason')
+    .setDescription('Why this IGN is on the list')
+    .setRequired(true))
+  .addAttachmentOption((option) => option
+    .setName('screenshot')
+    .setDescription('Optional screenshot proof')
+    .setRequired(false));
+
+const shitterQueryCommand = new SlashCommandBuilder()
+  .setName('shitterquery')
+  .setDescription('Check whether an IGN is on the shitter list.')
+  .addStringOption((option) => option
+    .setName('name')
+    .setDescription('Minecraft IGN')
+    .setRequired(true));
+
+const commands = [
+  setupCommand,
+  simulateCommand,
+  reactionRoleCommand,
+  cataCommand,
+  catacombsCommand,
+  shitterAddCommand,
+  shitterQueryCommand
+];
 
 module.exports = {
   commands,
@@ -65,6 +97,8 @@ module.exports = {
     simulate: 'simulate',
     reactionRole: 'reactionrole',
     cata: 'cata',
-    catacombs: 'catacombs'
+    catacombs: 'catacombs',
+    shitterAdd: 'shitteradd',
+    shitterQuery: 'shitterquery'
   }
 };

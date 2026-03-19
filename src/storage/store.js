@@ -28,6 +28,18 @@ function normalizeGuildConfig(config) {
         requiredRoleId: entry?.requiredRoleId || null
       }))
       : []
+    ,
+    shitterEntries: Array.isArray(config?.shitterEntries)
+      ? config.shitterEntries.map((entry) => ({
+        ign: String(entry?.ign || '').trim(),
+        normalizedIgn: String(entry?.normalizedIgn || entry?.ign || '').trim().toLowerCase(),
+        reason: String(entry?.reason || '').trim(),
+        createdAt: entry?.createdAt || null,
+        screenshotUrl: entry?.screenshotUrl || null,
+        screenshotName: entry?.screenshotName || null,
+        addedByUserId: entry?.addedByUserId || null
+      })).filter((entry) => entry.ign && entry.reason && entry.createdAt)
+      : []
   };
 }
 
@@ -100,6 +112,12 @@ function createStore({ configFilePath, stateFilePath }) {
     },
     setReactionRoleEntries(guildId, reactionRoles) {
       this.setGuildConfig(guildId, { reactionRoles });
+    },
+    getShitterEntries(guildId) {
+      return this.getGuildConfig(guildId).shitterEntries;
+    },
+    setShitterEntries(guildId, shitterEntries) {
+      this.setGuildConfig(guildId, { shitterEntries });
     },
     getConfiguredGuildIds() {
       return Object.entries(guildConfig.guilds)

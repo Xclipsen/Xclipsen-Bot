@@ -14,6 +14,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Includes an in-Discord `/setup` hub with sections for mayor alerts and reaction roles.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
+- Includes `/shitteradd` and `/shitterquery` for a guild-local IGN watchlist with reasons and optional screenshots.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 
@@ -65,6 +66,7 @@ npm start
 - `src/index.js` wires the client and events together.
 - `src/config/` contains environment loading, slash commands, and interaction IDs.
 - `src/features/` contains setup, mayor alerts, access control, and reaction role logic.
+- The shitter list is stored per guild in `data/config.json`.
 - `src/storage/` contains the config/state store helpers.
 - `src/utils/` contains shared SkyBlock time formatting helpers.
 
@@ -85,6 +87,13 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - When someone adds the configured reaction, the bot gives the role.
 - When they remove the reaction, the bot removes the role.
 - The bot needs `Manage Roles`, and the target role must be lower than the bot's top role.
+
+## Shitter List
+
+- Use `/shitteradd name:<ign> reason:<text>` to add or update an entry.
+- `/shitteradd` also accepts an optional `screenshot` image attachment.
+- The bot automatically stores the current date and time for each entry.
+- Use `/shitterquery name:<ign>` to check whether an IGN is listed.
 
 ## Testing Scenarios
 
