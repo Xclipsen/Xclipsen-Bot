@@ -6,10 +6,12 @@ const { interactionIds } = require('./config/interactionIds');
 const { createStore } = require('./storage/store');
 const { createAccessControl } = require('./features/accessControl');
 const { createSkyblockUtils } = require('./utils/skyblock');
+const { createMinecraftUtils } = require('./utils/minecraft');
 const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
+const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
 
@@ -26,6 +28,7 @@ const store = createStore({
 
 const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
+const minecraft = createMinecraftUtils();
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const reactionRoles = createReactionRoleService({
   client,
@@ -39,7 +42,8 @@ const setupHub = createSetupHub({
   reactionRoles,
   interactionIds
 });
-const catacombs = createCatacombsFeature(env);
+const catacombs = createCatacombsFeature({ env, minecraft });
+const playerUuid = createPlayerUuidFeature({ minecraft });
 const shitterList = createShitterListFeature({
   store,
   ensureSetupAccess: accessControl.ensureSetupAccess
@@ -107,6 +111,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (interaction.commandName === commandNames.cata || interaction.commandName === commandNames.catacombs)
     ) {
       await catacombs.handleCatacombsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.uuid) {
+      await playerUuid.handlePlayerUuidCommand(interaction);
       return;
     }
 

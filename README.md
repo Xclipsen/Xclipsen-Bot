@@ -14,6 +14,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Includes an in-Discord `/setup` hub with sections for mayor alerts, reaction roles, and shitter permissions.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
+- Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
@@ -103,6 +104,13 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - Use `/shitter remove name:<ign>` to mark all active entries for that IGN as removed while keeping history.
 - Use `/shitter list` to show unique names for the server and select one from a menu.
 - In `/setup -> Discord -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
+
+## Minecraft UUID Lookup
+
+- Use `/uuid player:<ign>` to fetch a player's current Mojang UUID.
+- The bot returns both the raw UUID and dashed UUID form.
+- `/uuid` also shows a Stuffy-style UUID percentile and leaderboard position.
+- This command uses the official Mojang API and does not require a Hypixel API key.
 
 ## Testing Scenarios
 

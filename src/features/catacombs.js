@@ -54,25 +54,7 @@ const CATACOMBS_XP_TABLE = [
   116250000
 ];
 
-function createCatacombsFeature(env) {
-  async function resolveUuid(playerName) {
-    const response = await fetch(
-      `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(playerName)}`,
-      { headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' } }
-    );
-
-    if (response.status === 204 || response.status === 404) {
-      throw new Error('Player not found.');
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to look up player UUID (${response.status}).`);
-    }
-
-    const data = await response.json();
-    return { uuid: data.id, name: data.name };
-  }
-
+function createCatacombsFeature({ env, minecraft }) {
   async function fetchProfiles(uuid) {
     if (!env.HYPIXEL_API_KEY) {
       throw new Error('HYPIXEL_API_KEY is missing. Add it to the bot environment first.');
@@ -254,7 +236,7 @@ function createCatacombsFeature(env) {
     await interaction.deferReply();
 
     try {
-      const { uuid, name } = await resolveUuid(player);
+      const { uuid, name } = await minecraft.resolvePlayerProfile(player);
       const profiles = await fetchProfiles(uuid);
       const bestProfile = getBestProfile(profiles, uuid);
 

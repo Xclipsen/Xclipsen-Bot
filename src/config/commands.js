@@ -67,6 +67,14 @@ const catacombsCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
+const uuidCommand = new SlashCommandBuilder()
+  .setName('uuid')
+  .setDescription('Look up a Minecraft player UUID from an IGN.')
+  .addStringOption((option) => option
+    .setName('player')
+    .setDescription('Minecraft username')
+    .setRequired(true));
+
 const shitterCommand = new SlashCommandBuilder()
   .setName('shitter')
   .setDescription('Manage and query the shitter list.')
@@ -109,6 +117,7 @@ const commands = [
   reactionRoleCommand,
   cataCommand,
   catacombsCommand,
+  uuidCommand,
   shitterCommand
 ];
 
@@ -120,6 +129,7 @@ module.exports = {
     reactionRole: 'reactionrole',
     cata: 'cata',
     catacombs: 'catacombs',
+    uuid: 'uuid',
     shitter: 'shitter'
   }
 };
