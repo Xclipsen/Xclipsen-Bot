@@ -11,6 +11,8 @@ const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
+const { createGifFeature } = require('./features/gif');
+const { createHelpFeature } = require('./features/help');
 const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
@@ -44,6 +46,8 @@ const setupHub = createSetupHub({
   interactionIds
 });
 const catacombs = createCatacombsFeature({ env, minecraft });
+const gif = createGifFeature();
+const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft });
 const playerUuid = createPlayerUuidFeature({ minecraft });
 const shitterList = createShitterListFeature({
@@ -51,6 +55,35 @@ const shitterList = createShitterListFeature({
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
 const simulation = createSimulationFeature({ store });
+
+let isCheckingElectionState = false;
+let isSendingScheduledStatusUpdate = false;
+
+async function runElectionStateCheck() {
+  if (isCheckingElectionState) {
+    return;
+  }
+
+  isCheckingElectionState = true;
+  try {
+    await mayorAlerts.checkElectionState();
+  } finally {
+    isCheckingElectionState = false;
+  }
+}
+
+async function runScheduledStatusUpdate() {
+  if (isSendingScheduledStatusUpdate) {
+    return;
+  }
+
+  isSendingScheduledStatusUpdate = true;
+  try {
+    await mayorAlerts.sendScheduledStatusUpdate();
+  } finally {
+    isSendingScheduledStatusUpdate = false;
+  }
+}
 
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
@@ -68,10 +101,10 @@ client.once(Events.ClientReady, async (readyClient) => {
     await registerGuildCommands(guild);
   }
 
-  await mayorAlerts.checkElectionState();
-  await mayorAlerts.sendScheduledStatusUpdate();
-  setInterval(() => void mayorAlerts.checkElectionState(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
-  setInterval(() => void mayorAlerts.sendScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
+  await runElectionStateCheck();
+  await runScheduledStatusUpdate();
+  setInterval(() => void runElectionStateCheck(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
+  setInterval(() => void runScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -89,6 +122,11 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.help) {
+      await help.handleHelpCommand(interaction);
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.setup) {
       await setupHub.handleSetupCommand(interaction);
       return;
@@ -123,6 +161,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.namehistory) {
       await nameHistory.handleNameHistoryCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.gif) {
+      await gif.handleGifCommand(interaction);
       return;
     }
 

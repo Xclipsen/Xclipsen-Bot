@@ -1,5 +1,15 @@
 const { SlashCommandBuilder } = require('discord.js');
+const { getHelpSectionChoices } = require('./help');
 const { simulatedMayors } = require('./simulationData');
+
+const helpCommand = new SlashCommandBuilder()
+  .setName('help')
+  .setDescription('Show grouped command help and examples.')
+  .addStringOption((option) => option
+    .setName('section')
+    .setDescription('Optional help category to open directly')
+    .setRequired(false)
+    .addChoices(...getHelpSectionChoices()));
 
 const setupCommand = new SlashCommandBuilder()
   .setName('setup')
@@ -83,6 +93,14 @@ const nameHistoryCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
+const gifCommand = new SlashCommandBuilder()
+  .setName('gif')
+  .setDescription('Convert an uploaded image into a GIF.')
+  .addAttachmentOption((option) => option
+    .setName('media')
+    .setDescription('Image to convert')
+    .setRequired(true));
+
 const shitterCommand = new SlashCommandBuilder()
   .setName('shitter')
   .setDescription('Manage and query the shitter list.')
@@ -136,6 +154,7 @@ const shitterCommand = new SlashCommandBuilder()
     .setDescription('List all shitter entries for this server.'));
 
 const commands = [
+  helpCommand,
   setupCommand,
   simulateCommand,
   reactionRoleCommand,
@@ -143,12 +162,14 @@ const commands = [
   catacombsCommand,
   uuidCommand,
   nameHistoryCommand,
+  gifCommand,
   shitterCommand
 ];
 
 module.exports = {
   commands,
   commandNames: {
+    help: 'help',
     setup: 'setup',
     simulate: 'simulate',
     reactionRole: 'reactionrole',
@@ -156,6 +177,7 @@ module.exports = {
     catacombs: 'catacombs',
     uuid: 'uuid',
     namehistory: 'namehistory',
+    gif: 'gif',
     shitter: 'shitter'
   }
 };

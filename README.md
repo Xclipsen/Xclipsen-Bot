@@ -13,9 +13,11 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Edits the existing status embed instead of sending a new one every time.
 - Includes an in-Discord `/setup` hub with sections for mayor alerts, reaction roles, and shitter permissions.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
+- Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
 - Includes `/namehistory` to show a player's known Minecraft name history.
+- Includes `/gif` to convert an uploaded image into a GIF.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
@@ -67,6 +69,8 @@ VOTE_BAR_EMPTY_EMOJI=<:barempty:123456789012345678>
 npm install
 npm start
 ```
+
+- Use `/help` in Discord for a quick overview of public commands and examples.
 
 ## Project Structure
 
@@ -120,6 +124,15 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - Use `/namehistory player:<ign>` to show a player's known username history.
 - The bot shows the current name, UUID, and each known previous name.
 - This command uses Mojang for the current profile and Liforra for history data.
+
+## Media Tools
+
+- Use `/gif media:<image>` to convert an uploaded image into a GIF file.
+
+## Help
+
+- Use `/help` to open the full command guide.
+- Use `/help section:<name>` to jump straight to `Getting Started`, `Player Tools`, `Moderation`, or `Admin Tools`.
 
 ## Testing Scenarios
 

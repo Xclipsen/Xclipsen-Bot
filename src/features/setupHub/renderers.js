@@ -8,6 +8,8 @@ const {
   TextInputStyle
 } = require('discord.js');
 
+const { getHelpSectionById } = require('../../config/help');
+
 function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   const {
     SETUP_MODAL_ID,
@@ -115,10 +117,12 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   }
 
   function createPlayerToolsEmbed(guild, note = null) {
+    const playerToolsSection = getHelpSectionById('player-tools');
     const shitterStats = getShitterStats(guild.id);
     const description = [
       'These commands do not need extra setup, but they are some of the most useful player-facing tools in the bot.',
-      'Use this page as a quick reference for moderators and staff.'
+      'Use this page as a quick reference for moderators and staff.',
+      'Anyone can also use `/help` for the public command guide.'
     ];
 
     if (note) {
@@ -130,21 +134,13 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setTitle('Setup Hub - Player Tools')
       .setDescription(description.join('\n'))
       .addFields(
-        {
-          name: '/uuid',
-          value: 'Looks up a Mojang UUID from an IGN and shows the Stuffy-style percentile and rank position.',
-          inline: false
-        },
-        {
-          name: '/namehistory',
-          value: 'Shows the current Minecraft name plus previous names, with the newest previous names first.',
-          inline: false
-        },
-        {
-          name: '/cata and /catacombs',
-          value: 'Shows a player catacombs overview using the Hypixel API.',
-          inline: false
-        },
+        ...(playerToolsSection
+          ? playerToolsSection.commands.map((command) => ({
+              name: command.command,
+              value: command.description,
+              inline: false
+            }))
+          : []),
         {
           name: '/shitter query and /shitter list',
           value: `Checks server-local shitter entries. This server currently has ${shitterStats.activeNames} active name(s) across ${shitterStats.activeEntries} active entr${shitterStats.activeEntries === 1 ? 'y' : 'ies'}.`,
