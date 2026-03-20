@@ -8,13 +8,13 @@ function createPlayerUuidFeature({ minecraft }) {
     return new EmbedBuilder()
       .setColor(0x3498db)
       .setTitle('UUID Data')
+      .setThumbnail(`https://mc-heads.net/avatar/${encodeURIComponent(player.name)}/256`)
       .setDescription([
         `Name: \`${player.name}\``,
         `UUID: \`${formattedUuid}\``,
         `Better Than: \`${uuidData.betterThanPercent}%\``,
         `Position: \`#${new Intl.NumberFormat('en-US').format(uuidData.position)}\``
       ].join('\n'))
-      .setImage(`https://mc-heads.net/avatar/${encodeURIComponent(player.name)}/256`)
       .setFooter({ text: 'Data from the Mojang API' })
       .setTimestamp();
   }
