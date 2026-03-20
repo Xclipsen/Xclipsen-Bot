@@ -6,14 +6,15 @@ function createPlayerUuidFeature({ minecraft }) {
     const formattedUuid = minecraft.formatUuid(player.uuid);
 
     return new EmbedBuilder()
-      .setColor(0x2ecc71)
+      .setColor(0x3498db)
       .setTitle('UUID Data')
-      .setThumbnail(`https://mc-heads.net/avatar/${encodeURIComponent(player.name)}/256`)
       .setDescription([
-        `${player.name}'s UUID is \`${formattedUuid}\``,
-        uuidData.summary,
-        uuidData.placement
+        `Name: \`${player.name}\``,
+        `UUID: \`${formattedUuid}\``,
+        `Better Than: \`${uuidData.betterThanPercent}%\``,
+        `Position: \`#${new Intl.NumberFormat('en-US').format(uuidData.position)}\``
       ].join('\n'))
+      .setImage(`https://mc-heads.net/avatar/${encodeURIComponent(player.name)}/256`)
       .setFooter({ text: 'Data from the Mojang API' })
       .setTimestamp();
   }
