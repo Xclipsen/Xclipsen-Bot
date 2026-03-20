@@ -15,6 +15,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
+- Includes `/namehistory` to show a player's known Minecraft name history.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
@@ -96,7 +97,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 ## Shitter List
 
 - Use `/shitter add name:<ign> reason:<text>` to add or update an entry.
-- `/shitter add` also accepts an optional `screenshot` image attachment.
+- `/shitter add` also accepts up to 5 optional screenshot image attachments.
 - IGNs are validated like Minecraft names: 3-16 characters, letters, numbers, and `_` only.
 - Multiple active entries can be stored for the same IGN, and `/shitter query` lets you select which one to view.
 - The bot automatically stores the current date and time for each entry.
@@ -111,6 +112,12 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - The bot returns both the raw UUID and dashed UUID form.
 - `/uuid` also shows a Stuffy-style UUID percentile and leaderboard position.
 - This command uses the official Mojang API and does not require a Hypixel API key.
+
+## Minecraft Name History
+
+- Use `/namehistory player:<ign>` to show a player's known username history.
+- The bot shows the current name, UUID, and each known previous name.
+- This command uses Mojang for the current profile and Liforra for history data.
 
 ## Testing Scenarios
 

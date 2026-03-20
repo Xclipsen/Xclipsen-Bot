@@ -6,7 +6,37 @@ const IGN_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 const SHITTER_PLAYER_SELECT_PREFIX = 'shitter-player-select:';
 const SHITTER_ENTRY_SELECT_PREFIX = 'shitter-entry-select:';
 
-function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screenshotUrl = null, screenshotName = null }) {
+function getScreenshots(entry) {
+  if (Array.isArray(entry?.screenshots) && entry.screenshots.length > 0) {
+    return entry.screenshots.filter((screenshot) => screenshot?.url);
+  }
+
+  if (entry?.screenshotUrl) {
+    return [{ url: entry.screenshotUrl, name: entry?.screenshotName || null }];
+  }
+
+  return [];
+}
+
+function addScreenshotFields(embed, screenshots) {
+  if (screenshots.length === 0) {
+    return embed;
+  }
+
+  embed.addFields({
+    name: screenshots.length === 1 ? 'Screenshot' : 'Screenshots',
+    value: screenshots
+      .map((screenshot, index) => `${index + 1}. [${screenshot.name || `Anhang ${index + 1}`}](${screenshot.url})`)
+      .join('\n')
+      .slice(0, 1024),
+    inline: false
+  });
+  embed.setImage(screenshots[0].url);
+
+  return embed;
+}
+
+function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screenshots = [] }) {
   const isListed = status === 'yes';
   const embed = new EmbedBuilder()
     .setColor(isListed ? SHITTER_YES_COLOR : SHITTER_NO_COLOR)
@@ -21,16 +51,7 @@ function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screens
     embed.addFields({ name: 'Geshittet am', value: formatTimestamp(createdAt), inline: true });
   }
 
-  if (screenshotUrl) {
-    embed.addFields({
-      name: 'Screenshot',
-      value: `[${screenshotName || 'Anhang offnen'}](${screenshotUrl})`,
-      inline: false
-    });
-    embed.setImage(screenshotUrl);
-  }
-
-  return embed;
+  return addScreenshotFields(embed, screenshots);
 }
 
 function buildNoEntryEmbed({ ign, wasShitterInThePast = false }) {
@@ -66,16 +87,7 @@ function buildQueryEmbed({ ign, entry, entryCount }) {
     embed.setFooter({ text: `Showing selected entry of ${entryCount}` });
   }
 
-  if (entry.screenshotUrl) {
-    embed.addFields({
-      name: 'Screenshot',
-      value: `[${entry.screenshotName || 'Anhang offnen'}](${entry.screenshotUrl})`,
-      inline: false
-    });
-    embed.setImage(entry.screenshotUrl);
-  }
-
-  return embed;
+  return addScreenshotFields(embed, getScreenshots(entry));
 }
 
 function formatTimestamp(value) {
@@ -279,7 +291,13 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
 
     const ign = interaction.options.getString('name', true).trim();
     const reason = interaction.options.getString('reason', true).trim();
-    const screenshot = interaction.options.getAttachment('screenshot');
+    const screenshots = [
+      interaction.options.getAttachment('screenshot'),
+      interaction.options.getAttachment('screenshot_2'),
+      interaction.options.getAttachment('screenshot_3'),
+      interaction.options.getAttachment('screenshot_4'),
+      interaction.options.getAttachment('screenshot_5')
+    ].filter(Boolean);
 
     if (!ign) {
       await interaction.reply({
@@ -305,12 +323,14 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       return;
     }
 
-    if (screenshot && !String(screenshot.contentType || '').startsWith('image/')) {
-      await interaction.reply({
-        content: 'Der Screenshot muss ein Bild sein.',
-        flags: MessageFlags.Ephemeral
-      });
-      return;
+    for (const screenshot of screenshots) {
+      if (!String(screenshot.contentType || '').startsWith('image/')) {
+        await interaction.reply({
+          content: 'Alle Screenshots mussen Bilder sein.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
     }
 
     const normalizedIgn = normalizeIgn(ign);
@@ -324,8 +344,10 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       reason,
       createdAt: now,
       removedAt: null,
-      screenshotUrl: screenshot?.url || null,
-      screenshotName: screenshot?.name || null,
+      screenshots: screenshots.map((screenshot) => ({
+        url: screenshot.url,
+        name: screenshot.name || null
+      })),
       addedByUserId: interaction.user.id,
       removedByUserId: null
     });
@@ -339,8 +361,10 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
         status: 'yes',
         reason,
         createdAt: now,
-        screenshotUrl: screenshot?.url || null,
-        screenshotName: screenshot?.name || null
+        screenshots: screenshots.map((screenshot) => ({
+          url: screenshot.url,
+          name: screenshot.name || null
+        }))
       })],
       flags: MessageFlags.Ephemeral
     });

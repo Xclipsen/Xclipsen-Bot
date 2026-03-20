@@ -11,6 +11,7 @@ const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
+const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
@@ -43,6 +44,7 @@ const setupHub = createSetupHub({
   interactionIds
 });
 const catacombs = createCatacombsFeature({ env, minecraft });
+const nameHistory = createNameHistoryFeature({ minecraft });
 const playerUuid = createPlayerUuidFeature({ minecraft });
 const shitterList = createShitterListFeature({
   store,
@@ -116,6 +118,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.uuid) {
       await playerUuid.handlePlayerUuidCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.namehistory) {
+      await nameHistory.handleNameHistoryCommand(interaction);
       return;
     }
 

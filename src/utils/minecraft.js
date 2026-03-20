@@ -1,6 +1,37 @@
 const STUFFY_UUID_POPULATION = 65340095;
 
 function createMinecraftUtils() {
+  async function fetchNameHistory(playerName) {
+    const currentProfile = await resolvePlayerProfile(playerName);
+    let history = [];
+
+    try {
+      const response = await fetch(
+        `https://liforra.de/api/namehistory?uuid=${encodeURIComponent(currentProfile.uuid)}`,
+        { headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' } }
+      );
+
+      if (response.ok) {
+        const data = await response.json();
+        history = Array.isArray(data.history)
+          ? data.history.map((entry) => ({
+              name: entry.name,
+              changedAt: entry.changed_at || null
+            }))
+          : [];
+      }
+    } catch {
+      history = [];
+    }
+
+    return {
+      uuid: currentProfile.uuid,
+      name: currentProfile.name,
+      createdAt: null,
+      history
+    };
+  }
+
   async function resolvePlayerProfile(playerName) {
     const response = await fetch(
       `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(playerName)}`,
@@ -87,6 +118,7 @@ function createMinecraftUtils() {
   }
 
   return {
+    fetchNameHistory,
     formatUuid,
     getUuidData,
     scoreUuid,

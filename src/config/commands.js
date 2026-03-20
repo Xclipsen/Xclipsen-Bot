@@ -75,6 +75,14 @@ const uuidCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
+const nameHistoryCommand = new SlashCommandBuilder()
+  .setName('namehistory')
+  .setDescription('Look up a Minecraft player name history.')
+  .addStringOption((option) => option
+    .setName('player')
+    .setDescription('Minecraft username')
+    .setRequired(true));
+
 const shitterCommand = new SlashCommandBuilder()
   .setName('shitter')
   .setDescription('Manage and query the shitter list.')
@@ -91,6 +99,22 @@ const shitterCommand = new SlashCommandBuilder()
       .setRequired(true))
     .addAttachmentOption((option) => option
       .setName('screenshot')
+      .setDescription('Optional screenshot proof')
+      .setRequired(false))
+    .addAttachmentOption((option) => option
+      .setName('screenshot_2')
+      .setDescription('Optional screenshot proof')
+      .setRequired(false))
+    .addAttachmentOption((option) => option
+      .setName('screenshot_3')
+      .setDescription('Optional screenshot proof')
+      .setRequired(false))
+    .addAttachmentOption((option) => option
+      .setName('screenshot_4')
+      .setDescription('Optional screenshot proof')
+      .setRequired(false))
+    .addAttachmentOption((option) => option
+      .setName('screenshot_5')
       .setDescription('Optional screenshot proof')
       .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
@@ -118,6 +142,7 @@ const commands = [
   cataCommand,
   catacombsCommand,
   uuidCommand,
+  nameHistoryCommand,
   shitterCommand
 ];
 
@@ -130,6 +155,7 @@ module.exports = {
     cata: 'cata',
     catacombs: 'catacombs',
     uuid: 'uuid',
+    namehistory: 'namehistory',
     shitter: 'shitter'
   }
 };

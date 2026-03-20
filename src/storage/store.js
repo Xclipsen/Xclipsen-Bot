@@ -42,19 +42,42 @@ function normalizeSnowflakeList(values) {
     : [];
 }
 
+function normalizeScreenshotEntries(entry) {
+  const screenshots = Array.isArray(entry?.screenshots)
+    ? entry.screenshots.map((screenshot) => ({
+        url: screenshot?.url || null,
+        name: screenshot?.name || null
+      }))
+    : [];
+
+  if (screenshots.length === 0 && entry?.screenshotUrl) {
+    screenshots.push({
+      url: entry.screenshotUrl,
+      name: entry?.screenshotName || null
+    });
+  }
+
+  return screenshots.filter((screenshot) => typeof screenshot.url === 'string' && screenshot.url.trim());
+}
+
 function normalizeShitterEntries(entries) {
   return Array.isArray(entries)
-    ? entries.map((entry) => ({
-      ign: String(entry?.ign || '').trim(),
-      normalizedIgn: String(entry?.normalizedIgn || entry?.ign || '').trim().toLowerCase(),
-      reason: String(entry?.reason || '').trim(),
-      createdAt: entry?.createdAt || null,
-      removedAt: entry?.removedAt || null,
-      screenshotUrl: entry?.screenshotUrl || null,
-      screenshotName: entry?.screenshotName || null,
-      addedByUserId: entry?.addedByUserId || null,
-      removedByUserId: entry?.removedByUserId || null
-    })).filter((entry) => entry.ign && entry.reason && entry.createdAt)
+    ? entries.map((entry) => {
+      const screenshots = normalizeScreenshotEntries(entry);
+
+      return {
+        ign: String(entry?.ign || '').trim(),
+        normalizedIgn: String(entry?.normalizedIgn || entry?.ign || '').trim().toLowerCase(),
+        reason: String(entry?.reason || '').trim(),
+        createdAt: entry?.createdAt || null,
+        removedAt: entry?.removedAt || null,
+        screenshotUrl: screenshots[0]?.url || null,
+        screenshotName: screenshots[0]?.name || null,
+        screenshots,
+        addedByUserId: entry?.addedByUserId || null,
+        removedByUserId: entry?.removedByUserId || null
+      };
+    }).filter((entry) => entry.ign && entry.reason && entry.createdAt)
     : [];
 }
 
