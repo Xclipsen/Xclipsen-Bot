@@ -6,8 +6,8 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 
 - Polls `https://api.hypixel.net/v2/resources/skyblock/election` on a fixed interval.
 - Detects the currently active SkyBlock mayor.
-- Pings a configured role when the Election Booth opens.
-- Pings a configured role when a new mayor becomes active.
+- Can ping a configured role when the Election Booth opens.
+- Can ping a configured role when a new mayor becomes active.
 - Posts a status embed with the current mayor and perks.
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
@@ -29,7 +29,8 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 4. Copy `.env.example` to `.env`.
 5. Fill in your token and optional defaults.
 6. In Discord, run `/setup`, open `Discord -> Mayor Alerts`, and enter the target channel ID and role ID.
-7. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
+7. Use the Mayor Alerts toggle buttons to choose whether Election Booth and mayor change alerts should ping the role in that server.
+8. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
 
 ## Configuration
 
@@ -80,6 +81,7 @@ After the bot is online, run `/setup` in your Discord server and fill in:
 
 - the channel ID where updates should be posted
 - the role ID that should be pinged for election and mayor changes
+- whether election-open alerts and mayor-change alerts should ping that role
 
 Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can use the setup hub.
 

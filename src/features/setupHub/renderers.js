@@ -13,8 +13,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_MODAL_ID,
     SETUP_VIEW_HOME_ID,
     SETUP_VIEW_DISCORD_ID,
+    SETUP_VIEW_PLAYER_TOOLS_ID,
     SETUP_VIEW_MAYOR_ID,
     SETUP_MAYOR_EDIT_ID,
+    SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
+    SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
     SETUP_MAYOR_RELOAD_ID,
     SETUP_MAYOR_RESET_ID,
     SETUP_VIEW_REACTION_ROLES_ID,
@@ -34,11 +37,23 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
 
+  function getShitterStats(guildId) {
+    const entries = store.getShitterEntries(guildId);
+    const activeEntries = entries.filter((entry) => !entry.removedAt);
+    const activeNames = new Set(activeEntries.map((entry) => entry.normalizedIgn)).size;
+
+    return {
+      totalEntries: entries.length,
+      activeEntries: activeEntries.length,
+      activeNames
+    };
+  }
+
   function createSetupHubEmbed(guild, note = null) {
     const description = [
       'Choose a category to manage server-specific bot settings.',
-      'Discord contains the current mayor alerts and reaction role tools.',
-      'Additional sections can be added here later without changing the command flow.'
+      'Discord contains the current mayor alerts, reaction roles, and shitter configuration.',
+      'Player Tools gives admins a quick overview of the user-facing Minecraft utility commands.'
     ];
     if (note) {
       description.push('', note);
@@ -50,19 +65,20 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setDescription(description.join('\n'))
       .addFields(
         { name: 'Discord', value: 'Mayor alerts, current status posting, and reaction role management.', inline: false },
-        { name: 'Automation', value: 'Reserved for future tools and workflows.', inline: true },
-        { name: 'More Coming Soon', value: 'Use this hub as the central place for new bot modules later on.', inline: true }
+        { name: 'Player Tools', value: 'UUID lookup, name history, catacombs, and shitter lookup reference.', inline: false },
+        { name: 'More Coming Soon', value: 'Use this hub as the central place for new bot modules later on.', inline: false }
       )
       .setFooter({ text: 'Use the buttons below to navigate.' });
   }
 
   function createDiscordSetupEmbed(guild, note = null) {
     const config = store.getGuildConfig(guild.id);
+    const shitterStats = getShitterStats(guild.id);
     const description = [
       'This section groups the current Discord-side bot configuration.',
       'Open Mayor Alerts to change the status/alert channel and ping role.',
       'Open Reaction Roles to manage message-based role toggles.',
-      'Open Shitter List to control who can add or remove shitter entries.'
+      'Open Shitter List to control who can add or remove shitter entries and store evidence screenshots.'
     ];
     if (note) {
       description.push('', note);
@@ -73,15 +89,69 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setTitle('Setup Hub - Discord')
       .setDescription(description.join('\n'))
       .addFields(
-        { name: 'Mayor Alerts', value: `Channel: ${config.channelId ? `<#${config.channelId}>` : 'Not configured'}\nRole: ${config.roleId ? `<@&${config.roleId}>` : 'Not configured'}`, inline: false },
+        {
+          name: 'Mayor Alerts',
+          value: [
+            `Channel: ${config.channelId ? `<#${config.channelId}>` : 'Not configured'}`,
+            `Role: ${config.roleId ? `<@&${config.roleId}>` : 'Not configured'}`,
+            `Election ping: ${config.mayorAlerts.pingElectionOpen ? 'On' : 'Off'}`,
+            `Mayor change ping: ${config.mayorAlerts.pingMayorChange ? 'On' : 'Off'}`
+          ].join('\n'),
+          inline: false
+        },
         { name: 'Reaction Roles', value: `${config.reactionRoles.length} binding(s) configured`, inline: false },
         {
-          name: 'Shitter List Permissions',
+          name: 'Shitter List',
+          value: `Active names: ${shitterStats.activeNames}\nActive entries: ${shitterStats.activeEntries}\nEvidence per entry: up to 5 screenshots`,
+          inline: false
+        },
+        {
+          name: 'Shitter Permissions',
           value: `Blocked users: ${config.shitterPermissions.blockedUserIds.length}\nBlocked roles: ${config.shitterPermissions.blockedRoleIds.length}\nAllowed roles: ${config.shitterPermissions.allowedRoleIds.length || 'Everyone'}`,
           inline: false
         }
       )
       .setFooter({ text: 'Pick a Discord settings category.' });
+  }
+
+  function createPlayerToolsEmbed(guild, note = null) {
+    const shitterStats = getShitterStats(guild.id);
+    const description = [
+      'These commands do not need extra setup, but they are some of the most useful player-facing tools in the bot.',
+      'Use this page as a quick reference for moderators and staff.'
+    ];
+
+    if (note) {
+      description.push('', note);
+    }
+
+    return new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle('Setup Hub - Player Tools')
+      .setDescription(description.join('\n'))
+      .addFields(
+        {
+          name: '/uuid',
+          value: 'Looks up a Mojang UUID from an IGN and shows the Stuffy-style percentile and rank position.',
+          inline: false
+        },
+        {
+          name: '/namehistory',
+          value: 'Shows the current Minecraft name plus previous names, with the newest previous names first.',
+          inline: false
+        },
+        {
+          name: '/cata and /catacombs',
+          value: 'Shows a player catacombs overview using the Hypixel API.',
+          inline: false
+        },
+        {
+          name: '/shitter query and /shitter list',
+          value: `Checks server-local shitter entries. This server currently has ${shitterStats.activeNames} active name(s) across ${shitterStats.activeEntries} active entr${shitterStats.activeEntries === 1 ? 'y' : 'ies'}.`,
+          inline: false
+        }
+      )
+      .setFooter({ text: 'This page is informational; run the slash commands directly in chat.' });
   }
 
   function formatMentionList(values, type) {
@@ -96,6 +166,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     const permissions = store.getGuildConfig(guild.id).shitterPermissions;
     const description = [
       'Control who is blocked from adding or removing shitter entries and which roles are allowed to manage them.',
+      'Each shitter entry can include up to 5 screenshot attachments as evidence.',
       'If allowed roles stay empty, everyone can manage entries unless blocked by user ID or role ID.'
     ];
     if (note) {
@@ -136,7 +207,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     const config = store.getGuildConfig(guild.id);
     const description = [
       'Manage mayor alert posting for this server.',
-      'You can change the target channel, ping role, force a fresh status reload, or reset old mayor messages from here.'
+      'You can change the target channel, ping role, toggle which alert types ping the role, force a fresh status reload, or reset old mayor messages from here.'
     ];
     if (note) {
       description.push('', note);
@@ -148,19 +219,27 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setDescription(description.join('\n'))
       .addFields(
         { name: 'Status Channel', value: config.channelId ? `<#${config.channelId}>` : 'Not configured', inline: true },
-        { name: 'Ping Role', value: config.roleId ? `<@&${config.roleId}>` : 'Not configured', inline: true }
+        { name: 'Ping Role', value: config.roleId ? `<@&${config.roleId}>` : 'Not configured', inline: true },
+        { name: 'Election Booth Ping', value: config.mayorAlerts.pingElectionOpen ? 'Enabled' : 'Disabled', inline: true },
+        { name: 'Mayor Change Ping', value: config.mayorAlerts.pingMayorChange ? 'Enabled' : 'Disabled', inline: true }
       )
-      .setFooter({ text: 'Edit the config or reload the live mayor status.' });
+      .setFooter({ text: 'Edit the config, toggle pings, or reload the live mayor status.' });
   }
 
   function createSetupComponents() {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Discord').setStyle(ButtonStyle.Primary)
-      ),
-      new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId('setup-placeholder-automation').setLabel('Automation').setStyle(ButtonStyle.Secondary).setDisabled(true),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Discord').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_PLAYER_TOOLS_ID).setLabel('Player Tools').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId('setup-placeholder-more').setLabel('More Soon').setStyle(ButtonStyle.Secondary).setDisabled(true)
+      )
+    ];
+  }
+
+  function createPlayerToolsComponents() {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_VIEW_HOME_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
       )
     ];
   }
@@ -189,12 +268,27 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     ];
   }
 
-  function createMayorSetupComponents() {
+  function createMayorSetupComponents(guild) {
+    const guildId = typeof guild === 'string' ? guild : guild?.id;
+    const mayorAlerts = guildId
+      ? store.getGuildConfig(guildId).mayorAlerts
+      : { pingElectionOpen: true, pingMayorChange: true };
+
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_MAYOR_EDIT_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(SETUP_MAYOR_RELOAD_ID).setLabel('Reload Status').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(SETUP_MAYOR_RESET_ID).setLabel('Reset Messages').setStyle(ButtonStyle.Danger)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId(SETUP_MAYOR_TOGGLE_ELECTION_PING_ID)
+          .setLabel(`Booth Ping: ${mayorAlerts.pingElectionOpen ? 'On' : 'Off'}`)
+          .setStyle(mayorAlerts.pingElectionOpen ? ButtonStyle.Success : ButtonStyle.Secondary),
+        new ButtonBuilder()
+          .setCustomId(SETUP_MAYOR_TOGGLE_CHANGE_PING_ID)
+          .setLabel(`Mayor Ping: ${mayorAlerts.pingMayorChange ? 'On' : 'Off'}`)
+          .setStyle(mayorAlerts.pingMayorChange ? ButtonStyle.Success : ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
@@ -286,10 +380,12 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   return {
     createSetupHubEmbed,
     createDiscordSetupEmbed,
+    createPlayerToolsEmbed,
     createShitterSetupEmbed,
     createReactionRoleSetupEmbed,
     createMayorSetupEmbed,
     createSetupComponents,
+    createPlayerToolsComponents,
     createDiscordSetupComponents,
     createMayorSetupComponents,
     createShitterSetupComponents,

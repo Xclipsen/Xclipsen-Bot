@@ -11,6 +11,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   const data = createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache });
   const embeds = createMayorAlertEmbeds({ env, skyblock });
 
+  function getMayorAlertConfig(guildId) {
+    return store.getGuildConfig(guildId).mayorAlerts;
+  }
+
   async function sendRolePing(guildId, content, embedsToSend = []) {
     const { roleId } = store.getGuildConfig(guildId);
     if (!roleId) {
@@ -68,7 +72,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
   async function sendMayorChangePing(guildId, mayor, boothOpen, currentElection = null) {
     const mayorEmoji = await data.getMayorEmoji(guildId, mayor);
-    await sendRolePing(guildId, `${mayorEmoji} A new mayor has been elected.`);
+    const { roleId } = store.getGuildConfig(guildId);
+    if (roleId && getMayorAlertConfig(guildId).pingMayorChange) {
+      await sendRolePing(guildId, `${mayorEmoji} A new mayor has been elected.`);
+    }
     await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection, { forceResend: true });
   }
 
@@ -109,7 +116,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   }
 
   async function sendElectionPing(guildId, mayor, currentElection) {
-    await sendRolePing(guildId, ':ballot_box: **Election Booth Open**');
+    const { roleId } = store.getGuildConfig(guildId);
+    if (roleId && getMayorAlertConfig(guildId).pingElectionOpen) {
+      await sendRolePing(guildId, ':ballot_box: **Election Booth Open**');
+    }
     await sendMayorStatusUpdate(guildId, mayor, true, currentElection, { forceResend: true });
   }
 
@@ -161,10 +171,6 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
         if (boothStateChanged) {
           store.setGuildRuntimeState(guildId, { ...state, boothOpen });
-        }
-
-        if (!store.getGuildConfig(guildId).roleId) {
-          continue;
         }
 
         if (boothStateChanged && boothOpen && currentElection) {

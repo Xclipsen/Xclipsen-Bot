@@ -19,6 +19,7 @@ function normalizeGuildConfig(config) {
   return {
     channelId: config?.channelId || null,
     roleId: config?.roleId || null,
+    mayorAlerts: normalizeMayorAlertConfig(config?.mayorAlerts),
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),
       blockedRoleIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedRoleIds),
@@ -33,6 +34,13 @@ function normalizeGuildConfig(config) {
         requiredRoleId: entry?.requiredRoleId || null
       }))
       : []
+  };
+}
+
+function normalizeMayorAlertConfig(config) {
+  return {
+    pingElectionOpen: config?.pingElectionOpen !== false,
+    pingMayorChange: config?.pingMayorChange !== false
   };
 }
 

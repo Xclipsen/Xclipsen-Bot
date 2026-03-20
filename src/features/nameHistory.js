@@ -22,15 +22,21 @@ function createNameHistoryFeature({ minecraft }) {
     const currentName = String(profile.name || '').trim().toLowerCase();
     const seen = new Set();
 
-    return profile.history.filter((entry) => {
-      const normalizedName = String(entry?.name || '').trim().toLowerCase();
-      if (!normalizedName || normalizedName === currentName || seen.has(normalizedName)) {
-        return false;
-      }
+    return profile.history
+      .filter((entry) => {
+        const normalizedName = String(entry?.name || '').trim().toLowerCase();
+        if (!normalizedName || normalizedName === currentName || seen.has(normalizedName)) {
+          return false;
+        }
 
-      seen.add(normalizedName);
-      return true;
-    });
+        seen.add(normalizedName);
+        return true;
+      })
+      .sort((left, right) => {
+        const leftTime = left?.changedAt ? new Date(left.changedAt).getTime() : Number.NEGATIVE_INFINITY;
+        const rightTime = right?.changedAt ? new Date(right.changedAt).getTime() : Number.NEGATIVE_INFINITY;
+        return rightTime - leftTime;
+      });
   }
 
   function buildHistoryLines(profile) {

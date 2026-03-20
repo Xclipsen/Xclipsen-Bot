@@ -7,8 +7,11 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
   const {
     SETUP_VIEW_HOME_ID,
     SETUP_VIEW_DISCORD_ID,
+    SETUP_VIEW_PLAYER_TOOLS_ID,
     SETUP_VIEW_MAYOR_ID,
     SETUP_MAYOR_EDIT_ID,
+    SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
+    SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
     SETUP_MAYOR_RELOAD_ID,
     SETUP_MAYOR_RESET_ID,
     SETUP_VIEW_REACTION_ROLES_ID,
@@ -95,8 +98,13 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
       return;
     }
 
+    if (interaction.customId === SETUP_VIEW_PLAYER_TOOLS_ID) {
+      await updateSetupView(interaction, renderers.createPlayerToolsEmbed(interaction.guild), renderers.createPlayerToolsComponents());
+      return;
+    }
+
     if (interaction.customId === SETUP_VIEW_MAYOR_ID) {
-      await updateSetupView(interaction, renderers.createMayorSetupEmbed(interaction.guild), renderers.createMayorSetupComponents());
+      await updateSetupView(interaction, renderers.createMayorSetupEmbed(interaction.guild), renderers.createMayorSetupComponents(interaction.guild));
       return;
     }
 
@@ -124,7 +132,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
 
       await interaction.editReply({
         embeds: [renderers.createMayorSetupEmbed(interaction.guild, note)],
-        components: renderers.createMayorSetupComponents()
+        components: renderers.createMayorSetupComponents(interaction.guild)
       });
       return;
     }
@@ -154,6 +162,31 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
       return;
     }
 
+    if (
+      interaction.customId === SETUP_MAYOR_TOGGLE_ELECTION_PING_ID ||
+      interaction.customId === SETUP_MAYOR_TOGGLE_CHANGE_PING_ID
+    ) {
+      const config = store.getGuildConfig(interaction.guildId);
+      const nextMayorAlerts = {
+        ...config.mayorAlerts,
+        ...(interaction.customId === SETUP_MAYOR_TOGGLE_ELECTION_PING_ID
+          ? { pingElectionOpen: !config.mayorAlerts.pingElectionOpen }
+          : { pingMayorChange: !config.mayorAlerts.pingMayorChange })
+      };
+
+      store.setGuildConfig(interaction.guildId, { mayorAlerts: nextMayorAlerts });
+
+      const note = interaction.customId === SETUP_MAYOR_TOGGLE_ELECTION_PING_ID
+        ? `Election booth pings are now ${nextMayorAlerts.pingElectionOpen ? 'enabled' : 'disabled'}.`
+        : `Mayor change pings are now ${nextMayorAlerts.pingMayorChange ? 'enabled' : 'disabled'}.`;
+
+      await interaction.update({
+        embeds: [renderers.createMayorSetupEmbed(interaction.guild, note)],
+        components: renderers.createMayorSetupComponents(interaction.guild)
+      });
+      return;
+    }
+
     if (interaction.customId === SETUP_MAYOR_RESET_ID) {
       await interaction.deferUpdate();
 
@@ -168,7 +201,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
 
       await interaction.editReply({
         embeds: [renderers.createMayorSetupEmbed(interaction.guild, note)],
-        components: renderers.createMayorSetupComponents()
+        components: renderers.createMayorSetupComponents(interaction.guild)
       });
       return;
     }
@@ -218,7 +251,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
 
     await interaction.editReply({
       embeds: [renderers.createMayorSetupEmbed(interaction.guild, setupNote)],
-      components: renderers.createMayorSetupComponents(),
+      components: renderers.createMayorSetupComponents(interaction.guild),
       content: null
     });
   }

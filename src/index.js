@@ -161,6 +161,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_EDIT_ID ||
+        interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_ELECTION_PING_ID ||
+        interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_CHANGE_PING_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_RESET_ID ||
         interaction.customId === interactionIds.SETUP_SHITTER_MODAL_ID
       )
