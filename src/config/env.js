@@ -12,6 +12,7 @@ for (const key of REQUIRED_ENV_VARS) {
 
 const env = {
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+  GITHUB_TOKEN: process.env.GITHUB_TOKEN || null,
   HYPIXEL_API_KEY: process.env.HYPIXEL_API_KEY || null,
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,
@@ -24,6 +25,7 @@ const env = {
   ]),
   MOCK_MODE: process.env.MOCK_MODE === 'true',
   CHECK_INTERVAL_MINUTES: Math.max(1, Number.parseInt(process.env.CHECK_INTERVAL_MINUTES || '5', 10)),
+  MOD_UPDATE_CHECK_MINUTES: Math.max(5, Number.parseInt(process.env.MOD_UPDATE_CHECK_MINUTES || '60', 10)),
   STATUS_UPDATE_MINUTES: Math.max(1, Number.parseInt(process.env.STATUS_UPDATE_MINUTES || '30', 10)),
   ELECTION_URL: 'https://api.hypixel.net/v2/resources/skyblock/election',
   SKYBLOCK_EPOCH_SECONDS: 1560275700,

@@ -1,19 +1,27 @@
-const { MessageFlags } = require('discord.js');
+const { ChannelType, MessageFlags, PermissionsBitField } = require('discord.js');
 
 const { createSetupHubRenderers } = require('./renderers');
 
-function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, interactionIds }) {
+function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eventReminders, reactionRoles, interactionIds }) {
   const renderers = createSetupHubRenderers({ store, reactionRoles, interactionIds });
   const {
     SETUP_VIEW_HOME_ID,
     SETUP_VIEW_DISCORD_ID,
     SETUP_VIEW_PLAYER_TOOLS_ID,
     SETUP_VIEW_MAYOR_ID,
+    SETUP_VIEW_EVENT_REMINDERS_ID,
+    SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
+    SETUP_FAST_SETUP_ID,
+    SETUP_EVENT_REMINDERS_MODAL_ID,
+    SETUP_EVENT_REMINDERS_TEST_ALL_ID,
     SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
     SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
     SETUP_MAYOR_RELOAD_ID,
     SETUP_MAYOR_RESET_ID,
+    SETUP_MOD_UPDATES_MODAL_ID,
+    SETUP_MOD_UPDATES_REFRESH_ID,
+    SETUP_MOD_UPDATES_TEST_ID,
     SETUP_VIEW_REACTION_ROLES_ID,
     SETUP_VIEW_SHITTER_ID,
     SETUP_REACTION_ADD_MODAL_ID,
@@ -27,6 +35,11 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
     SETUP_SHITTER_BLOCKED_USERS_INPUT_ID,
     SETUP_SHITTER_BLOCKED_ROLES_INPUT_ID,
     SETUP_SHITTER_ALLOWED_ROLES_INPUT_ID,
+    SETUP_MOD_UPDATES_CHANNEL_INPUT_ID,
+    SETUP_MOD_UPDATES_ROLE_INPUT_ID,
+    SETUP_MOD_UPDATES_REPOS_INPUT_ID,
+    SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
+    SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
     SETUP_CHANNEL_INPUT_ID,
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
@@ -51,6 +64,78 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
     }
 
     return { channel, role };
+  }
+
+  async function validateModUpdatesSetupInputs(guild, channelId, roleId) {
+    const normalizedChannelId = String(channelId || '').trim() || null;
+    const normalizedRoleId = String(roleId || '').trim() || null;
+
+    if (normalizedChannelId && !isSnowflake(normalizedChannelId)) {
+      throw new Error('Channel ID must be a valid Discord snowflake.');
+    }
+
+    if (normalizedRoleId && !isSnowflake(normalizedRoleId)) {
+      throw new Error('Role ID must be a valid Discord snowflake.');
+    }
+
+    if (normalizedRoleId && !normalizedChannelId) {
+      throw new Error('Set a channel ID before configuring a ping role.');
+    }
+
+    if (normalizedChannelId) {
+      const channel = await guild.channels.fetch(normalizedChannelId).catch(() => null);
+      if (!channel || !channel.isTextBased()) {
+        throw new Error('The channel ID is invalid or not a text-based channel in this server.');
+      }
+    }
+
+    if (normalizedRoleId) {
+      const role = await guild.roles.fetch(normalizedRoleId).catch(() => null);
+      if (!role) {
+        throw new Error('The role ID is invalid or not part of this server.');
+      }
+    }
+
+    return {
+      channelId: normalizedChannelId,
+      roleId: normalizedRoleId
+    };
+  }
+
+  async function validateOptionalChannelRoleInputs(guild, channelId, roleId) {
+    const normalizedChannelId = String(channelId || '').trim() || null;
+    const normalizedRoleId = String(roleId || '').trim() || null;
+
+    if (normalizedChannelId && !isSnowflake(normalizedChannelId)) {
+      throw new Error('Channel ID must be a valid Discord snowflake.');
+    }
+
+    if (normalizedRoleId && !isSnowflake(normalizedRoleId)) {
+      throw new Error('Role ID must be a valid Discord snowflake.');
+    }
+
+    if (normalizedRoleId && !normalizedChannelId) {
+      throw new Error('Set a channel ID before configuring a ping role.');
+    }
+
+    if (normalizedChannelId) {
+      const channel = await guild.channels.fetch(normalizedChannelId).catch(() => null);
+      if (!channel || !channel.isTextBased()) {
+        throw new Error('The channel ID is invalid or not a text-based channel in this server.');
+      }
+    }
+
+    if (normalizedRoleId) {
+      const role = await guild.roles.fetch(normalizedRoleId).catch(() => null);
+      if (!role) {
+        throw new Error('The role ID is invalid or not part of this server.');
+      }
+    }
+
+    return {
+      channelId: normalizedChannelId,
+      roleId: normalizedRoleId
+    };
   }
 
   function parseSnowflakeList(rawValue) {
@@ -83,6 +168,15 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
     await interaction.update({ embeds: [embed], components });
   }
 
+  async function buildModUpdatesView(guild, note = null) {
+    const releaseStatuses = await modUpdates.fetchTrackedReleaseStatuses(guild.id);
+
+    return {
+      embeds: [renderers.createModUpdatesSetupEmbed(guild, releaseStatuses, note)],
+      components: renderers.createModUpdatesSetupComponents()
+    };
+  }
+
   async function handleSetupNavigationButton(interaction) {
     if (!(await ensureSetupAccess(interaction, 'setup panel'))) {
       return;
@@ -105,6 +199,17 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
 
     if (interaction.customId === SETUP_VIEW_MAYOR_ID) {
       await updateSetupView(interaction, renderers.createMayorSetupEmbed(interaction.guild), renderers.createMayorSetupComponents(interaction.guild));
+      return;
+    }
+
+    if (interaction.customId === SETUP_VIEW_EVENT_REMINDERS_ID) {
+      await updateSetupView(interaction, renderers.createEventRemindersSetupEmbed(interaction.guild), renderers.createEventRemindersSetupComponents());
+      return;
+    }
+
+    if (interaction.customId === SETUP_VIEW_MOD_UPDATES_ID) {
+      await interaction.deferUpdate();
+      await interaction.editReply(await buildModUpdatesView(interaction.guild));
       return;
     }
 
@@ -152,13 +257,87 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
       return;
     }
 
+    if (interaction.customId === SETUP_FAST_SETUP_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        note = await runFastSetup(interaction.guild);
+      } catch (error) {
+        console.error(`Fast setup failed for guild ${interaction.guildId}:`, error);
+        note = `Fast setup failed: ${error.message}`;
+      }
+
+      await interaction.editReply({
+        embeds: [renderers.createDiscordSetupEmbed(interaction.guild, note)],
+        components: renderers.createDiscordSetupComponents()
+      });
+      return;
+    }
+
     if (interaction.customId === SETUP_REACTION_ADD_MODAL_ID) {
       await interaction.showModal(renderers.createReactionRoleAddModal());
       return;
     }
 
+    if (interaction.customId === SETUP_MOD_UPDATES_MODAL_ID) {
+      await interaction.showModal(renderers.createModUpdatesSetupModal(store.getGuildConfig(interaction.guildId).modUpdates));
+      return;
+    }
+
+    if (interaction.customId === SETUP_EVENT_REMINDERS_MODAL_ID) {
+      await interaction.showModal(renderers.createEventRemindersSetupModal(store.getGuildConfig(interaction.guildId).eventReminders));
+      return;
+    }
+
+    if (interaction.customId === SETUP_EVENT_REMINDERS_TEST_ALL_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        await eventReminders.sendTestReminders(interaction.guildId);
+        note = 'Sent test reminders for all configured events to the shared events channel.';
+      } catch (error) {
+        console.error(`Failed to send event reminder test batch for guild ${interaction.guildId}:`, error);
+        note = 'Event reminder test batch failed. Check the configured channel, roles, and bot permissions.';
+      }
+
+      await interaction.editReply({
+        embeds: [renderers.createEventRemindersSetupEmbed(interaction.guild, note)],
+        components: renderers.createEventRemindersSetupComponents()
+      });
+      return;
+    }
+
     if (interaction.customId === SETUP_MAYOR_EDIT_ID) {
       await interaction.showModal(renderers.createMayorSetupModal(store.getGuildConfig(interaction.guildId)));
+      return;
+    }
+
+    if (interaction.customId === SETUP_MOD_UPDATES_REFRESH_ID) {
+      await interaction.deferUpdate();
+      if (store.getGuildConfig(interaction.guildId).modUpdates.channelId) {
+        await modUpdates.syncStatusMessage(interaction.guildId).catch((error) => {
+          console.error(`Failed to refresh mod update status message for guild ${interaction.guildId}:`, error);
+        });
+      }
+      await interaction.editReply(await buildModUpdatesView(interaction.guild, 'Refreshed latest release data from GitHub.'));
+      return;
+    }
+
+    if (interaction.customId === SETUP_MOD_UPDATES_TEST_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        await modUpdates.sendTestNotification(interaction.guildId);
+        note = 'Sent a mod update test ping to the configured channel.';
+      } catch (error) {
+        console.error(`Failed to send mod update test ping for guild ${interaction.guildId}:`, error);
+        note = 'Mod update test ping failed. Check the configured channel, role, and bot permissions.';
+      }
+
+      await interaction.editReply(await buildModUpdatesView(interaction.guild, note));
       return;
     }
 
@@ -341,15 +520,301 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, reactionRoles, 
     });
   }
 
+  async function handleModUpdatesSetupModalSubmit(interaction) {
+    if (!(await ensureSetupAccess(interaction, 'mod update setup form'))) {
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    let trackedRepos;
+    let validatedSetup;
+    try {
+      validatedSetup = await validateModUpdatesSetupInputs(
+        interaction.guild,
+        interaction.fields.getTextInputValue(SETUP_MOD_UPDATES_CHANNEL_INPUT_ID),
+        interaction.fields.getTextInputValue(SETUP_MOD_UPDATES_ROLE_INPUT_ID)
+      );
+      trackedRepos = modUpdates
+        .parseTrackedReposInput(interaction.fields.getTextInputValue(SETUP_MOD_UPDATES_REPOS_INPUT_ID))
+        .map((repo) => repo.url);
+    } catch (error) {
+      await interaction.editReply({ content: error.message });
+      return;
+    }
+
+    store.setGuildConfig(interaction.guildId, {
+      modUpdates: {
+        channelId: validatedSetup.channelId,
+        roleId: validatedSetup.roleId,
+        trackedRepos
+      }
+    });
+
+    store.setGuildRuntimeState(interaction.guildId, {
+      modUpdates: {
+        ...store.getGuildRuntimeState(interaction.guildId).modUpdates,
+        statusMessageId: null,
+        statusChannelId: null,
+        alertMessageId: null,
+        alertChannelId: null
+      }
+    });
+
+    await modUpdates.deleteTrackedStatusMessages(interaction.guildId).catch((error) => {
+      console.error(`Failed to delete old mod update status messages for guild ${interaction.guildId}:`, error);
+    });
+
+    if (validatedSetup.channelId && trackedRepos.length > 0) {
+      await modUpdates.syncStatusMessage(interaction.guildId).catch((error) => {
+        console.error(`Failed to post mod update status message for guild ${interaction.guildId}:`, error);
+      });
+    }
+
+    await interaction.editReply({
+      ...(await buildModUpdatesView(
+        interaction.guild,
+        trackedRepos.length === 0
+          ? 'Mod update tracking cleared for this server.'
+          : validatedSetup.channelId
+            ? 'Mod update config saved successfully. The channel now keeps one sorted mod list and sends a fresh ping on new updates.'
+            : 'Tracked GitHub repositories saved successfully, but automatic posts stay disabled until you set a channel.'
+      )),
+      content: null
+    });
+  }
+
+  async function handleEventRemindersSetupModalSubmit(interaction) {
+    if (!(await ensureSetupAccess(interaction, 'event reminders setup form'))) {
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    let validatedSetup;
+    let roles;
+    try {
+      roles = parseEventReminderRoles(interaction.fields.getTextInputValue(SETUP_EVENT_REMINDERS_ROLES_INPUT_ID));
+      validatedSetup = await validateOptionalChannelRoleInputs(
+        interaction.guild,
+        interaction.fields.getTextInputValue(SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID),
+        Object.values(roles).find(Boolean) || null
+      );
+    } catch (error) {
+      await interaction.editReply({ content: error.message });
+      return;
+    }
+
+    try {
+      for (const roleId of Object.values(roles)) {
+        if (!roleId) {
+          continue;
+        }
+
+        const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
+        if (!role) {
+          throw new Error(`The role ID is invalid or not part of this server: ${roleId}`);
+        }
+      }
+    } catch (error) {
+      await interaction.editReply({ content: error.message });
+      return;
+    }
+
+    store.setGuildConfig(interaction.guildId, {
+      eventReminders: {
+        channelId: validatedSetup.channelId,
+        roles
+      }
+    });
+
+    store.setGuildRuntimeState(interaction.guildId, {
+      ...store.getGuildRuntimeState(interaction.guildId),
+      eventReminders: {
+        lastSentStarts: {}
+      }
+    });
+
+    await interaction.editReply({
+      embeds: [renderers.createEventRemindersSetupEmbed(
+        interaction.guild,
+        validatedSetup.channelId
+          ? 'Event reminder config saved successfully.'
+          : 'Event reminders disabled for this server.'
+      )],
+      components: renderers.createEventRemindersSetupComponents(),
+      content: null
+    });
+  }
+
   return {
     handleSetupCommand,
     handleSetupNavigationButton,
     handleSetupActionButton,
     handleMayorSetupModalSubmit,
+    handleEventRemindersSetupModalSubmit,
+    handleModUpdatesSetupModalSubmit,
     handleReactionRoleModalSubmit,
     handleShitterSetupModalSubmit,
     ids: interactionIds
   };
+
+  async function runFastSetup(guild) {
+    if (!guild.members.me) {
+      await guild.members.fetchMe();
+    }
+
+    const me = guild.members.me;
+    const missingPermissions = [
+      PermissionsBitField.Flags.ManageChannels,
+      PermissionsBitField.Flags.ManageRoles,
+      PermissionsBitField.Flags.SendMessages,
+      PermissionsBitField.Flags.ViewChannel
+    ].filter((permission) => !me.permissions.has(permission));
+
+    if (missingPermissions.length > 0) {
+      throw new Error('Bot needs Manage Channels, Manage Roles, View Channel, and Send Messages for Fast Setup.');
+    }
+
+    const mayorChannel = await findOrCreateTextChannel(guild, 'mayor-channel');
+    const modUpdatesChannel = await findOrCreateTextChannel(guild, 'mod-updates');
+    const eventsChannel = await findOrCreateTextChannel(guild, 'events');
+
+    const mayorRole = await findOrCreateRole(guild, 'mayor-alerts');
+    const modUpdatesRole = await findOrCreateRole(guild, 'mod-updates');
+    const eventRoles = {
+      spookyFestival: await findOrCreateRole(guild, 'spooky-festival'),
+      travelingZoo: await findOrCreateRole(guild, 'traveling-zoo'),
+      hoppitysHunt: await findOrCreateRole(guild, 'hoppitys-hunt'),
+      seasonOfJerry: await findOrCreateRole(guild, 'season-of-jerry'),
+      cakeReminder: await findOrCreateRole(guild, 'cake-reminder'),
+      cultReminder: await findOrCreateRole(guild, 'cult-reminder')
+    };
+
+    store.setGuildConfig(guild.id, {
+      channelId: mayorChannel.id,
+      roleId: mayorRole.id,
+      modUpdates: {
+        ...store.getGuildConfig(guild.id).modUpdates,
+        channelId: modUpdatesChannel.id,
+        roleId: modUpdatesRole.id
+      },
+      eventReminders: {
+        channelId: eventsChannel.id,
+        roles: Object.fromEntries(Object.entries(eventRoles).map(([key, role]) => [key, role.id]))
+      }
+    });
+
+    store.setGuildRuntimeState(guild.id, {
+      ...store.getGuildRuntimeState(guild.id),
+      eventReminders: {
+        lastSentStarts: {}
+      }
+    });
+
+    await modUpdates.syncStatusMessage(guild.id).catch((error) => {
+      console.error(`Failed to post mod update status during fast setup for guild ${guild.id}:`, error);
+    });
+
+    try {
+      const data = await mayorAlerts.fetchElectionData();
+      const mayor = data.mayor;
+      const currentElection = data.current || null;
+      const boothOpen = mayorAlerts.getBoothOpen(data);
+      await mayorAlerts.sendMayorStatusUpdate(guild.id, mayor, boothOpen, currentElection);
+      store.setGuildRuntimeState(guild.id, { ...store.getGuildRuntimeState(guild.id), boothOpen });
+    } catch (error) {
+      console.error(`Failed to post mayor status during fast setup for guild ${guild.id}:`, error);
+    }
+
+    return [
+      'Fast setup completed.',
+      `Mayor channel: <#${mayorChannel.id}> with <@&${mayorRole.id}>`,
+      `Mod updates channel: <#${modUpdatesChannel.id}> with <@&${modUpdatesRole.id}>`,
+      `Events channel: <#${eventsChannel.id}> with roles for Spooky, Zoo, Hoppity, Jerry, Cake, and Cult`
+    ].join('\n');
+  }
+
+  async function findOrCreateTextChannel(guild, name) {
+    await guild.channels.fetch();
+    const existingChannel = guild.channels.cache.find((channel) => (
+      channel.type === ChannelType.GuildText &&
+      String(channel.name || '').toLowerCase() === name.toLowerCase()
+    ));
+
+    if (existingChannel) {
+      return existingChannel;
+    }
+
+    return guild.channels.create({
+      name,
+      type: ChannelType.GuildText
+    });
+  }
+
+  async function findOrCreateRole(guild, name) {
+    await guild.roles.fetch();
+    const existingRole = guild.roles.cache.find((role) => String(role.name || '').toLowerCase() === name.toLowerCase());
+
+    if (existingRole) {
+      return existingRole;
+    }
+
+    return guild.roles.create({ name, mentionable: true });
+  }
+}
+
+function parseEventReminderRoles(rawValue) {
+  const aliases = {
+    spooky: 'spookyFestival',
+    zoo: 'travelingZoo',
+    hoppity: 'hoppitysHunt',
+    jerry: 'seasonOfJerry',
+    cake: 'cakeReminder',
+    cult: 'cultReminder'
+  };
+
+  const roles = {
+    spookyFestival: null,
+    travelingZoo: null,
+    hoppitysHunt: null,
+    seasonOfJerry: null,
+    cakeReminder: null,
+    cultReminder: null
+  };
+
+  const lines = String(rawValue || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const line of lines) {
+    const separatorIndex = line.indexOf('=');
+    if (separatorIndex === -1) {
+      throw new Error(`Invalid role mapping: ${line}`);
+    }
+
+    const rawKey = line.slice(0, separatorIndex).trim().toLowerCase();
+    const rawRoleId = line.slice(separatorIndex + 1).trim();
+    const key = aliases[rawKey];
+
+    if (!key) {
+      throw new Error(`Unknown event role key: ${rawKey}`);
+    }
+
+    if (!rawRoleId) {
+      roles[key] = null;
+      continue;
+    }
+
+    if (!/^\d{16,20}$/.test(rawRoleId)) {
+      throw new Error(`Invalid Discord ID: ${rawRoleId}`);
+    }
+
+    roles[key] = rawRoleId;
+  }
+
+  return roles;
 }
 
 module.exports = { createSetupHub };

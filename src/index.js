@@ -8,6 +8,8 @@ const { createAccessControl } = require('./features/accessControl');
 const { createSkyblockUtils } = require('./utils/skyblock');
 const { createMinecraftUtils } = require('./utils/minecraft');
 const { createMayorAlerts } = require('./features/mayorAlerts');
+const { createModUpdatesService } = require('./features/modUpdates');
+const { createEventRemindersService } = require('./features/eventReminders');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
@@ -33,6 +35,8 @@ const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
 const minecraft = createMinecraftUtils();
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
+const modUpdates = createModUpdatesService({ client, store });
+const eventReminders = createEventRemindersService({ client, store });
 const reactionRoles = createReactionRoleService({
   client,
   store,
@@ -42,6 +46,8 @@ const setupHub = createSetupHub({
   store,
   ensureSetupAccess: accessControl.ensureSetupAccess,
   mayorAlerts,
+  modUpdates,
+  eventReminders,
   reactionRoles,
   interactionIds
 });
@@ -58,6 +64,8 @@ const simulation = createSimulationFeature({ store });
 
 let isCheckingElectionState = false;
 let isSendingScheduledStatusUpdate = false;
+let isCheckingModUpdates = false;
+let isCheckingEventReminders = false;
 
 async function runElectionStateCheck() {
   if (isCheckingElectionState) {
@@ -85,6 +93,32 @@ async function runScheduledStatusUpdate() {
   }
 }
 
+async function runModUpdateCheck() {
+  if (isCheckingModUpdates) {
+    return;
+  }
+
+  isCheckingModUpdates = true;
+  try {
+    await modUpdates.checkForUpdates();
+  } finally {
+    isCheckingModUpdates = false;
+  }
+}
+
+async function runEventReminderCheck() {
+  if (isCheckingEventReminders) {
+    return;
+  }
+
+  isCheckingEventReminders = true;
+  try {
+    await eventReminders.checkForReminders();
+  } finally {
+    isCheckingEventReminders = false;
+  }
+}
+
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
   await guild.commands.set(commands.map((command) => command.toJSON()));
@@ -103,8 +137,12 @@ client.once(Events.ClientReady, async (readyClient) => {
 
   await runElectionStateCheck();
   await runScheduledStatusUpdate();
+  await runModUpdateCheck();
+  await runEventReminderCheck();
   setInterval(() => void runElectionStateCheck(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
   setInterval(() => void runScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
+  setInterval(() => void runModUpdateCheck(), env.MOD_UPDATE_CHECK_MINUTES * 60 * 1000);
+  setInterval(() => void runEventReminderCheck(), 60 * 1000);
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -204,6 +242,12 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_EDIT_ID ||
+        interaction.customId === interactionIds.SETUP_FAST_SETUP_ID ||
+        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID ||
+        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_TEST_ALL_ID ||
+        interaction.customId === interactionIds.SETUP_MOD_UPDATES_MODAL_ID ||
+        interaction.customId === interactionIds.SETUP_MOD_UPDATES_REFRESH_ID ||
+        interaction.customId === interactionIds.SETUP_MOD_UPDATES_TEST_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_ELECTION_PING_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_CHANGE_PING_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_RESET_ID ||
@@ -221,6 +265,16 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID) {
       await setupHub.handleReactionRoleModalSubmit(interaction, 'add');
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_MOD_UPDATES_MODAL_ID) {
+      await setupHub.handleModUpdatesSetupModalSubmit(interaction);
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID) {
+      await setupHub.handleEventRemindersSetupModalSubmit(interaction);
       return;
     }
 

@@ -11,7 +11,7 @@ const helpSections = [
       },
       {
         command: '/setup',
-        description: 'Open the setup hub for mayor alerts, reaction roles, and shitter permissions.',
+        description: 'Open the setup hub for mayor alerts, mod update tracking, reaction roles, and shitter permissions.',
         example: '/setup',
         adminOnly: true
       },

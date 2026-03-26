@@ -1,6 +1,8 @@
 const fs = require('node:fs');
 const path = require('node:path');
 
+const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
+
 function loadJsonFile(filePath, fallbackValue) {
   try {
     const raw = fs.readFileSync(filePath, 'utf8');
@@ -20,6 +22,10 @@ function normalizeGuildConfig(config) {
     channelId: config?.channelId || null,
     roleId: config?.roleId || null,
     mayorAlerts: normalizeMayorAlertConfig(config?.mayorAlerts),
+    eventReminders: normalizeEventReminderConfig(config?.eventReminders),
+    cakeReminder: normalizeCakeReminderConfig(config?.cakeReminder),
+    cultReminder: normalizeCultReminderConfig(config?.cultReminder),
+    modUpdates: normalizeModUpdateConfig(config?.modUpdates),
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),
       blockedRoleIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedRoleIds),
@@ -41,6 +47,124 @@ function normalizeMayorAlertConfig(config) {
   return {
     pingElectionOpen: config?.pingElectionOpen !== false,
     pingMayorChange: config?.pingMayorChange !== false
+  };
+}
+
+function normalizeEventReminderConfig(config) {
+  return {
+    channelId: config?.channelId || null,
+    roles: {
+      spookyFestival: config?.roles?.spookyFestival || null,
+      travelingZoo: config?.roles?.travelingZoo || null,
+      hoppitysHunt: config?.roles?.hoppitysHunt || null,
+      seasonOfJerry: config?.roles?.seasonOfJerry || null,
+      cakeReminder: config?.roles?.cakeReminder || null,
+      cultReminder: config?.roles?.cultReminder || null
+    }
+  };
+}
+
+function normalizeCakeReminderConfig(config) {
+  return {
+    channelId: config?.channelId || null,
+    roleId: config?.roleId || null
+  };
+}
+
+function normalizeCultReminderConfig(config) {
+  return {
+    channelId: config?.channelId || null,
+    roleId: config?.roleId || null
+  };
+}
+
+function normalizeModUpdateConfig(config) {
+  const trackedRepos = Array.isArray(config?.trackedRepos)
+    ? normalizeGitHubRepoList(config.trackedRepos)
+    : [DEFAULT_MOD_UPDATE_REPO_URL];
+
+  return {
+    channelId: config?.channelId || null,
+    roleId: config?.roleId || null,
+    trackedRepos
+  };
+}
+
+function normalizeGitHubRepoList(values) {
+  return [...new Set(values
+    .map((value) => String(value || '').trim())
+    .filter(Boolean))];
+}
+
+function normalizeGuildRuntimeState(state) {
+  return {
+    boothOpen: state?.boothOpen ?? null,
+    alertMessageId: state?.alertMessageId ?? null,
+    alertChannelId: state?.alertChannelId ?? null,
+    statusMessageId: state?.statusMessageId ?? null,
+    statusChannelId: state?.statusChannelId ?? null,
+    modUpdates: normalizeModUpdateRuntimeState(state?.modUpdates),
+    eventReminders: normalizeEventReminderRuntimeState(state?.eventReminders),
+    cakeReminder: normalizeCakeReminderRuntimeState(state?.cakeReminder),
+    cultReminder: normalizeCultReminderRuntimeState(state?.cultReminder)
+  };
+}
+
+function normalizeModUpdateRuntimeState(state) {
+  const lastSeenReleases = state?.lastSeenReleases && typeof state.lastSeenReleases === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.lastSeenReleases)
+        .map(([repo, releaseId]) => [String(repo || '').trim(), releaseId == null ? null : String(releaseId)])
+        .filter(([repo]) => repo)
+    )
+    : {};
+
+  return {
+    lastSeenReleases,
+    statusMessageId: state?.statusMessageId ?? null,
+    statusChannelId: state?.statusChannelId ?? null,
+    alertMessageId: state?.alertMessageId ?? null,
+    alertChannelId: state?.alertChannelId ?? null
+  };
+}
+
+function normalizeEventReminderRuntimeState(state) {
+  const lastSentStarts = state?.lastSentStarts && typeof state.lastSentStarts === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.lastSentStarts)
+        .map(([eventKey, windowStart]) => [String(eventKey || '').trim(), windowStart == null ? null : Number(windowStart)])
+        .filter(([eventKey]) => eventKey)
+    )
+    : {};
+
+  const messageIds = state?.messageIds && typeof state.messageIds === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.messageIds)
+        .map(([eventKey, messageId]) => [String(eventKey || '').trim(), messageId == null ? null : String(messageId)])
+        .filter(([eventKey]) => eventKey)
+    )
+    : {};
+
+  return {
+    lastSentStarts,
+    messageIds,
+    channelId: state?.channelId ?? null
+  };
+}
+
+function normalizeCakeReminderRuntimeState(state) {
+  return {
+    lastSentWindowStart: state?.lastSentWindowStart ?? null,
+    messageId: state?.messageId ?? null,
+    channelId: state?.channelId ?? null
+  };
+}
+
+function normalizeCultReminderRuntimeState(state) {
+  return {
+    lastSentWindowStart: state?.lastSentWindowStart ?? null,
+    messageId: state?.messageId ?? null,
+    channelId: state?.channelId ?? null
   };
 }
 
@@ -166,13 +290,7 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       saveConfig();
     },
     getGuildRuntimeState(guildId) {
-      return guildState.guilds[guildId] || {
-        boothOpen: null,
-        alertMessageId: null,
-        alertChannelId: null,
-        statusMessageId: null,
-        statusChannelId: null
-      };
+      return normalizeGuildRuntimeState(guildState.guilds[guildId]);
     },
     setGuildRuntimeState(guildId, partialState) {
       guildState = {
@@ -225,6 +343,34 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     getConfiguredGuildIds() {
       return Object.entries(guildConfig.guilds)
         .filter(([, config]) => normalizeGuildConfig(config).channelId)
+        .map(([guildId]) => guildId);
+    },
+    getModUpdateConfiguredGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => {
+          const normalized = normalizeGuildConfig(config);
+          return normalized.modUpdates.channelId && normalized.modUpdates.trackedRepos.length > 0;
+        })
+        .map(([guildId]) => guildId);
+    },
+    getModUpdateChannelGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => normalizeGuildConfig(config).modUpdates.channelId)
+        .map(([guildId]) => guildId);
+    },
+    getEventReminderConfiguredGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => normalizeGuildConfig(config).eventReminders.channelId)
+        .map(([guildId]) => guildId);
+    },
+    getCakeReminderConfiguredGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => normalizeGuildConfig(config).cakeReminder.channelId)
+        .map(([guildId]) => guildId);
+    },
+    getCultReminderConfiguredGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => normalizeGuildConfig(config).cultReminder.channelId)
         .map(([guildId]) => guildId);
     }
   };

@@ -11,7 +11,8 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Posts a status embed with the current mayor and perks.
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
-- Includes an in-Discord `/setup` hub with sections for mayor alerts, reaction roles, and shitter permissions.
+- Includes an in-Discord `/setup` hub with sections for mayor alerts, mod update tracking with optional role pings, reaction roles, and shitter permissions.
+- Sends cake reminders into a dedicated configured channel on a fixed 124-hour cycle.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
@@ -31,31 +32,38 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 4. Copy `.env.example` to `.env`.
 5. Fill in your token and optional defaults.
 6. In Discord, run `/setup`, open `Discord -> Mayor Alerts`, and enter the target channel ID and role ID.
-7. Use the Mayor Alerts toggle buttons to choose whether Election Booth and mayor change alerts should ping the role in that server.
-8. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
+7. Open `Discord -> Mod Updates` to manage tracked GitHub repos. New servers start with `https://github.com/odtheking/Odin` prefilled.
+8. Use the Mayor Alerts toggle buttons to choose whether Election Booth and mayor change alerts should ping the role in that server.
+9. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
 
 ## Configuration
 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
+- `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
 - `HYPIXEL_API_KEY` - required for `/cata` and `/catacombs` using the official Hypixel API
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
 - `CHECK_INTERVAL_MINUTES` - interval for election and mayor checks
+- `MOD_UPDATE_CHECK_MINUTES` - interval for GitHub mod update checks
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
 - `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
 - `VOTE_BAR_FILLED_EMOJI` / `VOTE_BAR_EMPTY_EMOJI` - optional custom emojis for the mayor vote bar chart
+- Mod update tracking reads public GitHub release data for repos you add in `/setup -> Discord -> Mod Updates` and can post new releases into a configured channel with an optional role ping
+- Cake reminders use their own configured channel and optional ping role.
 - If your server already has emojis named like `diaz`, `cole`, or `mayor_diaz`, the bot can detect them automatically.
 - The bot now needs permission to manage roles if you use reaction roles.
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
+GITHUB_TOKEN=your_github_token
 HYPIXEL_API_KEY=your_hypixel_api_key
 DISCORD_CHANNEL_ID=123456789012345678
 DISCORD_ROLE_ID=123456789012345678
 ADMIN_USER_IDS=885542911511515146
 CHECK_INTERVAL_MINUTES=5
+MOD_UPDATE_CHECK_MINUTES=60
 STATUS_UPDATE_MINUTES=30
 MOCK_MODE=false
 EMOJI_DIAZ=<:diaz:123456789012345678>

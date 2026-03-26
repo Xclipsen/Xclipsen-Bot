@@ -17,11 +17,19 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_VIEW_DISCORD_ID,
     SETUP_VIEW_PLAYER_TOOLS_ID,
     SETUP_VIEW_MAYOR_ID,
+    SETUP_VIEW_EVENT_REMINDERS_ID,
+    SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
+    SETUP_FAST_SETUP_ID,
+    SETUP_EVENT_REMINDERS_MODAL_ID,
+    SETUP_EVENT_REMINDERS_TEST_ALL_ID,
     SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
     SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
     SETUP_MAYOR_RELOAD_ID,
     SETUP_MAYOR_RESET_ID,
+    SETUP_MOD_UPDATES_MODAL_ID,
+    SETUP_MOD_UPDATES_REFRESH_ID,
+    SETUP_MOD_UPDATES_TEST_ID,
     SETUP_VIEW_REACTION_ROLES_ID,
     SETUP_VIEW_SHITTER_ID,
     SETUP_REACTION_ADD_MODAL_ID,
@@ -35,6 +43,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_SHITTER_BLOCKED_USERS_INPUT_ID,
     SETUP_SHITTER_BLOCKED_ROLES_INPUT_ID,
     SETUP_SHITTER_ALLOWED_ROLES_INPUT_ID,
+    SETUP_MOD_UPDATES_CHANNEL_INPUT_ID,
+    SETUP_MOD_UPDATES_ROLE_INPUT_ID,
+    SETUP_MOD_UPDATES_REPOS_INPUT_ID,
+    SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
+    SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
     SETUP_CHANNEL_INPUT_ID,
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
@@ -54,7 +67,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   function createSetupHubEmbed(guild, note = null) {
     const description = [
       'Choose a category to manage server-specific bot settings.',
-      'Discord contains the current mayor alerts, reaction roles, and shitter configuration.',
+      'Discord contains the current mayor alerts, mod update tracking, reaction roles, and shitter configuration.',
       'Player Tools gives admins a quick overview of the user-facing Minecraft utility commands.'
     ];
     if (note) {
@@ -66,7 +79,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setTitle('Setup Hub')
       .setDescription(description.join('\n'))
       .addFields(
-        { name: 'Discord', value: 'Mayor alerts, current status posting, and reaction role management.', inline: false },
+        { name: 'Discord', value: 'Mayor alerts, mod update posting, current status embeds, and reaction role management.', inline: false },
         { name: 'Player Tools', value: 'UUID lookup, name history, catacombs, and shitter lookup reference.', inline: false },
         { name: 'More Coming Soon', value: 'Use this hub as the central place for new bot modules later on.', inline: false }
       )
@@ -79,6 +92,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     const description = [
       'This section groups the current Discord-side bot configuration.',
       'Open Mayor Alerts to change the status/alert channel and ping role.',
+      'Open Event Reminders to use one shared channel with event-specific ping roles.',
+      'Open Mod Updates to choose a release channel, optional ping role, and tracked GitHub repos.',
       'Open Reaction Roles to manage message-based role toggles.',
       'Open Shitter List to control who can add or remove shitter entries and store evidence screenshots.'
     ];
@@ -101,6 +116,28 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
           ].join('\n'),
           inline: false
         },
+        {
+          name: 'Event Reminders',
+          value: [
+            `Channel: ${config.eventReminders.channelId ? `<#${config.eventReminders.channelId}>` : 'Not configured'}`,
+            `Spooky: ${config.eventReminders.roles.spookyFestival ? `<@&${config.eventReminders.roles.spookyFestival}>` : 'Off'}`,
+            `Zoo: ${config.eventReminders.roles.travelingZoo ? `<@&${config.eventReminders.roles.travelingZoo}>` : 'Off'}`,
+            `Hoppity: ${config.eventReminders.roles.hoppitysHunt ? `<@&${config.eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
+            `Jerry: ${config.eventReminders.roles.seasonOfJerry ? `<@&${config.eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
+            `Cake: ${config.eventReminders.roles.cakeReminder ? `<@&${config.eventReminders.roles.cakeReminder}>` : 'Off'}`,
+            `Cult: ${config.eventReminders.roles.cultReminder ? `<@&${config.eventReminders.roles.cultReminder}>` : 'Off'}`
+          ].join('\n'),
+          inline: false
+        },
+        {
+          name: 'Mod Updates',
+          value: [
+            `Channel: ${config.modUpdates.channelId ? `<#${config.modUpdates.channelId}>` : 'Not configured'}`,
+            `Role: ${config.modUpdates.roleId ? `<@&${config.modUpdates.roleId}>` : 'Not configured'}`,
+            `Tracked repos: ${config.modUpdates.trackedRepos.length}`
+          ].join('\n'),
+          inline: false
+        },
         { name: 'Reaction Roles', value: `${config.reactionRoles.length} binding(s) configured`, inline: false },
         {
           name: 'Shitter List',
@@ -114,6 +151,87 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
         }
       )
       .setFooter({ text: 'Pick a Discord settings category.' });
+  }
+
+  function createModUpdatesSetupEmbed(guild, releaseStatuses, note = null) {
+    const modUpdates = store.getGuildConfig(guild.id).modUpdates;
+    const description = [
+      'Track public GitHub releases for the mod repositories configured in this server.',
+      'Set a Discord channel to keep one always-updated mod list and receive a fresh ping whenever a new update is detected.',
+      'Use the config editor below to add one GitHub URL or owner/repo entry per line.'
+    ];
+
+    if (note) {
+      description.push('', note);
+    }
+
+    const embed = new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle('Setup Hub - Discord - Mod Updates')
+      .setDescription(description.join('\n'))
+      .setFooter({ text: 'Refresh to fetch the newest release data from GitHub.' });
+
+    embed.addFields({
+      name: 'Configuration',
+      value: [
+        `Channel: ${modUpdates.channelId ? `<#${modUpdates.channelId}>` : 'Not configured'}`,
+        `Ping Role: ${modUpdates.roleId ? `<@&${modUpdates.roleId}>` : 'Not configured'}`,
+        `Tracked repos: ${modUpdates.trackedRepos.length}`
+      ].join('\n'),
+      inline: false
+    });
+
+    if (modUpdates.trackedRepos.length === 0) {
+      embed.addFields({
+        name: 'Tracked Repositories',
+        value: 'None configured yet. Add one or more GitHub repositories to start tracking releases.',
+        inline: false
+      });
+
+      return embed;
+    }
+
+    for (const status of releaseStatuses.slice(0, 25)) {
+      embed.addFields({
+        name: status.fullName,
+        value: buildModUpdateFieldValue(status),
+        inline: false
+      });
+    }
+
+    return embed;
+  }
+
+  function createEventRemindersSetupEmbed(guild, note = null) {
+    const eventReminders = store.getGuildConfig(guild.id).eventReminders;
+    const description = [
+      'Use one shared events channel for recurring SkyBlock events.',
+      'Each event can ping its own optional role when the event starts.',
+      'Tracked here: Cake Reminder, Cult Reminder, Spooky Festival, Traveling Zoo, Hoppity\'s Hunt, and Season of Jerry.'
+    ];
+
+    if (note) {
+      description.push('', note);
+    }
+
+    return new EmbedBuilder()
+      .setColor(0x1abc9c)
+      .setTitle('Setup Hub - Discord - Event Reminders')
+      .setDescription(description.join('\n'))
+      .addFields({
+        name: 'Configuration',
+        value: [
+          `Channel: ${eventReminders.channelId ? `<#${eventReminders.channelId}>` : 'Not configured'}`,
+          `Spooky Festival Role: ${eventReminders.roles.spookyFestival ? `<@&${eventReminders.roles.spookyFestival}>` : 'Off'}`,
+          `Traveling Zoo Role: ${eventReminders.roles.travelingZoo ? `<@&${eventReminders.roles.travelingZoo}>` : 'Off'}`,
+          `Hoppity's Hunt Role: ${eventReminders.roles.hoppitysHunt ? `<@&${eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
+          `Season of Jerry Role: ${eventReminders.roles.seasonOfJerry ? `<@&${eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
+          `Cake Reminder Role: ${eventReminders.roles.cakeReminder ? `<@&${eventReminders.roles.cakeReminder}>` : 'Off'}`,
+          `Cult Reminder Role: ${eventReminders.roles.cultReminder ? `<@&${eventReminders.roles.cultReminder}>` : 'Off'}`
+        ].join('\n'),
+        inline: false
+      })
+      .setFooter({ text: 'Use Edit Config to change the shared event channel and roles.' });
   }
 
   function createPlayerToolsEmbed(guild, note = null) {
@@ -225,8 +343,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   function createSetupComponents() {
     return [
       new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_FAST_SETUP_ID).setLabel('Fast Setup').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Discord').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(SETUP_VIEW_PLAYER_TOOLS_ID).setLabel('Player Tools').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_PLAYER_TOOLS_ID).setLabel('Player Tools').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId('setup-placeholder-more').setLabel('More Soon').setStyle(ButtonStyle.Secondary).setDisabled(true)
       )
     ];
@@ -244,6 +365,10 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_MAYOR_ID).setLabel('Mayor Alerts').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_EVENT_REMINDERS_ID).setLabel('Event Reminders').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_MOD_UPDATES_ID).setLabel('Mod Updates').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_REACTION_ROLES_ID).setLabel('Reaction Roles').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(SETUP_VIEW_SHITTER_ID).setLabel('Shitter List').setStyle(ButtonStyle.Secondary)
       ),
@@ -297,6 +422,31 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_REACTION_ADD_MODAL_ID).setLabel('Add Binding').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(SETUP_REACTION_REMOVE_MODAL_ID).setLabel('Remove Binding').setStyle(ButtonStyle.Danger)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
+
+  function createModUpdatesSetupComponents() {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_MOD_UPDATES_MODAL_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(SETUP_MOD_UPDATES_REFRESH_ID).setLabel('Refresh').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(SETUP_MOD_UPDATES_TEST_ID).setLabel('Test Ping').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
+
+  function createEventRemindersSetupComponents() {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_MODAL_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_TEST_ALL_ID).setLabel('Test All Reminders').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
@@ -373,10 +523,107 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       );
   }
 
+  function createModUpdatesSetupModal(existingConfig) {
+    return new ModalBuilder()
+      .setCustomId(SETUP_MOD_UPDATES_MODAL_ID)
+      .setTitle('Mod Update Config')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_MOD_UPDATES_CHANNEL_INPUT_ID)
+            .setLabel('Channel ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setValue(existingConfig.channelId || '')
+            .setPlaceholder('1093242679493664768')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_MOD_UPDATES_ROLE_INPUT_ID)
+            .setLabel('Ping Role ID (optional)')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setValue(existingConfig.roleId || '')
+            .setPlaceholder('1483819173447733419')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_MOD_UPDATES_REPOS_INPUT_ID)
+            .setLabel('GitHub repos or URLs')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setValue(existingConfig.trackedRepos.join('\n'))
+            .setPlaceholder('https://github.com/odtheking/Odin\nowner/repo')
+        )
+      );
+  }
+
+  function createEventRemindersSetupModal(existingConfig) {
+    return new ModalBuilder()
+      .setCustomId(SETUP_EVENT_REMINDERS_MODAL_ID)
+      .setTitle('Event Reminders Config')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID)
+            .setLabel('Channel ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setValue(existingConfig.channelId || '')
+            .setPlaceholder('1093242679493664768')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_EVENT_REMINDERS_ROLES_INPUT_ID)
+            .setLabel('Role IDs (optional)')
+            .setStyle(TextInputStyle.Paragraph)
+            .setRequired(false)
+            .setValue([
+              `spooky=${existingConfig.roles.spookyFestival || ''}`,
+              `zoo=${existingConfig.roles.travelingZoo || ''}`,
+              `hoppity=${existingConfig.roles.hoppitysHunt || ''}`,
+              `jerry=${existingConfig.roles.seasonOfJerry || ''}`,
+              `cake=${existingConfig.roles.cakeReminder || ''}`,
+              `cult=${existingConfig.roles.cultReminder || ''}`
+            ].join('\n'))
+            .setPlaceholder('spooky=123...\nzoo=123...\nhoppity=123...\njerry=123...\ncake=123...\ncult=123...')
+        )
+      );
+  }
+
+  function buildModUpdateFieldValue(status) {
+    const lines = [`GitHub: [${status.fullName}](${status.repoUrl})`];
+
+    if (status.errorMessage) {
+      lines.push(`Latest release: Could not load (${status.errorMessage})`);
+      return lines.join('\n');
+    }
+
+    if (!status.hasRelease) {
+      lines.push('Latest release: No public release found');
+      return lines.join('\n');
+    }
+
+    lines.push(`Latest release: [${status.latestReleaseName}](${status.latestReleaseUrl})`);
+
+    if (status.publishedAt) {
+      const unixTimestamp = Math.floor(new Date(status.publishedAt).getTime() / 1000);
+      lines.push(Number.isFinite(unixTimestamp)
+        ? `Released: <t:${unixTimestamp}:f> (<t:${unixTimestamp}:R>)`
+        : 'Released: Unknown');
+    } else {
+      lines.push('Released: Unknown');
+    }
+
+    return lines.join('\n');
+  }
+
   return {
     createSetupHubEmbed,
     createDiscordSetupEmbed,
+    createEventRemindersSetupEmbed,
     createPlayerToolsEmbed,
+    createModUpdatesSetupEmbed,
     createShitterSetupEmbed,
     createReactionRoleSetupEmbed,
     createMayorSetupEmbed,
@@ -384,12 +631,16 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     createPlayerToolsComponents,
     createDiscordSetupComponents,
     createMayorSetupComponents,
+    createEventRemindersSetupComponents,
+    createModUpdatesSetupComponents,
     createShitterSetupComponents,
     createReactionRoleSetupComponents,
     createMayorSetupModal,
+    createEventRemindersSetupModal,
     createReactionRoleAddModal,
     createReactionRoleRemoveModal,
-    createShitterSetupModal
+    createShitterSetupModal,
+    createModUpdatesSetupModal
   };
 }
 
