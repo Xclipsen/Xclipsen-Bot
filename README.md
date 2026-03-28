@@ -16,6 +16,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
+- Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
 - Includes `/namehistory` to show a player's known Minecraft name history.
 - Includes `/gif` to convert an uploaded image into a GIF.
@@ -23,6 +24,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 - Stores shitter list entries in `data/shitter-list.json`.
+- Can optionally expose a built-in HTTP bridge backend for the Fabric IRC client mod.
 
 ## Setup
 
@@ -39,6 +41,11 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 ## Configuration
 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
+- `IRC_BRIDGE_ENABLED` - enable the built-in HTTP backend for the Fabric IRC mod
+- `IRC_BRIDGE_HOST` / `IRC_BRIDGE_PORT` - listen address for the built-in backend
+- `IRC_BRIDGE_AUTH_TOKEN` - shared secret used by the Minecraft mod
+- `IRC_BRIDGE_CHANNEL_ID` - Discord channel used for the bridge
+- `IRC_BRIDGE_MAX_BUFFERED_MESSAGES` - how many recent Discord/IRC messages the backend keeps for clients
 - `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
 - `HYPIXEL_API_KEY` - required for `/cata` and `/catacombs` using the official Hypixel API
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
@@ -47,6 +54,8 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - `CHECK_INTERVAL_MINUTES` - interval for election and mayor checks
 - `MOD_UPDATE_CHECK_MINUTES` - interval for GitHub mod update checks
 - `STATUS_UPDATE_MINUTES` - interval for status embed updates
+- `SKYBLOCK_ITEM_EMOJIS_ENABLED` - set to `false` to disable the SkyBlock item emoji lookup feature
+- `SKYBLOCK_ITEM_EMOJI_HASH_URL` / `SKYBLOCK_ITEM_EMOJI_DATA_URL` - optional override URLs for the Altpapier emoji mapping files
 - `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
 - `VOTE_BAR_FILLED_EMOJI` / `VOTE_BAR_EMPTY_EMOJI` - optional custom emojis for the mayor vote bar chart
@@ -57,6 +66,12 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 
 ```env
 DISCORD_TOKEN=your_discord_bot_token
+IRC_BRIDGE_ENABLED=true
+IRC_BRIDGE_HOST=0.0.0.0
+IRC_BRIDGE_PORT=8765
+IRC_BRIDGE_AUTH_TOKEN=change-me
+IRC_BRIDGE_CHANNEL_ID=123456789012345678
+IRC_BRIDGE_MAX_BUFFERED_MESSAGES=250
 GITHUB_TOKEN=your_github_token
 HYPIXEL_API_KEY=your_hypixel_api_key
 DISCORD_CHANNEL_ID=123456789012345678
@@ -65,6 +80,7 @@ ADMIN_USER_IDS=885542911511515146
 CHECK_INTERVAL_MINUTES=5
 MOD_UPDATE_CHECK_MINUTES=60
 STATUS_UPDATE_MINUTES=30
+SKYBLOCK_ITEM_EMOJIS_ENABLED=true
 MOCK_MODE=false
 EMOJI_DIAZ=<:diaz:123456789012345678>
 VOTE_BAR_FILLED_EMOJI=<:barfill:123456789012345678>
@@ -79,6 +95,7 @@ npm start
 ```
 
 - Use `/help` in Discord for a quick overview of public commands and examples.
+- If you enable the IRC bridge, the bot also needs the `GuildMessages` and `MessageContent` intents.
 
 ## Project Structure
 
@@ -126,6 +143,14 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - The bot returns both the raw UUID and dashed UUID form.
 - `/uuid` also shows a Stuffy-style UUID percentile and leaderboard position.
 - This command uses the official Mojang API and does not require a Hypixel API key.
+
+## SkyBlock Item Emojis
+
+- Use `/itememoji item:<SKYBLOCK_ID>` to post a mapped item emoji in the current channel.
+- Add `enchanted:true` if you want the enchanted variant when one exists.
+- The command posts a normal channel message instead of a slash-command response because the upstream emoji dataset no longer works reliably inside interaction responses.
+- By default the bot loads the mapping data from `Altpapier/Skyblock-Item-Emojis` version 3 on demand.
+- Credit for the dataset stays with [Altpapier/Skyblock-Item-Emojis](https://github.com/Altpapier/Skyblock-Item-Emojis).
 
 ## Minecraft Name History
 

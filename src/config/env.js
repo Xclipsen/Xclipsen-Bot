@@ -12,6 +12,12 @@ for (const key of REQUIRED_ENV_VARS) {
 
 const env = {
   DISCORD_TOKEN: process.env.DISCORD_TOKEN,
+  IRC_BRIDGE_ENABLED: process.env.IRC_BRIDGE_ENABLED === 'true',
+  IRC_BRIDGE_HOST: process.env.IRC_BRIDGE_HOST || '0.0.0.0',
+  IRC_BRIDGE_PORT: Math.max(1, Number.parseInt(process.env.IRC_BRIDGE_PORT || '8765', 10)),
+  IRC_BRIDGE_AUTH_TOKEN: process.env.IRC_BRIDGE_AUTH_TOKEN || 'change-me',
+  IRC_BRIDGE_CHANNEL_ID: process.env.IRC_BRIDGE_CHANNEL_ID || process.env.DISCORD_CHANNEL_ID || null,
+  IRC_BRIDGE_MAX_BUFFERED_MESSAGES: Math.max(10, Number.parseInt(process.env.IRC_BRIDGE_MAX_BUFFERED_MESSAGES || '250', 10)),
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || null,
   HYPIXEL_API_KEY: process.env.HYPIXEL_API_KEY || null,
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
@@ -27,6 +33,9 @@ const env = {
   CHECK_INTERVAL_MINUTES: Math.max(1, Number.parseInt(process.env.CHECK_INTERVAL_MINUTES || '5', 10)),
   MOD_UPDATE_CHECK_MINUTES: Math.max(5, Number.parseInt(process.env.MOD_UPDATE_CHECK_MINUTES || '60', 10)),
   STATUS_UPDATE_MINUTES: Math.max(1, Number.parseInt(process.env.STATUS_UPDATE_MINUTES || '30', 10)),
+  SKYBLOCK_ITEM_EMOJIS_ENABLED: process.env.SKYBLOCK_ITEM_EMOJIS_ENABLED !== 'false',
+  SKYBLOCK_ITEM_EMOJI_HASH_URL: process.env.SKYBLOCK_ITEM_EMOJI_HASH_URL || 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/itemHash.json',
+  SKYBLOCK_ITEM_EMOJI_DATA_URL: process.env.SKYBLOCK_ITEM_EMOJI_DATA_URL || 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/emojis.json',
   ELECTION_URL: 'https://api.hypixel.net/v2/resources/skyblock/election',
   SKYBLOCK_EPOCH_SECONDS: 1560275700,
   SKYBLOCK_DAY_SECONDS: 20 * 60,

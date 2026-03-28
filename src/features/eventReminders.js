@@ -105,28 +105,7 @@ function createEventRemindersService({ client, store }) {
 
     const existingMessage = await findExistingEventReminderMessage(guildId, channel, definition.key);
     if (existingMessage) {
-      await existingMessage.edit(payload).catch(async (error) => {
-        if (error?.code !== 10008) {
-          throw error;
-        }
-
-        const runtimeState = store.getGuildRuntimeState(guildId).eventReminders;
-        store.setGuildRuntimeState(guildId, {
-          ...store.getGuildRuntimeState(guildId),
-          eventReminders: {
-            ...runtimeState,
-            messageIds: {
-              ...runtimeState.messageIds,
-              [definition.key]: null
-            }
-          }
-        });
-      });
-
-      const refreshedState = store.getGuildRuntimeState(guildId).eventReminders;
-      if (refreshedState.messageIds[definition.key]) {
-        return;
-      }
+      await existingMessage.delete().catch(() => null);
     }
 
     const sentMessage = await channel.send(payload);
@@ -258,14 +237,14 @@ function getMonthlyCultSchedule(now) {
     const windowStartAt = monthStartAt + ((day - 1) * SKYBLOCK_DAY_SECONDS * 1000);
     return {
       windowStartAt,
-      windowEndAt: windowStartAt + (3 * SKYBLOCK_DAY_SECONDS * 1000)
+      windowEndAt: windowStartAt + ((SKYBLOCK_DAY_SECONDS / 4) * 1000)
     };
   });
 
   const nextMonthStartAt = monthStartAt + (MONTH_LENGTH_DAYS * SKYBLOCK_DAY_SECONDS * 1000);
   cultWindows.push({
     windowStartAt: nextMonthStartAt + (6 * SKYBLOCK_DAY_SECONDS * 1000),
-    windowEndAt: nextMonthStartAt + (9 * SKYBLOCK_DAY_SECONDS * 1000)
+    windowEndAt: nextMonthStartAt + ((6 * SKYBLOCK_DAY_SECONDS) * 1000) + ((SKYBLOCK_DAY_SECONDS / 4) * 1000)
   });
 
   const activeWindow = cultWindows.find((window) => now >= window.windowStartAt && now < window.windowEndAt);

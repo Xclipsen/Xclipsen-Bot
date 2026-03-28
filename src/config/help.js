@@ -58,6 +58,11 @@ const helpSections = [
         command: '/catacombs player:<ign>',
         description: 'Alias of /cata for the same catacombs lookup.',
         example: '/catacombs player:Xclipsen'
+      },
+      {
+        command: '/itememoji item:<skyblock_id>',
+        description: 'Post a mapped SkyBlock item emoji as a normal channel message.',
+        example: '/itememoji item:HYPERION enchanted:true'
       }
     ]
   },

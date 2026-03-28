@@ -23,6 +23,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_FAST_SETUP_ID,
     SETUP_EVENT_REMINDERS_MODAL_ID,
     SETUP_EVENT_REMINDERS_TEST_ALL_ID,
+    SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID,
+    SETUP_EVENT_ROLE_PANEL_MODAL_ID,
     SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
     SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
     SETUP_MAYOR_RELOAD_ID,
@@ -48,6 +50,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_MOD_UPDATES_REPOS_INPUT_ID,
     SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
+    SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID,
     SETUP_CHANNEL_INPUT_ID,
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
@@ -446,7 +449,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_MODAL_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_TEST_ALL_ID).setLabel('Test All Reminders').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_TEST_ALL_ID).setLabel('Test All Reminders').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID).setLabel('Post Role Panel').setStyle(ButtonStyle.Success)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
@@ -591,6 +595,23 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       );
   }
 
+  function createEventRolePanelModal(existingChannelId = '') {
+    return new ModalBuilder()
+      .setCustomId(SETUP_EVENT_ROLE_PANEL_MODAL_ID)
+      .setTitle('Post Event Role Panel')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID)
+            .setLabel('Channel ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setValue(existingChannelId || '')
+            .setPlaceholder('1093242679493664768')
+        )
+      );
+  }
+
   function buildModUpdateFieldValue(status) {
     const lines = [`GitHub: [${status.fullName}](${status.repoUrl})`];
 
@@ -637,6 +658,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     createReactionRoleSetupComponents,
     createMayorSetupModal,
     createEventRemindersSetupModal,
+    createEventRolePanelModal,
     createReactionRoleAddModal,
     createReactionRoleRemoveModal,
     createShitterSetupModal,

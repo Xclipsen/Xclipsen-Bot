@@ -77,6 +77,18 @@ const catacombsCommand = new SlashCommandBuilder()
     .setDescription('Minecraft username')
     .setRequired(true));
 
+const itemEmojiCommand = new SlashCommandBuilder()
+  .setName('itememoji')
+  .setDescription('Post a SkyBlock item emoji into the current channel.')
+  .addStringOption((option) => option
+    .setName('item')
+    .setDescription('SkyBlock custom item ID, for example HYPERION')
+    .setRequired(true))
+  .addBooleanOption((option) => option
+    .setName('enchanted')
+    .setDescription('Use the enchanted emoji variant if available')
+    .setRequired(false));
+
 const uuidCommand = new SlashCommandBuilder()
   .setName('uuid')
   .setDescription('Look up a Minecraft player UUID from an IGN.')
@@ -160,6 +172,7 @@ const commands = [
   reactionRoleCommand,
   cataCommand,
   catacombsCommand,
+  itemEmojiCommand,
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
@@ -175,6 +188,7 @@ module.exports = {
     reactionRole: 'reactionrole',
     cata: 'cata',
     catacombs: 'catacombs',
+    itememoji: 'itememoji',
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',

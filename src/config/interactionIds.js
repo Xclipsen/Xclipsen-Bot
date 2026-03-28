@@ -10,6 +10,8 @@ const interactionIds = {
   SETUP_FAST_SETUP_ID: 'setup-fast-setup',
   SETUP_EVENT_REMINDERS_MODAL_ID: 'setup-event-reminders-modal',
   SETUP_EVENT_REMINDERS_TEST_ALL_ID: 'setup-event-reminders-test-all',
+  SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID: 'setup-event-reminders-post-role-panel',
+  SETUP_EVENT_ROLE_PANEL_MODAL_ID: 'setup-event-role-panel-modal',
   SETUP_MAYOR_TOGGLE_ELECTION_PING_ID: 'setup-mayor-toggle-election-ping',
   SETUP_MAYOR_TOGGLE_CHANGE_PING_ID: 'setup-mayor-toggle-change-ping',
   SETUP_MAYOR_RELOAD_ID: 'setup-mayor-reload',
@@ -35,6 +37,7 @@ const interactionIds = {
   SETUP_MOD_UPDATES_REPOS_INPUT_ID: 'setup-mod-updates-repos',
   SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID: 'setup-event-reminders-channel-id',
   SETUP_EVENT_REMINDERS_ROLES_INPUT_ID: 'setup-event-reminders-roles',
+  SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID: 'setup-event-role-panel-channel-id',
   SETUP_CHANNEL_INPUT_ID: 'setup-channel-id',
   SETUP_ROLE_INPUT_ID: 'setup-role-id'
 };

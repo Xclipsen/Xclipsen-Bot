@@ -6,6 +6,7 @@ const { interactionIds } = require('./config/interactionIds');
 const { createStore } = require('./storage/store');
 const { createAccessControl } = require('./features/accessControl');
 const { createSkyblockUtils } = require('./utils/skyblock');
+const { createSkyblockItemEmojiUtils } = require('./utils/skyblockItemEmojis');
 const { createMinecraftUtils } = require('./utils/minecraft');
 const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createModUpdatesService } = require('./features/modUpdates');
@@ -13,15 +14,23 @@ const { createEventRemindersService } = require('./features/eventReminders');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
+const { createItemEmojiFeature } = require('./features/itemEmoji');
 const { createGifFeature } = require('./features/gif');
 const { createHelpFeature } = require('./features/help');
 const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
+const { createIrcBridge } = require('./features/ircBridge');
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMessageReactions],
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.MessageContent
+  ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
 });
 
@@ -33,6 +42,7 @@ const store = createStore({
 
 const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
+const itemEmojis = createSkyblockItemEmojiUtils(env);
 const minecraft = createMinecraftUtils();
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
@@ -49,9 +59,11 @@ const setupHub = createSetupHub({
   modUpdates,
   eventReminders,
   reactionRoles,
+  itemEmojis,
   interactionIds
 });
 const catacombs = createCatacombsFeature({ env, minecraft });
+const itemEmoji = createItemEmojiFeature({ itemEmojis });
 const gif = createGifFeature();
 const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft });
@@ -61,6 +73,7 @@ const shitterList = createShitterListFeature({
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
 const simulation = createSimulationFeature({ store });
+const ircBridge = createIrcBridge({ client, env });
 
 let isCheckingElectionState = false;
 let isSendingScheduledStatusUpdate = false;
@@ -139,6 +152,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await runScheduledStatusUpdate();
   await runModUpdateCheck();
   await runEventReminderCheck();
+  await ircBridge.start();
   setInterval(() => void runElectionStateCheck(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
   setInterval(() => void runScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
   setInterval(() => void runModUpdateCheck(), env.MOD_UPDATE_CHECK_MINUTES * 60 * 1000);
@@ -156,6 +170,10 @@ client.on(Events.MessageReactionAdd, async (reaction, user) => {
 
 client.on(Events.MessageReactionRemove, async (reaction, user) => {
   await reactionRoles.applyReactionRoleChange(reaction, user, false);
+});
+
+client.on(Events.MessageCreate, async (message) => {
+  await ircBridge.handleDiscordMessage(message);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -189,6 +207,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (interaction.commandName === commandNames.cata || interaction.commandName === commandNames.catacombs)
     ) {
       await catacombs.handleCatacombsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.itememoji) {
+      await itemEmoji.handleItemEmojiCommand(interaction);
       return;
     }
 
@@ -245,6 +268,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === interactionIds.SETUP_FAST_SETUP_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_TEST_ALL_ID ||
+        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_REFRESH_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_TEST_ID ||
@@ -278,6 +302,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_EVENT_ROLE_PANEL_MODAL_ID) {
+      await setupHub.handleEventRolePanelModalSubmit(interaction);
+      return;
+    }
+
     if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID) {
       await setupHub.handleReactionRoleModalSubmit(interaction, 'remove');
       return;
@@ -301,3 +330,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 });
 
 client.login(env.DISCORD_TOKEN);
+
+process.on('SIGINT', () => {
+  void ircBridge.stop().finally(() => process.exit(0));
+});
+
+process.on('SIGTERM', () => {
+  void ircBridge.stop().finally(() => process.exit(0));
+});
