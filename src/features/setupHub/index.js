@@ -65,12 +65,15 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     SETUP_VIEW_SHITTER_ID,
     SETUP_REACTION_ADD_MODAL_ID,
     SETUP_REACTION_REMOVE_MODAL_ID,
+    SETUP_REACTION_PURGE_ALL_ID,
+    SETUP_REACTION_PURGE_CHANNEL_MODAL_ID,
     SETUP_SHITTER_MODAL_ID,
     SETUP_REACTION_CHANNEL_INPUT_ID,
     SETUP_REACTION_MESSAGE_INPUT_ID,
     SETUP_REACTION_ROLE_INPUT_ID,
     SETUP_REACTION_EMOJI_INPUT_ID,
     SETUP_REACTION_REQUIRED_ROLE_INPUT_ID,
+    SETUP_REACTION_PURGE_CHANNEL_INPUT_ID,
     SETUP_SHITTER_BLOCKED_USERS_INPUT_ID,
     SETUP_SHITTER_BLOCKED_ROLES_INPUT_ID,
     SETUP_SHITTER_ALLOWED_ROLES_INPUT_ID,
@@ -203,6 +206,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
   async function postEventRolePanel(guild, channelId) {
     const eventConfig = store.getGuildConfig(guild.id).eventReminders;
+    const runtimeState = store.getGuildRuntimeState(guild.id).eventReminders;
     const normalizedChannelId = String(channelId || '').trim();
 
     if (!isSnowflake(normalizedChannelId)) {
@@ -233,6 +237,23 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       avatar: guild.client.user?.displayAvatarURL() || undefined
     });
 
+    if (runtimeState.eventRolePanelMessageId && runtimeState.eventRolePanelChannelId) {
+      const previousChannel = await guild.channels.fetch(runtimeState.eventRolePanelChannelId).catch(() => null);
+      const previousMessage = previousChannel?.isTextBased()
+        ? await previousChannel.messages.fetch(runtimeState.eventRolePanelMessageId).catch(() => null)
+        : null;
+
+      if (previousMessage) {
+        await previousMessage.delete().catch(() => null);
+      }
+
+      const remainingReactionRoles = store.getReactionRoleEntries(guild.id).filter((entry) => !(
+        entry.channelId === runtimeState.eventRolePanelChannelId &&
+        entry.messageId === runtimeState.eventRolePanelMessageId
+      ));
+      store.setReactionRoleEntries(guild.id, remainingReactionRoles);
+    }
+
     const message = await webhook.send({
       content: [
         '**SkyBlock Event Roles**',
@@ -254,6 +275,15 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       await reactionRoles.addReactionRoleBinding(guild.id, message, roleId, definition.reactionEmoji);
       configuredBindings.push(`${definition.reactionEmoji} -> <@&${roleId}>`);
     }
+
+    store.setGuildRuntimeState(guild.id, {
+      ...store.getGuildRuntimeState(guild.id),
+      eventReminders: {
+        ...store.getGuildRuntimeState(guild.id).eventReminders,
+        eventRolePanelMessageId: message.id,
+        eventRolePanelChannelId: message.channelId
+      }
+    });
 
     return {
       message,
@@ -382,6 +412,26 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
     if (interaction.customId === SETUP_REACTION_ADD_MODAL_ID) {
       await interaction.showModal(renderers.createReactionRoleAddModal());
+      return;
+    }
+
+    if (interaction.customId === SETUP_REACTION_PURGE_CHANNEL_MODAL_ID) {
+      await interaction.showModal(renderers.createReactionRolePurgeChannelModal());
+      return;
+    }
+
+    if (interaction.customId === SETUP_REACTION_PURGE_ALL_ID) {
+      await interaction.deferUpdate();
+
+      const removedCount = reactionRoles.purgeReactionRoleBindings(interaction.guildId);
+      const note = removedCount > 0
+        ? `Purged ${removedCount} reaction role binding(s) from this server.`
+        : 'No reaction role bindings found to purge.';
+
+      await interaction.editReply({
+        embeds: [renderers.createReactionRoleSetupEmbed(interaction.guild, note)],
+        components: renderers.createReactionRoleSetupComponents()
+      });
       return;
     }
 
@@ -594,6 +644,37 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     });
   }
 
+  async function handleReactionRolePurgeChannelModalSubmit(interaction) {
+    if (!(await ensureSetupAccess(interaction, 'reaction role purge form'))) {
+      return;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+
+    const channelId = interaction.fields.getTextInputValue(SETUP_REACTION_PURGE_CHANNEL_INPUT_ID).trim();
+    if (!isSnowflake(channelId)) {
+      await interaction.editReply({ content: 'Channel ID must be a valid Discord snowflake.' });
+      return;
+    }
+
+    const channel = await interaction.guild.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) {
+      await interaction.editReply({ content: 'The channel ID is invalid or not a text-based channel in this server.' });
+      return;
+    }
+
+    const removedCount = reactionRoles.purgeReactionRoleBindings(interaction.guildId, { channelId });
+    const note = removedCount > 0
+      ? `Purged ${removedCount} reaction role binding(s) from <#${channelId}>.`
+      : `No reaction role bindings found for <#${channelId}>.`;
+
+    await interaction.editReply({
+      embeds: [renderers.createReactionRoleSetupEmbed(interaction.guild, note)],
+      components: renderers.createReactionRoleSetupComponents(),
+      content: null
+    });
+  }
+
   async function handleShitterSetupModalSubmit(interaction) {
     if (!(await ensureSetupAccess(interaction, 'shitter setup form'))) {
       return;
@@ -792,6 +873,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     handleEventRolePanelModalSubmit,
     handleModUpdatesSetupModalSubmit,
     handleReactionRoleModalSubmit,
+    handleReactionRolePurgeChannelModalSubmit,
     handleShitterSetupModalSubmit,
     ids: interactionIds
   };

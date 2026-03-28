@@ -51,16 +51,11 @@ const EVENT_DEFINITIONS = [
     key: 'darkAuction',
     label: 'Dark Auction',
     color: 0x2c3e50,
-    getSchedule: (now) => getDarkAuctionSchedule(now),
-    extraLines: () => [
-      'Occurs every 3 SkyBlock days, which is every hour in real time.',
-      'Entry opens at SkyBlock midnight, usually 5 minutes before the hour.',
-      'Players need at least **400,000** coins in purse to enter.'
-    ]
+    getSchedule: (now) => getDarkAuctionSchedule(now)
   }
 ];
 
-function createEventRemindersService({ client, store }) {
+function createEventRemindersService({ client, store, minecraft = null }) {
   async function checkForReminders() {
     const schedules = Object.fromEntries(EVENT_DEFINITIONS.map((definition) => [definition.key, definition.getSchedule(Date.now())]));
 
@@ -97,7 +92,7 @@ function createEventRemindersService({ client, store }) {
     }
   }
 
-  async function sendEventReminder(guildId, definition, schedule, roleId = null) {
+  async function sendEventReminder(guildId, definition, schedule, roleId = null, options = {}) {
     const channelId = store.getGuildConfig(guildId).eventReminders.channelId;
     if (!channelId) {
       throw new Error(`Guild ${guildId} does not have a configured events channel.`);
@@ -120,6 +115,12 @@ function createEventRemindersService({ client, store }) {
     }
 
     const sentMessage = await channel.send(payload);
+    await minecraft?.sendEventMessage?.(
+      definition.key,
+      definition.label,
+      createEventBridgeMessage(definition, schedule),
+      { isTest: options.isTest === true }
+    );
     const runtimeState = store.getGuildRuntimeState(guildId).eventReminders;
     store.setGuildRuntimeState(guildId, {
       ...store.getGuildRuntimeState(guildId),
@@ -134,13 +135,24 @@ function createEventRemindersService({ client, store }) {
     });
   }
 
-  async function sendTestReminders(guildId) {
-    const config = store.getGuildConfig(guildId).eventReminders;
+async function sendTestReminders(guildId) {
+  const config = store.getGuildConfig(guildId).eventReminders;
 
-    for (const definition of EVENT_DEFINITIONS) {
-      const schedule = definition.getSchedule(Date.now());
-      await sendEventReminder(guildId, definition, schedule, config.roles[definition.key]);
+  for (const definition of EVENT_DEFINITIONS) {
+    const schedule = definition.getSchedule(Date.now());
+      await sendEventReminder(guildId, definition, schedule, config.roles[definition.key], { isTest: true });
+  }
+}
+
+  async function sendTestReminder(guildId, eventKey) {
+    const definition = EVENT_DEFINITIONS.find((entry) => entry.key === eventKey);
+    if (!definition) {
+      throw new Error(`Unknown event reminder key: ${eventKey}`);
     }
+
+    const config = store.getGuildConfig(guildId).eventReminders;
+    const schedule = definition.getSchedule(Date.now());
+    await sendEventReminder(guildId, definition, schedule, config.roles[definition.key], { isTest: true });
   }
 
   async function findExistingEventReminderMessage(guildId, channel, eventKey) {
@@ -183,22 +195,50 @@ function createEventRemindersService({ client, store }) {
 
   return {
     checkForReminders,
+    sendTestReminder,
     sendTestReminders
   };
 }
 
+function createEventBridgeMessage(definition, schedule) {
+  if (definition.key === 'darkAuction') {
+    return getReminderStatusLine(definition, schedule);
+  }
+
+  const details = [];
+  const displayStartAt = getDisplayStartAt(schedule);
+  const displayEndAt = getDisplayEndAt(schedule);
+
+  if (definition.key === 'travelingZoo') {
+    details.push('Oringo is in the Hub during the event.');
+  }
+
+  details.push(`Ends at ${new Date(displayEndAt).toLocaleString('en-US', {
+    year: 'numeric',
+    month: 'short',
+    day: 'numeric',
+    hour: 'numeric',
+    minute: '2-digit',
+    hour12: false,
+    timeZone: 'UTC',
+    timeZoneName: 'short'
+  })}.`);
+
+  return `${getReminderStatusLine(definition, schedule)} ${details.join(' ')}`.trim();
+}
+
 function createEventReminderEmbed(definition, schedule) {
   const extraLines = typeof definition.extraLines === 'function' ? definition.extraLines(schedule) : [];
+  const displayStartAt = getDisplayStartAt(schedule);
+  const displayEndAt = getDisplayEndAt(schedule);
 
   return new EmbedBuilder()
     .setColor(definition.color)
     .setTitle(definition.label)
     .setDescription([
-      schedule.isActive
-        ? `${definition.label} is active now.`
-        : `Next ${definition.label} starts soon.`,
-      `Starts: <t:${Math.floor(schedule.windowStartAt / 1000)}:f> (<t:${Math.floor(schedule.windowStartAt / 1000)}:R>)`,
-      `Ends: <t:${Math.floor(schedule.windowEndAt / 1000)}:f> (<t:${Math.floor(schedule.windowEndAt / 1000)}:R>)`,
+      getReminderStatusLine(definition, schedule),
+      `Starts: <t:${Math.floor(displayStartAt / 1000)}:f> (<t:${Math.floor(displayStartAt / 1000)}:R>)`,
+      `Ends: <t:${Math.floor(displayEndAt / 1000)}:f> (<t:${Math.floor(displayEndAt / 1000)}:R>)`,
       ...extraLines
     ].join('\n'))
     .setTimestamp();
@@ -290,13 +330,28 @@ function getDarkAuctionSchedule(now) {
     SKYBLOCK_EPOCH_SECONDS +
     (cycleIndex * 3 * SKYBLOCK_DAY_SECONDS)
   ) * 1000;
+  const currentReminderStart = currentStart - (60 * 1000);
   const currentEnd = currentStart + (5 * 60 * 1000);
+
+  if (now < currentReminderStart) {
+    return {
+      isActive: false,
+      windowStartAt: currentReminderStart,
+      windowEndAt: currentStart,
+      eventStartAt: currentStart,
+      eventEndAt: currentEnd,
+      reminderType: 'beforeStart'
+    };
+  }
 
   if (now < currentStart) {
     return {
-      isActive: false,
-      windowStartAt: currentStart,
-      windowEndAt: currentEnd
+      isActive: true,
+      windowStartAt: currentReminderStart,
+      windowEndAt: currentStart,
+      eventStartAt: currentStart,
+      eventEndAt: currentEnd,
+      reminderType: 'beforeStart'
     };
   }
 
@@ -304,16 +359,48 @@ function getDarkAuctionSchedule(now) {
     return {
       isActive: true,
       windowStartAt: currentStart,
-      windowEndAt: currentEnd
+      windowEndAt: currentEnd,
+      eventStartAt: currentStart,
+      eventEndAt: currentEnd,
+      reminderType: 'startNow'
     };
   }
 
   const nextStart = currentStart + (3 * SKYBLOCK_DAY_SECONDS * 1000);
   return {
     isActive: false,
-    windowStartAt: nextStart,
-    windowEndAt: nextStart + (5 * 60 * 1000)
+    windowStartAt: nextStart - (60 * 1000),
+    windowEndAt: nextStart,
+    eventStartAt: nextStart,
+    eventEndAt: nextStart + (5 * 60 * 1000),
+    reminderType: 'beforeStart'
   };
+}
+
+function getDisplayStartAt(schedule) {
+  return schedule.eventStartAt ?? schedule.windowStartAt;
+}
+
+function getDisplayEndAt(schedule) {
+  return schedule.eventEndAt ?? schedule.windowEndAt;
+}
+
+function getReminderStatusLine(definition, schedule) {
+  if (definition.key === 'darkAuction') {
+    if (schedule.reminderType === 'startNow') {
+      return 'Dark Auction starts now.';
+    }
+
+    if (schedule.reminderType === 'beforeStart') {
+      return 'Dark Auction opens in one minute.';
+    }
+
+    return 'Next Dark Auction opens soon.';
+  }
+
+  return schedule.isActive
+    ? `${definition.label} is active now.`
+    : `Next ${definition.label} starts soon.`;
 }
 
 function createWindow(year, window) {

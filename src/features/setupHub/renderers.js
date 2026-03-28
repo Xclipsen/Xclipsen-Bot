@@ -35,12 +35,15 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_VIEW_SHITTER_ID,
     SETUP_REACTION_ADD_MODAL_ID,
     SETUP_REACTION_REMOVE_MODAL_ID,
+    SETUP_REACTION_PURGE_ALL_ID,
+    SETUP_REACTION_PURGE_CHANNEL_MODAL_ID,
     SETUP_SHITTER_MODAL_ID,
     SETUP_REACTION_CHANNEL_INPUT_ID,
     SETUP_REACTION_MESSAGE_INPUT_ID,
     SETUP_REACTION_ROLE_INPUT_ID,
     SETUP_REACTION_EMOJI_INPUT_ID,
     SETUP_REACTION_REQUIRED_ROLE_INPUT_ID,
+    SETUP_REACTION_PURGE_CHANNEL_INPUT_ID,
     SETUP_SHITTER_BLOCKED_USERS_INPUT_ID,
     SETUP_SHITTER_BLOCKED_ROLES_INPUT_ID,
     SETUP_SHITTER_ALLOWED_ROLES_INPUT_ID,
@@ -317,7 +320,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setColor(0x3498db)
       .setTitle('Setup Hub - Discord - Reaction Roles')
       .setDescription(description.join('\n'))
-      .addFields({ name: 'Current Bindings', value: reactionRoles.buildReactionRoleSummary(guild.id), inline: false })
+      .addFields({ name: 'Current Bindings', value: reactionRoles.buildReactionRoleSummary(guild.id, { maxLength: 900, maxLines: 10 }), inline: false })
       .setFooter({ text: 'Add or remove bindings with the buttons below.' });
   }
 
@@ -427,6 +430,10 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
         new ButtonBuilder().setCustomId(SETUP_REACTION_REMOVE_MODAL_ID).setLabel('Remove Binding').setStyle(ButtonStyle.Danger)
       ),
       new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_REACTION_PURGE_CHANNEL_MODAL_ID).setLabel('Purge Channel').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_REACTION_PURGE_ALL_ID).setLabel('Purge All').setStyle(ButtonStyle.Danger)
+      ),
+      new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
       )
     ];
@@ -489,6 +496,22 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_REACTION_CHANNEL_INPUT_ID).setLabel('Channel ID').setStyle(TextInputStyle.Short).setRequired(true)),
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_REACTION_MESSAGE_INPUT_ID).setLabel('Message ID').setStyle(TextInputStyle.Short).setRequired(true)),
         new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_REACTION_EMOJI_INPUT_ID).setLabel('Emoji').setStyle(TextInputStyle.Short).setRequired(true))
+      );
+  }
+
+  function createReactionRolePurgeChannelModal() {
+    return new ModalBuilder()
+      .setCustomId(SETUP_REACTION_PURGE_CHANNEL_MODAL_ID)
+      .setTitle('Purge Reaction Roles In Channel')
+      .addComponents(
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_REACTION_PURGE_CHANNEL_INPUT_ID)
+            .setLabel('Channel ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setPlaceholder('1093242679493664768')
+        )
       );
   }
 
@@ -662,6 +685,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     createEventRolePanelModal,
     createReactionRoleAddModal,
     createReactionRoleRemoveModal,
+    createReactionRolePurgeChannelModal,
     createShitterSetupModal,
     createModUpdatesSetupModal
   };

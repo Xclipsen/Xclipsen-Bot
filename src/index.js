@@ -21,7 +21,8 @@ const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
-const { createIrcBridge } = require('./features/ircBridge');
+const { createMinecraftFeatures } = require('./features/minecraft');
+const { createLinkingFeature } = require('./features/linking');
 
 const client = new Client({
   intents: [
@@ -44,9 +45,10 @@ const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
 const itemEmojis = createSkyblockItemEmojiUtils(env);
 const minecraft = createMinecraftUtils();
+const minecraftFeatures = createMinecraftFeatures({ client, env, store });
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
-const eventReminders = createEventRemindersService({ client, store });
+const eventReminders = createEventRemindersService({ client, store, minecraft: minecraftFeatures });
 const reactionRoles = createReactionRoleService({
   client,
   store,
@@ -73,7 +75,7 @@ const shitterList = createShitterListFeature({
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
 const simulation = createSimulationFeature({ store });
-const ircBridge = createIrcBridge({ client, env });
+const linking = createLinkingFeature({ store });
 
 let isCheckingElectionState = false;
 let isSendingScheduledStatusUpdate = false;
@@ -152,7 +154,7 @@ client.once(Events.ClientReady, async (readyClient) => {
   await runScheduledStatusUpdate();
   await runModUpdateCheck();
   await runEventReminderCheck();
-  await ircBridge.start();
+  await minecraftFeatures.start();
   setInterval(() => void runElectionStateCheck(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
   setInterval(() => void runScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
   setInterval(() => void runModUpdateCheck(), env.MOD_UPDATE_CHECK_MINUTES * 60 * 1000);
@@ -173,7 +175,7 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 });
 
 client.on(Events.MessageCreate, async (message) => {
-  await ircBridge.handleDiscordMessage(message);
+  await minecraftFeatures.handleDiscordMessage(message);
 });
 
 client.on(Events.InteractionCreate, async (interaction) => {
@@ -195,6 +197,20 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
       await simulation.handleSimulateCommand(interaction, mayorAlerts);
       return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.test) {
+      if (!(await accessControl.ensureSetupAccess(interaction, 'test command'))) {
+        return;
+      }
+
+      const subcommand = interaction.options.getSubcommand();
+      if (subcommand === 'event') {
+        const eventKey = interaction.options.getString('event', true);
+        await eventReminders.sendTestReminder(interaction.guildId, eventKey);
+        await interaction.reply({ content: `Sent test event reminder for \`${eventKey}\`.`, ephemeral: true });
+        return;
+      }
     }
 
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.reactionRole) {
@@ -235,6 +251,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.link) {
+      await linking.handleLinkCommand(interaction);
+      return;
+    }
+
     if (interaction.isStringSelectMenu()) {
       if (await mayorAlerts.handleCandidateSelect(interaction)) {
         return;
@@ -264,6 +285,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
       (
         interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_REACTION_REMOVE_MODAL_ID ||
+        interaction.customId === interactionIds.SETUP_REACTION_PURGE_ALL_ID ||
+        interaction.customId === interactionIds.SETUP_REACTION_PURGE_CHANNEL_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_EDIT_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_TEST_ALL_ID ||
@@ -288,6 +311,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_REACTION_ADD_MODAL_ID) {
       await setupHub.handleReactionRoleModalSubmit(interaction, 'add');
+      return;
+    }
+
+    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_REACTION_PURGE_CHANNEL_MODAL_ID) {
+      await setupHub.handleReactionRolePurgeChannelModalSubmit(interaction);
       return;
     }
 
@@ -331,9 +359,9 @@ client.on(Events.InteractionCreate, async (interaction) => {
 client.login(env.DISCORD_TOKEN);
 
 process.on('SIGINT', () => {
-  void ircBridge.stop().finally(() => process.exit(0));
+  void minecraftFeatures.stop().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
-  void ircBridge.stop().finally(() => process.exit(0));
+  void minecraftFeatures.stop().finally(() => process.exit(0));
 });

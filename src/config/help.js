@@ -26,6 +26,12 @@ const helpSections = [
         description: 'List all configured reaction role bindings for this server.',
         example: '/reactionrole list',
         adminOnly: true
+      },
+      {
+        command: '/reactionrole purge',
+        description: 'Delete reaction role bindings globally or for one channel/message.',
+        example: '/reactionrole purge channel:#roles message_id:123',
+        adminOnly: true
       }
     ]
   },
@@ -63,6 +69,16 @@ const helpSections = [
         command: '/itememoji item:<skyblock_id>',
         description: 'Post a mapped SkyBlock item emoji as a normal channel message.',
         example: '/itememoji item:HYPERION enchanted:true'
+      },
+      {
+        command: '/link start usernames:<name1,name2>',
+        description: 'Create a backend link code and finish the link in Minecraft with /link CODE.',
+        example: '/link start usernames:Xclipsen,AltName'
+      },
+      {
+        command: '/link event event:<event> enabled:<true|false>',
+        description: 'Toggle one backend event ping for your linked Minecraft client.',
+        example: '/link event event:darkAuction enabled:false'
       }
     ]
   },
@@ -108,6 +124,12 @@ const helpSections = [
         command: '/simulate clear',
         description: 'Switch the bot back to live election data.',
         example: '/simulate clear',
+        adminOnly: true
+      },
+      {
+        command: '/test event event:<name>',
+        description: 'Send one event reminder test through Discord and the IRC bridge.',
+        example: '/test event event:darkAuction',
         adminOnly: true
       }
     ]

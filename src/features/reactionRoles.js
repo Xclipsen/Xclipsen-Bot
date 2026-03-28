@@ -91,18 +91,70 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
     await message.reactions.resolve(emoji)?.remove().catch(() => null);
   }
 
-  function buildReactionRoleSummary(guildId) {
-    const reactionRoles = store.getReactionRoleEntries(guildId);
-    if (reactionRoles.length === 0) {
-      return 'No reaction roles configured yet.';
-    }
-
-    return reactionRoles
+  function getReactionRoleSummaryLines(guildId) {
+    return store.getReactionRoleEntries(guildId)
       .map((entry, index) => {
         const restriction = entry.requiredRoleId ? ` (requires <@&${entry.requiredRoleId}>)` : '';
         return `${index + 1}. ${entry.emoji} -> <@&${entry.roleId}> on ${entry.channelId}/${entry.messageId}${restriction}`;
-      })
-      .join('\n');
+      });
+  }
+
+  function buildReactionRoleSummary(guildId, options = {}) {
+    const {
+      maxLength = 1800,
+      maxLines = Infinity
+    } = options;
+
+    const lines = getReactionRoleSummaryLines(guildId);
+    if (lines.length === 0) {
+      return 'No reaction roles configured yet.';
+    }
+
+    const output = [];
+    let currentLength = 0;
+
+    for (const line of lines) {
+      if (output.length >= maxLines) {
+        break;
+      }
+
+      const separatorLength = output.length > 0 ? 1 : 0;
+      if ((currentLength + separatorLength + line.length) > maxLength) {
+        break;
+      }
+
+      output.push(line);
+      currentLength += separatorLength + line.length;
+    }
+
+    if (output.length < lines.length) {
+      output.push(`... and ${lines.length - output.length} more binding(s).`);
+    }
+
+    return output.join('\n');
+  }
+
+  function purgeReactionRoleBindings(guildId, options = {}) {
+    const existingEntries = store.getReactionRoleEntries(guildId);
+    const nextEntries = existingEntries.filter((entry) => {
+      if (options.channelId && entry.channelId !== options.channelId) {
+        return true;
+      }
+
+      if (options.messageId && entry.messageId !== options.messageId) {
+        return true;
+      }
+
+      return false;
+    });
+
+    const removedCount = existingEntries.length - nextEntries.length;
+    if (removedCount === 0) {
+      return 0;
+    }
+
+    store.setReactionRoleEntries(guildId, nextEntries);
+    return removedCount;
   }
 
   async function handleReactionRoleCommand(interaction) {
@@ -113,7 +165,47 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
     const subcommand = interaction.options.getSubcommand();
     if (subcommand === 'list') {
       await interaction.reply({
-        content: buildReactionRoleSummary(interaction.guildId),
+        content: buildReactionRoleSummary(interaction.guildId, { maxLength: 1900 }),
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    if (subcommand === 'purge') {
+      const channel = interaction.options.getChannel('channel');
+      const messageId = interaction.options.getString('message_id')?.trim() || null;
+
+      if (messageId && !channel) {
+        await interaction.reply({
+          content: 'Set a channel when you want to purge bindings for a specific message.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      if (messageId && !isSnowflake(messageId)) {
+        await interaction.reply({
+          content: 'Message ID must be a valid Discord snowflake.',
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
+      const removedCount = purgeReactionRoleBindings(interaction.guildId, {
+        channelId: channel?.id || null,
+        messageId
+      });
+
+      const scope = messageId
+        ? `message \`${messageId}\` in <#${channel.id}>`
+        : channel
+          ? `channel <#${channel.id}>`
+          : 'this server';
+
+      await interaction.reply({
+        content: removedCount > 0
+          ? `Purged ${removedCount} reaction role binding(s) from ${scope}.`
+          : `No reaction role bindings found for ${scope}.`,
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -255,6 +347,7 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
     resolveReactionRoleInputs,
     addReactionRoleBinding,
     removeReactionRoleBinding,
+    purgeReactionRoleBindings,
     applyReactionRoleChange
   };
 }

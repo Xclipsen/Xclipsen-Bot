@@ -1,7 +1,17 @@
 const fs = require('node:fs');
 const path = require('node:path');
+const crypto = require('node:crypto');
 
 const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
+const BRIDGE_EVENT_KEYS = [
+  'spookyFestival',
+  'travelingZoo',
+  'hoppitysHunt',
+  'seasonOfJerry',
+  'darkAuction',
+  'cakeReminder',
+  'cultReminder'
+];
 
 function loadJsonFile(filePath, fallbackValue) {
   try {
@@ -149,7 +159,9 @@ function normalizeEventReminderRuntimeState(state) {
   return {
     lastSentStarts,
     messageIds,
-    channelId: state?.channelId ?? null
+    channelId: state?.channelId ?? null,
+    eventRolePanelMessageId: state?.eventRolePanelMessageId ?? null,
+    eventRolePanelChannelId: state?.eventRolePanelChannelId ?? null
   };
 }
 
@@ -167,6 +179,48 @@ function normalizeCultReminderRuntimeState(state) {
     messageId: state?.messageId ?? null,
     channelId: state?.channelId ?? null
   };
+}
+
+function normalizeBridgeLinksState(state) {
+  const users = state?.users && typeof state.users === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.users)
+        .map(([discordUserId, entry]) => [String(discordUserId || '').trim(), normalizeBridgeLinkedUser(entry)])
+        .filter(([discordUserId]) => /^\d{16,20}$/.test(discordUserId))
+    )
+    : {};
+
+  return { users };
+}
+
+function normalizeBridgeLinkedUser(entry) {
+  return {
+    discordUsername: typeof entry?.discordUsername === 'string' ? entry.discordUsername.trim() : '',
+    discordDisplayName: typeof entry?.discordDisplayName === 'string' ? entry.discordDisplayName.trim() : '',
+    minecraftUsernames: normalizeMinecraftUsernameList(entry?.minecraftUsernames),
+    pendingMinecraftUsernames: normalizeMinecraftUsernameList(entry?.pendingMinecraftUsernames),
+    linkCode: typeof entry?.linkCode === 'string' ? entry.linkCode.trim().toUpperCase() : null,
+    linkCodeExpiresAt: Number.isFinite(entry?.linkCodeExpiresAt) ? Number(entry.linkCodeExpiresAt) : null,
+    linkedAt: Number.isFinite(entry?.linkedAt) ? Number(entry.linkedAt) : null,
+    eventPreferences: normalizeBridgeEventPreferences(entry?.eventPreferences)
+  };
+}
+
+function normalizeBridgeEventPreferences(preferences) {
+  return Object.fromEntries(BRIDGE_EVENT_KEYS.map((eventKey) => [eventKey, preferences?.[eventKey] !== false]));
+}
+
+function normalizeMinecraftUsernameList(values) {
+  return Array.isArray(values)
+    ? [...new Set(values
+      .map((value) => normalizeMinecraftUsername(value))
+      .filter(Boolean))]
+    : [];
+}
+
+function normalizeMinecraftUsername(value) {
+  const raw = String(value || '').trim();
+  return /^[A-Za-z0-9_]{3,16}$/.test(raw) ? raw : '';
 }
 
 function normalizeSnowflakeList(values) {
@@ -373,6 +427,184 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       return Object.entries(guildConfig.guilds)
         .filter(([, config]) => normalizeGuildConfig(config).cultReminder.channelId)
         .map(([guildId]) => guildId);
+    },
+    getBridgeLinkedAccount(discordUserId) {
+      return normalizeBridgeLinksState(guildState.links).users[String(discordUserId || '').trim()] || null;
+    },
+    setBridgeLinkedAccount(discordUserId, partialEntry) {
+      const key = String(discordUserId || '').trim();
+      const links = normalizeBridgeLinksState(guildState.links);
+      guildState = {
+        ...guildState,
+        links: {
+          users: {
+            ...links.users,
+            [key]: normalizeBridgeLinkedUser({
+              ...links.users[key],
+              ...partialEntry
+            })
+          }
+        }
+      };
+      saveState();
+      return this.getBridgeLinkedAccount(key);
+    },
+    removeBridgeLinkedAccount(discordUserId) {
+      const key = String(discordUserId || '').trim();
+      const links = normalizeBridgeLinksState(guildState.links);
+      const nextUsers = { ...links.users };
+      delete nextUsers[key];
+      guildState = {
+        ...guildState,
+        links: {
+          users: nextUsers
+        }
+      };
+      saveState();
+    },
+    findBridgeLinkByMinecraftUsername(username) {
+      const normalizedUsername = normalizeMinecraftUsername(username).toLowerCase();
+      if (!normalizedUsername) {
+        return null;
+      }
+
+      const links = normalizeBridgeLinksState(guildState.links);
+      for (const [discordUserId, entry] of Object.entries(links.users)) {
+        if (entry.minecraftUsernames.some((value) => value.toLowerCase() === normalizedUsername)) {
+          return { discordUserId, entry };
+        }
+      }
+
+      return null;
+    },
+    startBridgeLink(discordUserId, minecraftUsernames) {
+      const key = String(discordUserId || '').trim();
+      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
+      const conflicts = usernames.filter((username) => {
+        const existing = this.findBridgeLinkByMinecraftUsername(username);
+        return existing && existing.discordUserId !== key;
+      });
+
+      if (conflicts.length > 0) {
+        return { ok: false, error: `These usernames are already linked: ${conflicts.join(', ')}` };
+      }
+
+      const account = this.setBridgeLinkedAccount(key, {
+        ...this.getBridgeLinkedAccount(key),
+        pendingMinecraftUsernames: usernames,
+        linkCode: crypto.randomBytes(3).toString('hex').toUpperCase(),
+        linkCodeExpiresAt: Date.now() + (10 * 60 * 1000),
+        eventPreferences: this.getBridgeLinkedAccount(key)?.eventPreferences || normalizeBridgeEventPreferences()
+      });
+
+      return {
+        ok: true,
+        code: account.linkCode,
+        expiresAt: account.linkCodeExpiresAt,
+        pendingMinecraftUsernames: account.pendingMinecraftUsernames
+      };
+    },
+    completeBridgeLink(code, minecraftUsername) {
+      const normalizedCode = String(code || '').trim().toUpperCase();
+      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
+      if (!normalizedCode || !normalizedUsername) {
+        return { ok: false, error: 'Invalid link code or Minecraft username.' };
+      }
+
+      const links = normalizeBridgeLinksState(guildState.links);
+      for (const [discordUserId, entry] of Object.entries(links.users)) {
+        if (entry.linkCode !== normalizedCode || !entry.linkCodeExpiresAt || entry.linkCodeExpiresAt < Date.now()) {
+          continue;
+        }
+
+        if (
+          entry.pendingMinecraftUsernames.length > 0 &&
+          !entry.pendingMinecraftUsernames.some((value) => value.toLowerCase() === normalizedUsername.toLowerCase())
+        ) {
+          return { ok: false, error: 'This Minecraft username is not in the pending link list.' };
+        }
+
+        const targetUsernames = normalizeMinecraftUsernameList([
+          ...entry.minecraftUsernames,
+          ...entry.pendingMinecraftUsernames,
+          normalizedUsername
+        ]);
+        const conflicts = targetUsernames.filter((username) => {
+          const existing = this.findBridgeLinkByMinecraftUsername(username);
+          return existing && existing.discordUserId !== discordUserId;
+        });
+
+        if (conflicts.length > 0) {
+          return { ok: false, error: `These usernames are already linked elsewhere: ${conflicts.join(', ')}` };
+        }
+
+        const updated = this.setBridgeLinkedAccount(discordUserId, {
+          minecraftUsernames: targetUsernames,
+          pendingMinecraftUsernames: [],
+          linkCode: null,
+          linkCodeExpiresAt: null,
+          linkedAt: entry.linkedAt || Date.now(),
+          eventPreferences: entry.eventPreferences
+        });
+
+        return { ok: true, discordUserId, account: updated };
+      }
+
+      return { ok: false, error: 'Link code not found or expired.' };
+    },
+    addBridgeMinecraftUsernames(discordUserId, minecraftUsernames) {
+      const key = String(discordUserId || '').trim();
+      const account = this.getBridgeLinkedAccount(key);
+      if (!account || account.minecraftUsernames.length === 0) {
+        return { ok: false, error: 'You are not linked yet.' };
+      }
+
+      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
+      const conflicts = usernames.filter((username) => {
+        const existing = this.findBridgeLinkByMinecraftUsername(username);
+        return existing && existing.discordUserId !== key;
+      });
+
+      if (conflicts.length > 0) {
+        return { ok: false, error: `These usernames are already linked: ${conflicts.join(', ')}` };
+      }
+
+      const updated = this.setBridgeLinkedAccount(key, {
+        minecraftUsernames: [...account.minecraftUsernames, ...usernames]
+      });
+      return { ok: true, account: updated };
+    },
+    removeBridgeMinecraftUsername(discordUserId, minecraftUsername) {
+      const key = String(discordUserId || '').trim();
+      const account = this.getBridgeLinkedAccount(key);
+      if (!account || account.minecraftUsernames.length === 0) {
+        return { ok: false, error: 'You are not linked yet.' };
+      }
+
+      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
+      const nextUsernames = account.minecraftUsernames.filter((value) => value.toLowerCase() !== normalizedUsername.toLowerCase());
+      const updated = this.setBridgeLinkedAccount(key, { minecraftUsernames: nextUsernames });
+      return { ok: true, account: updated };
+    },
+    setBridgeEventPreference(discordUserId, eventKey, enabled) {
+      const key = String(discordUserId || '').trim();
+      const account = this.getBridgeLinkedAccount(key);
+      if (!account || account.minecraftUsernames.length === 0) {
+        return { ok: false, error: 'You are not linked yet.' };
+      }
+
+      if (!BRIDGE_EVENT_KEYS.includes(eventKey)) {
+        return { ok: false, error: 'Unknown event key.' };
+      }
+
+      const updated = this.setBridgeLinkedAccount(key, {
+        eventPreferences: {
+          ...account.eventPreferences,
+          [eventKey]: enabled !== false
+        }
+      });
+
+      return { ok: true, account: updated };
     }
   };
 }
@@ -390,7 +622,10 @@ function loadState(stateFilePath) {
   }
 
   if (state.guilds && typeof state.guilds === 'object') {
-    return state;
+    return {
+      ...state,
+      links: normalizeBridgeLinksState(state.links)
+    };
   }
 
   return {
@@ -402,7 +637,8 @@ function loadState(stateFilePath) {
         statusMessageId: state.statusMessageId ?? null,
         statusChannelId: state.statusChannelId ?? null
       }
-    }
+    },
+    links: normalizeBridgeLinksState()
   };
 }
 

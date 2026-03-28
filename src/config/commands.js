@@ -59,7 +59,12 @@ const reactionRoleCommand = new SlashCommandBuilder()
     .addStringOption((option) => option.setName('emoji').setDescription('Emoji to remove from the binding').setRequired(true)))
   .addSubcommand((subcommand) => subcommand
     .setName('list')
-    .setDescription('List all configured reaction roles for this server.'));
+    .setDescription('List all configured reaction roles for this server.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('purge')
+    .setDescription('Purge reaction role bindings in this server, a channel, or one message.')
+    .addChannelOption((option) => option.setName('channel').setDescription('Optional channel scope').setRequired(false))
+    .addStringOption((option) => option.setName('message_id').setDescription('Optional message ID scope').setRequired(false)));
 
 const cataCommand = new SlashCommandBuilder()
   .setName('cata')
@@ -165,10 +170,76 @@ const shitterCommand = new SlashCommandBuilder()
     .setName('list')
     .setDescription('List all shitter entries for this server.'));
 
+const linkEventChoices = [
+  { name: 'Spooky Festival', value: 'spookyFestival' },
+  { name: 'Traveling Zoo', value: 'travelingZoo' },
+  { name: "Hoppity's Hunt", value: 'hoppitysHunt' },
+  { name: 'Season of Jerry', value: 'seasonOfJerry' },
+  { name: 'Dark Auction', value: 'darkAuction' },
+  { name: 'Cake Reminder', value: 'cakeReminder' },
+  { name: 'Cult Reminder', value: 'cultReminder' }
+];
+
+const testCommand = new SlashCommandBuilder()
+  .setName('test')
+  .setDescription('Send a test notification for one bot feature.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('event')
+    .setDescription('Send one event reminder test to Discord and IRC.')
+    .addStringOption((option) => option
+      .setName('event')
+      .setDescription('Event reminder to test')
+      .setRequired(true)
+      .addChoices(...linkEventChoices)));
+
+const linkCommand = new SlashCommandBuilder()
+  .setName('link')
+  .setDescription('Link your Discord account to one or more Minecraft usernames for the backend bridge.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('start')
+    .setDescription('Create a Minecraft link code for one or more usernames.')
+    .addStringOption((option) => option
+      .setName('usernames')
+      .setDescription('Comma-separated Minecraft usernames to attach to this Discord account')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('status')
+    .setDescription('Show your current backend link status.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('add')
+    .setDescription('Add more Minecraft usernames after linking.')
+    .addStringOption((option) => option
+      .setName('usernames')
+      .setDescription('Comma-separated Minecraft usernames')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('remove')
+    .setDescription('Remove one Minecraft username from your link.')
+    .addStringOption((option) => option
+      .setName('username')
+      .setDescription('Minecraft username to remove')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('event')
+    .setDescription('Enable or disable one event ping for your linked backend account.')
+    .addStringOption((option) => option
+      .setName('event')
+      .setDescription('Event to toggle')
+      .setRequired(true)
+      .addChoices(...linkEventChoices))
+    .addBooleanOption((option) => option
+      .setName('enabled')
+      .setDescription('Whether this event should reach your Minecraft client')
+      .setRequired(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('unlink')
+    .setDescription('Remove your backend link and all linked Minecraft usernames.'));
+
 const commands = [
   helpCommand,
   setupCommand,
   simulateCommand,
+  testCommand,
   reactionRoleCommand,
   cataCommand,
   catacombsCommand,
@@ -176,7 +247,8 @@ const commands = [
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
-  shitterCommand
+  shitterCommand,
+  linkCommand
 ];
 
 module.exports = {
@@ -185,6 +257,7 @@ module.exports = {
     help: 'help',
     setup: 'setup',
     simulate: 'simulate',
+    test: 'test',
     reactionRole: 'reactionrole',
     cata: 'cata',
     catacombs: 'catacombs',
@@ -192,6 +265,7 @@ module.exports = {
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',
-    shitter: 'shitter'
+    shitter: 'shitter',
+    link: 'link'
   }
 };
