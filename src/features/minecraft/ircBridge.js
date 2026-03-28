@@ -329,16 +329,53 @@ function createIrcBridge({ client, env, store }) {
     }
 
     const content = (message.cleanContent || '').trim();
-    const attachment = message.attachments.first();
-    const finalContent = content || (attachment ? `[Attachment] ${attachment.name}` : '');
+    const imageLinks = [...message.attachments.values()]
+      .filter(isImageAttachment)
+      .map((attachment) => String(attachment.url || '').trim())
+      .filter(Boolean);
+    const finalContent = [content, ...imageLinks].filter(Boolean).join(' ').trim();
 
     if (!finalContent) {
       return;
     }
 
-    addBufferedMessage('discord', message.member?.displayName || message.author.username, finalContent, {
+    const replyPrefix = await buildReplyPrefix(message);
+
+    addBufferedMessage('discord', message.member?.displayName || message.author.username, `${replyPrefix}${finalContent}`, {
       discordUserId: message.author.id
     });
+  }
+
+  async function buildReplyPrefix(message) {
+    if (!message?.reference?.messageId) {
+      return '';
+    }
+
+    const referencedMessage = await message.fetchReference().catch(() => null);
+    if (!referencedMessage) {
+      return '';
+    }
+
+    const replyTargetName = String(
+      referencedMessage.member?.displayName ||
+      referencedMessage.author?.globalName ||
+      referencedMessage.author?.username ||
+      'unknown'
+    ).trim();
+
+    return replyTargetName ? `↳ ${replyTargetName}: ` : '';
+  }
+
+  function isImageAttachment(attachment) {
+    if (!attachment) {
+      return false;
+    }
+
+    if (typeof attachment.contentType === 'string' && attachment.contentType.startsWith('image/')) {
+      return true;
+    }
+
+    return Number.isFinite(attachment.width) || Number.isFinite(attachment.height);
   }
 
   function sendEventMessage(eventKey, eventName, content, options = {}) {
