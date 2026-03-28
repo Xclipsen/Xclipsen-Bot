@@ -58,6 +58,7 @@ function normalizeEventReminderConfig(config) {
       travelingZoo: config?.roles?.travelingZoo || null,
       hoppitysHunt: config?.roles?.hoppitysHunt || null,
       seasonOfJerry: config?.roles?.seasonOfJerry || null,
+      darkAuction: config?.roles?.darkAuction || null,
       cakeReminder: config?.roles?.cakeReminder || null,
       cultReminder: config?.roles?.cultReminder || null
     }

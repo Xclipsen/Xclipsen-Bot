@@ -24,6 +24,11 @@ const EVENT_ROLE_PANEL_DEFINITIONS = [
     reactionEmoji: '🎁'
   },
   {
+    key: 'darkAuction',
+    label: 'Dark Auction',
+    reactionEmoji: '🕴️'
+  },
+  {
     key: 'cakeReminder',
     label: 'Cake Reminder',
     reactionEmoji: '🍰'
@@ -45,7 +50,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     SETUP_VIEW_EVENT_REMINDERS_ID,
     SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
-    SETUP_FAST_SETUP_ID,
     SETUP_EVENT_REMINDERS_MODAL_ID,
     SETUP_EVENT_REMINDERS_TEST_ALL_ID,
     SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID,
@@ -82,6 +86,15 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
   function isSnowflake(value) {
     return /^\d{16,20}$/.test(String(value || '').trim());
+  }
+
+  function formatEventRoleDisplayName(role) {
+    const roleId = String(role?.id || '').trim();
+    if (!roleId) {
+      return 'role not defined';
+    }
+
+    return `<@&${roleId}>`;
   }
 
   async function validateMayorSetupInputs(guild, channelId, roleId) {
@@ -181,8 +194,8 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       const roleId = eventConfig.roles[definition.key] || null;
       const role = roleId ? await guild.roles.fetch(roleId).catch(() => null) : null;
       const roleText = role
-        ? `@${role.name}`
-        : 'role not defined! use /eventconfig';
+        ? formatEventRoleDisplayName(role)
+        : 'role not defined';
 
       return `${definition.reactionEmoji} ${definition.label} -> ${roleText}`;
     }));
@@ -364,24 +377,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
   async function handleSetupActionButton(interaction) {
     if (!(await ensureSetupAccess(interaction, 'setup button'))) {
-      return;
-    }
-
-    if (interaction.customId === SETUP_FAST_SETUP_ID) {
-      await interaction.deferUpdate();
-
-      let note;
-      try {
-        note = await runFastSetup(interaction.guild);
-      } catch (error) {
-        console.error(`Fast setup failed for guild ${interaction.guildId}:`, error);
-        note = `Fast setup failed: ${error.message}`;
-      }
-
-      await interaction.editReply({
-        embeds: [renderers.createDiscordSetupEmbed(interaction.guild, note)],
-        components: renderers.createDiscordSetupComponents()
-      });
       return;
     }
 
@@ -801,109 +796,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     ids: interactionIds
   };
 
-  async function runFastSetup(guild) {
-    if (!guild.members.me) {
-      await guild.members.fetchMe();
-    }
-
-    const me = guild.members.me;
-    const missingPermissions = [
-      PermissionsBitField.Flags.ManageChannels,
-      PermissionsBitField.Flags.ManageRoles,
-      PermissionsBitField.Flags.SendMessages,
-      PermissionsBitField.Flags.ViewChannel
-    ].filter((permission) => !me.permissions.has(permission));
-
-    if (missingPermissions.length > 0) {
-      throw new Error('Bot needs Manage Channels, Manage Roles, View Channel, and Send Messages for Fast Setup.');
-    }
-
-    const mayorChannel = await findOrCreateTextChannel(guild, 'mayor-channel');
-    const modUpdatesChannel = await findOrCreateTextChannel(guild, 'mod-updates');
-    const eventsChannel = await findOrCreateTextChannel(guild, 'events');
-
-    const mayorRole = await findOrCreateRole(guild, 'mayor-alerts');
-    const modUpdatesRole = await findOrCreateRole(guild, 'mod-updates');
-    const eventRoles = {
-      spookyFestival: await findOrCreateRole(guild, 'spooky-festival'),
-      travelingZoo: await findOrCreateRole(guild, 'traveling-zoo'),
-      hoppitysHunt: await findOrCreateRole(guild, 'hoppitys-hunt'),
-      seasonOfJerry: await findOrCreateRole(guild, 'season-of-jerry'),
-      cakeReminder: await findOrCreateRole(guild, 'cake-reminder'),
-      cultReminder: await findOrCreateRole(guild, 'cult-reminder')
-    };
-
-    store.setGuildConfig(guild.id, {
-      channelId: mayorChannel.id,
-      roleId: mayorRole.id,
-      modUpdates: {
-        ...store.getGuildConfig(guild.id).modUpdates,
-        channelId: modUpdatesChannel.id,
-        roleId: modUpdatesRole.id
-      },
-      eventReminders: {
-        channelId: eventsChannel.id,
-        roles: Object.fromEntries(Object.entries(eventRoles).map(([key, role]) => [key, role.id]))
-      }
-    });
-
-    store.setGuildRuntimeState(guild.id, {
-      ...store.getGuildRuntimeState(guild.id),
-      eventReminders: {
-        lastSentStarts: {}
-      }
-    });
-
-    await modUpdates.syncStatusMessage(guild.id).catch((error) => {
-      console.error(`Failed to post mod update status during fast setup for guild ${guild.id}:`, error);
-    });
-
-    try {
-      const data = await mayorAlerts.fetchElectionData();
-      const mayor = data.mayor;
-      const currentElection = data.current || null;
-      const boothOpen = mayorAlerts.getBoothOpen(data);
-      await mayorAlerts.sendMayorStatusUpdate(guild.id, mayor, boothOpen, currentElection);
-      store.setGuildRuntimeState(guild.id, { ...store.getGuildRuntimeState(guild.id), boothOpen });
-    } catch (error) {
-      console.error(`Failed to post mayor status during fast setup for guild ${guild.id}:`, error);
-    }
-
-    return [
-      'Fast setup completed.',
-      `Mayor channel: <#${mayorChannel.id}> with <@&${mayorRole.id}>`,
-      `Mod updates channel: <#${modUpdatesChannel.id}> with <@&${modUpdatesRole.id}>`,
-      `Events channel: <#${eventsChannel.id}> with roles for Spooky, Zoo, Hoppity, Jerry, Cake, and Cult`
-    ].join('\n');
-  }
-
-  async function findOrCreateTextChannel(guild, name) {
-    await guild.channels.fetch();
-    const existingChannel = guild.channels.cache.find((channel) => (
-      channel.type === ChannelType.GuildText &&
-      String(channel.name || '').toLowerCase() === name.toLowerCase()
-    ));
-
-    if (existingChannel) {
-      return existingChannel;
-    }
-
-    return guild.channels.create({
-      name,
-      type: ChannelType.GuildText
-    });
-  }
-
-  async function findOrCreateRole(guild, name) {
-    await guild.roles.fetch();
-    const existingRole = guild.roles.cache.find((role) => String(role.name || '').toLowerCase() === name.toLowerCase());
-
-    if (existingRole) {
-      return existingRole;
-    }
-
-    return guild.roles.create({ name, mentionable: true });
-  }
 }
 
 function parseEventReminderRoles(rawValue) {
@@ -912,6 +804,9 @@ function parseEventReminderRoles(rawValue) {
     zoo: 'travelingZoo',
     hoppity: 'hoppitysHunt',
     jerry: 'seasonOfJerry',
+    darkauction: 'darkAuction',
+    da: 'darkAuction',
+    dark_auction: 'darkAuction',
     cake: 'cakeReminder',
     cult: 'cultReminder'
   };
@@ -921,6 +816,7 @@ function parseEventReminderRoles(rawValue) {
     travelingZoo: null,
     hoppitysHunt: null,
     seasonOfJerry: null,
+    darkAuction: null,
     cakeReminder: null,
     cultReminder: null
   };

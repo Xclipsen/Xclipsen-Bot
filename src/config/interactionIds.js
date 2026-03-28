@@ -7,7 +7,6 @@ const interactionIds = {
   SETUP_VIEW_EVENT_REMINDERS_ID: 'setup-view-event-reminders',
   SETUP_VIEW_MOD_UPDATES_ID: 'setup-view-mod-updates',
   SETUP_MAYOR_EDIT_ID: 'setup-mayor-edit',
-  SETUP_FAST_SETUP_ID: 'setup-fast-setup',
   SETUP_EVENT_REMINDERS_MODAL_ID: 'setup-event-reminders-modal',
   SETUP_EVENT_REMINDERS_TEST_ALL_ID: 'setup-event-reminders-test-all',
   SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID: 'setup-event-reminders-post-role-panel',

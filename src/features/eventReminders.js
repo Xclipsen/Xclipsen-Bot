@@ -46,6 +46,17 @@ const EVENT_DEFINITIONS = [
     label: 'Season of Jerry',
     color: 0x5dade2,
     getSchedule: (now) => getYearlyEventSchedule(now, 11, 24, 3)
+  },
+  {
+    key: 'darkAuction',
+    label: 'Dark Auction',
+    color: 0x2c3e50,
+    getSchedule: (now) => getDarkAuctionSchedule(now),
+    extraLines: () => [
+      'Occurs every 3 SkyBlock days, which is every hour in real time.',
+      'Entry opens at SkyBlock midnight, usually 5 minutes before the hour.',
+      'Players need at least **400,000** coins in purse to enter.'
+    ]
   }
 ];
 
@@ -270,6 +281,39 @@ function getMultiWindowSchedule(now, windows) {
 
   const nextWindow = candidates.find((window) => now < window.windowStartAt);
   return { ...nextWindow, isActive: false };
+}
+
+function getDarkAuctionSchedule(now) {
+  const elapsedSeconds = (now / 1000) - SKYBLOCK_EPOCH_SECONDS;
+  const cycleIndex = Math.floor(elapsedSeconds / (3 * SKYBLOCK_DAY_SECONDS));
+  const currentStart = (
+    SKYBLOCK_EPOCH_SECONDS +
+    (cycleIndex * 3 * SKYBLOCK_DAY_SECONDS)
+  ) * 1000;
+  const currentEnd = currentStart + (5 * 60 * 1000);
+
+  if (now < currentStart) {
+    return {
+      isActive: false,
+      windowStartAt: currentStart,
+      windowEndAt: currentEnd
+    };
+  }
+
+  if (now < currentEnd) {
+    return {
+      isActive: true,
+      windowStartAt: currentStart,
+      windowEndAt: currentEnd
+    };
+  }
+
+  const nextStart = currentStart + (3 * SKYBLOCK_DAY_SECONDS * 1000);
+  return {
+    isActive: false,
+    windowStartAt: nextStart,
+    windowEndAt: nextStart + (5 * 60 * 1000)
+  };
 }
 
 function createWindow(year, window) {

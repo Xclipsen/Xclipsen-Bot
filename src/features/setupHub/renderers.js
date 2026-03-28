@@ -20,7 +20,6 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_VIEW_EVENT_REMINDERS_ID,
     SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
-    SETUP_FAST_SETUP_ID,
     SETUP_EVENT_REMINDERS_MODAL_ID,
     SETUP_EVENT_REMINDERS_TEST_ALL_ID,
     SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID,
@@ -127,6 +126,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
             `Zoo: ${config.eventReminders.roles.travelingZoo ? `<@&${config.eventReminders.roles.travelingZoo}>` : 'Off'}`,
             `Hoppity: ${config.eventReminders.roles.hoppitysHunt ? `<@&${config.eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
             `Jerry: ${config.eventReminders.roles.seasonOfJerry ? `<@&${config.eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
+            `Dark Auction: ${config.eventReminders.roles.darkAuction ? `<@&${config.eventReminders.roles.darkAuction}>` : 'Off'}`,
             `Cake: ${config.eventReminders.roles.cakeReminder ? `<@&${config.eventReminders.roles.cakeReminder}>` : 'Off'}`,
             `Cult: ${config.eventReminders.roles.cultReminder ? `<@&${config.eventReminders.roles.cultReminder}>` : 'Off'}`
           ].join('\n'),
@@ -210,7 +210,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     const description = [
       'Use one shared events channel for recurring SkyBlock events.',
       'Each event can ping its own optional role when the event starts.',
-      'Tracked here: Cake Reminder, Cult Reminder, Spooky Festival, Traveling Zoo, Hoppity\'s Hunt, and Season of Jerry.'
+      'Tracked here: Cake Reminder, Cult Reminder, Spooky Festival, Traveling Zoo, Hoppity\'s Hunt, Season of Jerry, and Dark Auction.'
     ];
 
     if (note) {
@@ -229,6 +229,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
           `Traveling Zoo Role: ${eventReminders.roles.travelingZoo ? `<@&${eventReminders.roles.travelingZoo}>` : 'Off'}`,
           `Hoppity's Hunt Role: ${eventReminders.roles.hoppitysHunt ? `<@&${eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
           `Season of Jerry Role: ${eventReminders.roles.seasonOfJerry ? `<@&${eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
+          `Dark Auction Role: ${eventReminders.roles.darkAuction ? `<@&${eventReminders.roles.darkAuction}>` : 'Off'}`,
           `Cake Reminder Role: ${eventReminders.roles.cakeReminder ? `<@&${eventReminders.roles.cakeReminder}>` : 'Off'}`,
           `Cult Reminder Role: ${eventReminders.roles.cultReminder ? `<@&${eventReminders.roles.cultReminder}>` : 'Off'}`
         ].join('\n'),
@@ -346,7 +347,6 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   function createSetupComponents() {
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(SETUP_FAST_SETUP_ID).setLabel('Fast Setup').setStyle(ButtonStyle.Success),
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Discord').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(SETUP_VIEW_PLAYER_TOOLS_ID).setLabel('Player Tools').setStyle(ButtonStyle.Secondary)
       ),
@@ -587,10 +587,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
               `zoo=${existingConfig.roles.travelingZoo || ''}`,
               `hoppity=${existingConfig.roles.hoppitysHunt || ''}`,
               `jerry=${existingConfig.roles.seasonOfJerry || ''}`,
+              `darkauction=${existingConfig.roles.darkAuction || ''}`,
               `cake=${existingConfig.roles.cakeReminder || ''}`,
               `cult=${existingConfig.roles.cultReminder || ''}`
             ].join('\n'))
-            .setPlaceholder('spooky=123...\nzoo=123...\nhoppity=123...\njerry=123...\ncake=123...\ncult=123...')
+            .setPlaceholder('spooky=123...\nzoo=123...\nhoppity=123...\njerry=123...\ndarkauction=123...\ncake=123...\ncult=123...')
         )
       );
   }
