@@ -174,15 +174,18 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     };
   }
 
-  async function buildEventRolePanelLines(guildId) {
+  async function buildEventRolePanelLines(guild, guildId) {
     const eventConfig = store.getGuildConfig(guildId).eventReminders;
 
-    return EVENT_ROLE_PANEL_DEFINITIONS.map((definition) => {
+    return Promise.all(EVENT_ROLE_PANEL_DEFINITIONS.map(async (definition) => {
       const roleId = eventConfig.roles[definition.key] || null;
-      const roleText = roleId ? `<@&${roleId}>` : 'Not configured';
+      const role = roleId ? await guild.roles.fetch(roleId).catch(() => null) : null;
+      const roleText = role
+        ? `@${role.name}`
+        : 'role not defined! use /eventconfig';
 
-      return `${definition.reactionEmoji} **${definition.label}** -> ${roleText}`;
-    });
+      return `${definition.reactionEmoji} ${definition.label} -> ${roleText}`;
+    }));
   }
 
   async function postEventRolePanel(guild, channelId) {
@@ -221,9 +224,8 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       content: [
         '**SkyBlock Event Roles**',
         'React below to add or remove event ping roles.',
-        'The reaction emoji controls the role.',
         '',
-        ...buildEventRolePanelLines(guild.id)
+        ...(await buildEventRolePanelLines(guild, guild.id))
       ].join('\n'),
       allowedMentions: { parse: [] },
       wait: true
