@@ -329,11 +329,11 @@ function createIrcBridge({ client, env, store }) {
     }
 
     const content = (message.cleanContent || '').trim();
-    const imageLinks = [...message.attachments.values()]
-      .filter(isImageAttachment)
-      .map((attachment) => String(attachment.url || '').trim())
-      .filter(Boolean);
-    const finalContent = [content, ...imageLinks].filter(Boolean).join(' ').trim();
+    const attachmentInfo = extractAttachmentInfo(message.attachments);
+    const finalContent = [content, ...attachmentInfo.imageLinks, ...attachmentInfo.fallbackLabels]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
 
     if (!finalContent) {
       return;
@@ -376,6 +376,40 @@ function createIrcBridge({ client, env, store }) {
     }
 
     return Number.isFinite(attachment.width) || Number.isFinite(attachment.height);
+  }
+
+  function extractAttachmentInfo(attachments) {
+    if (!attachments || typeof attachments.values !== 'function') {
+      return {
+        imageLinks: [],
+        fallbackLabels: []
+      };
+    }
+
+    const imageLinks = [];
+    const fallbackLabels = [];
+
+    for (const attachment of attachments.values()) {
+      if (!attachment) {
+        continue;
+      }
+
+      if (isImageAttachment(attachment)) {
+        const url = String(attachment.url || '').trim();
+        if (url) {
+          imageLinks.push(url);
+        }
+        continue;
+      }
+
+      const name = String(attachment.name || 'attachment').trim();
+      fallbackLabels.push(`[Attachment] ${name}`);
+    }
+
+    return {
+      imageLinks,
+      fallbackLabels
+    };
   }
 
   function sendEventMessage(eventKey, eventName, content, options = {}) {
