@@ -3,6 +3,7 @@ const http = require('node:http');
 function createIrcBridge({ client, env, store }) {
   const mentionPattern = /(^|[\s(])@([a-zA-Z0-9._-]{2,32})\b/g;
   const bufferedMessages = [];
+  const recentCoopRelayKeys = [];
   let nextMessageId = 1;
   let server = null;
 
@@ -73,6 +74,20 @@ function createIrcBridge({ client, env, store }) {
 
     if (payload.type === 'status') {
       content = String(payload.message || '');
+    } else if (payload.type === 'coop') {
+      const coopPlayer = normalizeMinecraftUsername(payload.forwardedPlayerName) || 'Unknown';
+      const sanitizedMessage = sanitizeExternalMessage(String(payload.message || ''));
+      if (!coopPlayer || !sanitizedMessage) {
+        return;
+      }
+
+      const linked = store.findBridgeLinkByMinecraftUsername(coopPlayer);
+      const playerName = linked
+        ? await resolveLinkedDisplayName(channel, linked.discordUserId, coopPlayer)
+        : coopPlayer.replace(/@/g, '@\u200b');
+      const resolved = await resolveUserMentions(channel, sanitizedMessage);
+      content = `**${playerName}**: ${resolved.content}`;
+      allowedUserMentions = resolved.allowedUserMentions;
     } else {
       const linked = store.findBridgeLinkByMinecraftUsername(String(payload.playerName || ''));
       if (!linked) {
@@ -272,6 +287,30 @@ function createIrcBridge({ client, env, store }) {
             discordUserId: linked.discordUserId,
             minecraftUsername: String(payload.playerName || '')
           });
+        } else if (payload.type === 'coop') {
+          const linked = store.findBridgeLinkByMinecraftUsername(payload.playerName);
+          if (!linked) {
+            writeJson(response, 403, { error: 'link required' });
+            return;
+          }
+
+          const coopAuthor = normalizeMinecraftUsername(payload.forwardedPlayerName);
+          if (!coopAuthor) {
+            writeJson(response, 400, { error: 'invalid coop author' });
+            return;
+          }
+
+          const sanitizedMessage = sanitizeExternalMessage(payload.message);
+          if (!sanitizedMessage) {
+            writeJson(response, 400, { error: 'invalid payload' });
+            return;
+          }
+
+          const relayAccepted = registerCoopRelay(coopAuthor, sanitizedMessage);
+          if (!relayAccepted) {
+            writeJson(response, 202, { status: 'deduplicated' });
+            return;
+          }
         } else if (payload.type === 'status') {
           addBufferedMessage('status', 'system', payload.message.trim());
         }
@@ -433,6 +472,10 @@ function createIrcBridge({ client, env, store }) {
   }
 
   function shouldDeliverMessageToLinkedUser(message, linkedAccount) {
+    if (message.source === 'coop') {
+      return false;
+    }
+
     if (message.source !== 'event') {
       return true;
     }
@@ -489,6 +532,44 @@ function createIrcBridge({ client, env, store }) {
 
     const member = await channel.guild.members.fetch(discordUserId).catch(() => null);
     return (member?.displayName || member?.user?.globalName || member?.user?.username || fallback).replace(/@/g, '@\u200b');
+  }
+
+  function sanitizeExternalMessage(rawMessage) {
+    return String(rawMessage || '')
+      .replace(/@/g, '@\u200b')
+      .replace(/[\r\n]+/g, ' ')
+      .trim();
+  }
+
+  function normalizeMinecraftUsername(value) {
+    const raw = String(value || '').trim();
+    return /^[A-Za-z0-9_]{3,16}$/.test(raw) ? raw : '';
+  }
+
+  function registerCoopRelay(playerName, message) {
+    pruneExpiredCoopRelays();
+    const key = `${String(playerName || '').toLowerCase()}|${String(message || '').toLowerCase()}`;
+    if (!key || recentCoopRelayKeys.some((entry) => entry.key === key)) {
+      return false;
+    }
+
+    recentCoopRelayKeys.push({
+      key,
+      expiresAt: Date.now() + 10_000
+    });
+
+    while (recentCoopRelayKeys.length > 100) {
+      recentCoopRelayKeys.shift();
+    }
+
+    return true;
+  }
+
+  function pruneExpiredCoopRelays() {
+    const now = Date.now();
+    while (recentCoopRelayKeys.length > 0 && recentCoopRelayKeys[0].expiresAt < now) {
+      recentCoopRelayKeys.shift();
+    }
   }
 
   return {
