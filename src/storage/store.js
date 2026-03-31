@@ -4,13 +4,17 @@ const crypto = require('node:crypto');
 
 const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
 const BRIDGE_EVENT_KEYS = [
-  'spookyFestival',
-  'travelingZoo',
-  'hoppitysHunt',
-  'seasonOfJerry',
+  'spiderRain',
+  'spiderThunder',
   'darkAuction',
-  'cakeReminder',
-  'cultReminder'
+  'jerrysWorkshop',
+  'seasonOfJerry',
+  'newYearCelebration',
+  'bankInterest',
+  'hoppitysHunt',
+  'travelingZoo',
+  'spookyFishing',
+  'spookyFestival'
 ];
 
 function loadJsonFile(filePath, fallbackValue) {
@@ -63,14 +67,19 @@ function normalizeMayorAlertConfig(config) {
 function normalizeEventReminderConfig(config) {
   return {
     channelId: config?.channelId || null,
+    rolePanelChannelId: config?.rolePanelChannelId || null,
     roles: {
-      spookyFestival: config?.roles?.spookyFestival || null,
-      travelingZoo: config?.roles?.travelingZoo || null,
-      hoppitysHunt: config?.roles?.hoppitysHunt || null,
-      seasonOfJerry: config?.roles?.seasonOfJerry || null,
+      spiderRain: config?.roles?.spiderRain || null,
+      spiderThunder: config?.roles?.spiderThunder || null,
       darkAuction: config?.roles?.darkAuction || null,
-      cakeReminder: config?.roles?.cakeReminder || null,
-      cultReminder: config?.roles?.cultReminder || null
+      jerrysWorkshop: config?.roles?.jerrysWorkshop || null,
+      seasonOfJerry: config?.roles?.seasonOfJerry || null,
+      newYearCelebration: config?.roles?.newYearCelebration || null,
+      bankInterest: config?.roles?.bankInterest || null,
+      hoppitysHunt: config?.roles?.hoppitysHunt || null,
+      travelingZoo: config?.roles?.travelingZoo || null,
+      spookyFishing: config?.roles?.spookyFishing || null,
+      spookyFestival: config?.roles?.spookyFestival || null
     }
   };
 }
@@ -156,12 +165,21 @@ function normalizeEventReminderRuntimeState(state) {
     )
     : {};
 
+  const messageExpireAts = state?.messageExpireAts && typeof state.messageExpireAts === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.messageExpireAts)
+        .map(([eventKey, expireAt]) => [String(eventKey || '').trim(), expireAt == null ? null : Number(expireAt)])
+        .filter(([eventKey]) => eventKey)
+    )
+    : {};
+
   return {
     lastSentStarts,
     messageIds,
+    messageExpireAts,
     channelId: state?.channelId ?? null,
-    eventRolePanelMessageId: state?.eventRolePanelMessageId ?? null,
-    eventRolePanelChannelId: state?.eventRolePanelChannelId ?? null
+    rolePanelMessageId: state?.rolePanelMessageId ?? null,
+    rolePanelChannelId: state?.rolePanelChannelId ?? null
   };
 }
 
@@ -397,7 +415,10 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     },
     getConfiguredGuildIds() {
       return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).channelId)
+        .filter(([, config]) => {
+          const normalized = normalizeGuildConfig(config);
+          return normalized.eventReminders.channelId || normalized.channelId;
+        })
         .map(([guildId]) => guildId);
     },
     getModUpdateConfiguredGuildIds() {

@@ -8,13 +8,10 @@ const interactionIds = {
   SETUP_VIEW_MOD_UPDATES_ID: 'setup-view-mod-updates',
   SETUP_MAYOR_EDIT_ID: 'setup-mayor-edit',
   SETUP_EVENT_REMINDERS_MODAL_ID: 'setup-event-reminders-modal',
-  SETUP_EVENT_REMINDERS_TEST_ALL_ID: 'setup-event-reminders-test-all',
-  SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID: 'setup-event-reminders-post-role-panel',
-  SETUP_EVENT_ROLE_PANEL_MODAL_ID: 'setup-event-role-panel-modal',
+  SETUP_EVENT_REMINDERS_QUICK_SETUP_ID: 'setup-event-reminders-quick-setup',
+  SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID: 'setup-event-reminders-post-role-message',
   SETUP_MAYOR_TOGGLE_ELECTION_PING_ID: 'setup-mayor-toggle-election-ping',
   SETUP_MAYOR_TOGGLE_CHANGE_PING_ID: 'setup-mayor-toggle-change-ping',
-  SETUP_MAYOR_RELOAD_ID: 'setup-mayor-reload',
-  SETUP_MAYOR_RESET_ID: 'setup-mayor-reset',
   SETUP_MOD_UPDATES_MODAL_ID: 'setup-mod-updates-modal',
   SETUP_MOD_UPDATES_REFRESH_ID: 'setup-mod-updates-refresh',
   SETUP_MOD_UPDATES_TEST_ID: 'setup-mod-updates-test',
@@ -38,9 +35,8 @@ const interactionIds = {
   SETUP_MOD_UPDATES_ROLE_INPUT_ID: 'setup-mod-updates-role-id',
   SETUP_MOD_UPDATES_REPOS_INPUT_ID: 'setup-mod-updates-repos',
   SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID: 'setup-event-reminders-channel-id',
+  SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID: 'setup-event-reminders-role-panel-channel-id',
   SETUP_EVENT_REMINDERS_ROLES_INPUT_ID: 'setup-event-reminders-roles',
-  SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID: 'setup-event-role-panel-channel-id',
-  SETUP_CHANNEL_INPUT_ID: 'setup-channel-id',
   SETUP_ROLE_INPUT_ID: 'setup-role-id'
 };
 

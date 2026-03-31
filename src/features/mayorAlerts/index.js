@@ -32,7 +32,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     const channel = await data.getTargetChannel(guildId);
     const mayorEmoji = await data.getMayorEmoji(guildId, mayor);
     const payload = {
-      embeds: [embeds.createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor, boothOpen, currentElection)],
+      embeds: [
+        embeds.createEventCalendarEmbed(),
+        embeds.createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor, boothOpen, currentElection)
+      ],
       components: boothOpen ? embeds.createCandidateSelectComponents(currentElection) : []
     };
 
@@ -123,23 +126,6 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     await sendMayorStatusUpdate(guildId, mayor, true, currentElection, { forceResend: true });
   }
 
-  async function resetMayorMessages(guildId) {
-    const electionData = await data.fetchElectionData();
-    const mayor = electionData.mayor;
-    const currentElection = electionData.current || null;
-    const boothOpen = data.getBoothOpen(electionData);
-
-    await data.deleteTrackedMayorMessages(guildId);
-    await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection, { forceResend: true });
-
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      boothOpen
-    });
-
-    return { mayor, boothOpen };
-  }
-
   async function checkElectionState() {
     try {
       const electionData = await data.fetchElectionData();
@@ -217,6 +203,16 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     }
   }
 
+  async function refreshStatusForGuild(guildId) {
+    const electionData = await data.fetchElectionData();
+    const mayor = electionData.mayor;
+    const currentElection = electionData.current || null;
+    const boothOpen = data.getBoothOpen(electionData);
+
+    await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection);
+    store.setGuildRuntimeState(guildId, { ...store.getGuildRuntimeState(guildId), boothOpen });
+  }
+
   async function ensureLegacyEnvConfig() {
     if (!env.DEFAULT_DISCORD_CHANNEL_ID) {
       return;
@@ -243,9 +239,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     getBoothOpen: data.getBoothOpen,
     handleCandidateSelect,
     sendMayorStatusUpdate,
-    resetMayorMessages,
     checkElectionState,
     sendScheduledStatusUpdate,
+    refreshStatusForGuild,
+    deleteTrackedMessagesForGuild: data.deleteTrackedMayorMessages,
     ensureLegacyEnvConfig
   };
 }

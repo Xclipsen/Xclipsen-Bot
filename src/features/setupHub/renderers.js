@@ -9,6 +9,7 @@ const {
 } = require('discord.js');
 
 const { getHelpSectionById } = require('../../config/help');
+const { EVENT_DEFINITIONS } = require('../eventCalendar');
 
 function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   const {
@@ -21,13 +22,10 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
     SETUP_EVENT_REMINDERS_MODAL_ID,
-    SETUP_EVENT_REMINDERS_TEST_ALL_ID,
-    SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID,
-    SETUP_EVENT_ROLE_PANEL_MODAL_ID,
+    SETUP_EVENT_REMINDERS_QUICK_SETUP_ID,
+    SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID,
     SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
     SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
-    SETUP_MAYOR_RELOAD_ID,
-    SETUP_MAYOR_RESET_ID,
     SETUP_MOD_UPDATES_MODAL_ID,
     SETUP_MOD_UPDATES_REFRESH_ID,
     SETUP_MOD_UPDATES_TEST_ID,
@@ -51,9 +49,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_MOD_UPDATES_ROLE_INPUT_ID,
     SETUP_MOD_UPDATES_REPOS_INPUT_ID,
     SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
+    SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
-    SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID,
-    SETUP_CHANNEL_INPUT_ID,
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
 
@@ -67,6 +64,18 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       activeEntries: activeEntries.length,
       activeNames
     };
+  }
+
+  function buildEventRoleLines(roles) {
+    return EVENT_DEFINITIONS
+      .map((definition) => `${definition.label}: ${roles?.[definition.key] ? `<@&${roles[definition.key]}>` : 'Off'}`)
+      .join('\n');
+  }
+
+  function buildEventRoleInputLines(roles) {
+    return EVENT_DEFINITIONS
+      .map((definition) => `${definition.key}=${roles?.[definition.key] || ''}`)
+      .join('\n');
   }
 
   function createSetupHubEmbed(guild, note = null) {
@@ -96,8 +105,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     const shitterStats = getShitterStats(guild.id);
     const description = [
       'This section groups the current Discord-side bot configuration.',
-      'Open Mayor Alerts to change the status/alert channel and ping role.',
-      'Open Event Reminders to use one shared channel with event-specific ping roles.',
+      'Open Mayor Alerts to control the shared calendar/status embed and mayor ping role.',
+      'Open Event Calendar to use the same calendar channel with event-specific ping roles.',
       'Open Mod Updates to choose a release channel, optional ping role, and tracked GitHub repos.',
       'Open Reaction Roles to manage message-based role toggles.',
       'Open Shitter List to control who can add or remove shitter entries and store evidence screenshots.'
@@ -114,7 +123,6 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
         {
           name: 'Mayor Alerts',
           value: [
-            `Channel: ${config.channelId ? `<#${config.channelId}>` : 'Not configured'}`,
             `Role: ${config.roleId ? `<@&${config.roleId}>` : 'Not configured'}`,
             `Election ping: ${config.mayorAlerts.pingElectionOpen ? 'On' : 'Off'}`,
             `Mayor change ping: ${config.mayorAlerts.pingMayorChange ? 'On' : 'Off'}`
@@ -122,16 +130,12 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
           inline: false
         },
         {
-          name: 'Event Reminders',
+          name: 'Event Calendar',
           value: [
-            `Channel: ${config.eventReminders.channelId ? `<#${config.eventReminders.channelId}>` : 'Not configured'}`,
-            `Spooky: ${config.eventReminders.roles.spookyFestival ? `<@&${config.eventReminders.roles.spookyFestival}>` : 'Off'}`,
-            `Zoo: ${config.eventReminders.roles.travelingZoo ? `<@&${config.eventReminders.roles.travelingZoo}>` : 'Off'}`,
-            `Hoppity: ${config.eventReminders.roles.hoppitysHunt ? `<@&${config.eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
-            `Jerry: ${config.eventReminders.roles.seasonOfJerry ? `<@&${config.eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
-            `Dark Auction: ${config.eventReminders.roles.darkAuction ? `<@&${config.eventReminders.roles.darkAuction}>` : 'Off'}`,
-            `Cake: ${config.eventReminders.roles.cakeReminder ? `<@&${config.eventReminders.roles.cakeReminder}>` : 'Off'}`,
-            `Cult: ${config.eventReminders.roles.cultReminder ? `<@&${config.eventReminders.roles.cultReminder}>` : 'Off'}`
+            `Shared Channel: ${config.eventReminders.channelId ? `<#${config.eventReminders.channelId}>` : 'Not configured'}`,
+            `Role Message Channel: ${config.eventReminders.rolePanelChannelId ? `<#${config.eventReminders.rolePanelChannelId}>` : 'Not configured'}`,
+            'Mayor status uses this same channel.',
+            buildEventRoleLines(config.eventReminders.roles)
           ].join('\n'),
           inline: false
         },
@@ -210,10 +214,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
 
   function createEventRemindersSetupEmbed(guild, note = null) {
     const eventReminders = store.getGuildConfig(guild.id).eventReminders;
+    const runtimeState = store.getGuildRuntimeState(guild.id).eventReminders;
     const description = [
-      'Use one shared events channel for recurring SkyBlock events.',
-      'Each event can ping its own optional role when the event starts.',
-      'Tracked here: Cake Reminder, Cult Reminder, Spooky Festival, Traveling Zoo, Hoppity\'s Hunt, Season of Jerry, and Dark Auction.'
+      'This page controls the shared Event Calendar channel and the event-specific ping roles.',
+      'Quick Setup creates any missing event roles, uses the current channel as the calendar channel, and posts the event reaction-role message.',
+      'When an event starts, the bot sends one active-now ping and deletes it again when the event ends.'
     ];
 
     if (note) {
@@ -222,23 +227,19 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
 
     return new EmbedBuilder()
       .setColor(0x1abc9c)
-      .setTitle('Setup Hub - Discord - Event Reminders')
+      .setTitle('Setup Hub - Discord - Event Calendar')
       .setDescription(description.join('\n'))
       .addFields({
         name: 'Configuration',
         value: [
-          `Channel: ${eventReminders.channelId ? `<#${eventReminders.channelId}>` : 'Not configured'}`,
-          `Spooky Festival Role: ${eventReminders.roles.spookyFestival ? `<@&${eventReminders.roles.spookyFestival}>` : 'Off'}`,
-          `Traveling Zoo Role: ${eventReminders.roles.travelingZoo ? `<@&${eventReminders.roles.travelingZoo}>` : 'Off'}`,
-          `Hoppity's Hunt Role: ${eventReminders.roles.hoppitysHunt ? `<@&${eventReminders.roles.hoppitysHunt}>` : 'Off'}`,
-          `Season of Jerry Role: ${eventReminders.roles.seasonOfJerry ? `<@&${eventReminders.roles.seasonOfJerry}>` : 'Off'}`,
-          `Dark Auction Role: ${eventReminders.roles.darkAuction ? `<@&${eventReminders.roles.darkAuction}>` : 'Off'}`,
-          `Cake Reminder Role: ${eventReminders.roles.cakeReminder ? `<@&${eventReminders.roles.cakeReminder}>` : 'Off'}`,
-          `Cult Reminder Role: ${eventReminders.roles.cultReminder ? `<@&${eventReminders.roles.cultReminder}>` : 'Off'}`
+          `Shared Calendar Channel: ${eventReminders.channelId ? `<#${eventReminders.channelId}>` : 'Not configured'}`,
+          `Role Message Channel: ${eventReminders.rolePanelChannelId ? `<#${eventReminders.rolePanelChannelId}>` : 'Not configured'}`,
+          `Reaction Role Message: ${runtimeState.rolePanelMessageId ? `Posted in <#${runtimeState.rolePanelChannelId || eventReminders.rolePanelChannelId || eventReminders.channelId}>` : 'Not posted'}`,
+          buildEventRoleLines(eventReminders.roles)
         ].join('\n'),
         inline: false
       })
-      .setFooter({ text: 'Use Edit Config to change the shared event channel and roles.' });
+      .setFooter({ text: 'Edit Config changes the shared channel and role IDs. Post Role Message rebuilds the reaction-role post.' });
   }
 
   function createPlayerToolsEmbed(guild, note = null) {
@@ -326,9 +327,10 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
 
   function createMayorSetupEmbed(guild, note = null) {
     const config = store.getGuildConfig(guild.id);
+    const sharedChannelId = config.eventReminders.channelId || config.channelId;
     const description = [
-      'Manage mayor alert posting for this server.',
-      'You can change the target channel, ping role, toggle which alert types ping the role, force a fresh status reload, or reset old mayor messages from here.'
+      'Manage mayor pings for the shared SkyBlock calendar in this server.',
+      'The calendar channel is configured in Event Calendar. Mayor status posts use that same channel automatically.'
     ];
     if (note) {
       description.push('', note);
@@ -339,12 +341,12 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setTitle('Setup Hub - Discord - Mayor Alerts')
       .setDescription(description.join('\n'))
       .addFields(
-        { name: 'Status Channel', value: config.channelId ? `<#${config.channelId}>` : 'Not configured', inline: true },
-        { name: 'Ping Role', value: config.roleId ? `<@&${config.roleId}>` : 'Not configured', inline: true },
+        { name: 'Calendar Channel', value: sharedChannelId ? `<#${sharedChannelId}>` : 'Not configured in Event Calendar', inline: true },
+        { name: 'Mayor Ping Role', value: config.roleId ? `<@&${config.roleId}>` : 'Not configured', inline: true },
         { name: 'Election Booth Ping', value: config.mayorAlerts.pingElectionOpen ? 'Enabled' : 'Disabled', inline: true },
         { name: 'Mayor Change Ping', value: config.mayorAlerts.pingMayorChange ? 'Enabled' : 'Disabled', inline: true }
       )
-      .setFooter({ text: 'Edit the config, toggle pings, or reload the live mayor status.' });
+      .setFooter({ text: 'Set the channel in Event Calendar and manage mayor pings here.' });
   }
 
   function createSetupComponents() {
@@ -371,7 +373,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_MAYOR_ID).setLabel('Mayor Alerts').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(SETUP_VIEW_EVENT_REMINDERS_ID).setLabel('Event Reminders').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_EVENT_REMINDERS_ID).setLabel('Event Calendar').setStyle(ButtonStyle.Secondary),
         new ButtonBuilder().setCustomId(SETUP_VIEW_MOD_UPDATES_ID).setLabel('Mod Updates').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
@@ -403,9 +405,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
 
     return [
       new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(SETUP_MAYOR_EDIT_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(SETUP_MAYOR_RELOAD_ID).setLabel('Reload Status').setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId(SETUP_MAYOR_RESET_ID).setLabel('Reset Messages').setStyle(ButtonStyle.Danger)
+        new ButtonBuilder().setCustomId(SETUP_MAYOR_EDIT_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
@@ -456,8 +456,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_MODAL_ID).setLabel('Edit Config').setStyle(ButtonStyle.Primary),
-        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_TEST_ALL_ID).setLabel('Test All Reminders').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID).setLabel('Post Role Panel').setStyle(ButtonStyle.Success)
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_QUICK_SETUP_ID).setLabel('Quick Setup Here').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID).setLabel('Post Role Message').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
@@ -470,8 +470,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       .setCustomId(SETUP_MODAL_ID)
       .setTitle('Mayor Alerts')
       .addComponents(
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_CHANNEL_INPUT_ID).setLabel('Channel ID').setStyle(TextInputStyle.Short).setRequired(true).setValue(existingConfig.channelId || '').setPlaceholder('1093242679493664768')),
-        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_ROLE_INPUT_ID).setLabel('Role ID').setStyle(TextInputStyle.Short).setRequired(true).setValue(existingConfig.roleId || '').setPlaceholder('1483819173447733419'))
+        new ActionRowBuilder().addComponents(new TextInputBuilder().setCustomId(SETUP_ROLE_INPUT_ID).setLabel('Mayor Ping Role ID').setStyle(TextInputStyle.Short).setRequired(true).setValue(existingConfig.roleId || '').setPlaceholder('1483819173447733419'))
       );
   }
 
@@ -588,15 +587,24 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   function createEventRemindersSetupModal(existingConfig) {
     return new ModalBuilder()
       .setCustomId(SETUP_EVENT_REMINDERS_MODAL_ID)
-      .setTitle('Event Reminders Config')
+      .setTitle('Event Calendar Config')
       .addComponents(
         new ActionRowBuilder().addComponents(
           new TextInputBuilder()
             .setCustomId(SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID)
-            .setLabel('Channel ID')
+            .setLabel('Calendar Channel ID')
             .setStyle(TextInputStyle.Short)
             .setRequired(false)
             .setValue(existingConfig.channelId || '')
+            .setPlaceholder('1093242679493664768')
+        ),
+        new ActionRowBuilder().addComponents(
+          new TextInputBuilder()
+            .setCustomId(SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID)
+            .setLabel('Role Message Channel ID')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(false)
+            .setValue(existingConfig.rolePanelChannelId || '')
             .setPlaceholder('1093242679493664768')
         ),
         new ActionRowBuilder().addComponents(
@@ -605,35 +613,22 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
             .setLabel('Role IDs (optional)')
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(false)
-            .setValue([
-              `spooky=${existingConfig.roles.spookyFestival || ''}`,
-              `zoo=${existingConfig.roles.travelingZoo || ''}`,
-              `hoppity=${existingConfig.roles.hoppitysHunt || ''}`,
-              `jerry=${existingConfig.roles.seasonOfJerry || ''}`,
-              `darkauction=${existingConfig.roles.darkAuction || ''}`,
-              `cake=${existingConfig.roles.cakeReminder || ''}`,
-              `cult=${existingConfig.roles.cultReminder || ''}`
-            ].join('\n'))
-            .setPlaceholder('spooky=123...\nzoo=123...\nhoppity=123...\njerry=123...\ndarkauction=123...\ncake=123...\ncult=123...')
+            .setValue(buildEventRoleInputLines(existingConfig.roles))
+            .setPlaceholder('spiderRain=123...\nspiderThunder=123...\ndarkAuction=123...\njerrysWorkshop=123...\nseasonOfJerry=123...\nnewYearCelebration=123...\nbankInterest=123...\nhoppitysHunt=123...\ntravelingZoo=123...\nspookyFishing=123...\nspookyFestival=123...')
         )
       );
   }
 
-  function createEventRolePanelModal(existingChannelId = '') {
-    return new ModalBuilder()
-      .setCustomId(SETUP_EVENT_ROLE_PANEL_MODAL_ID)
-      .setTitle('Post Event Role Panel')
-      .addComponents(
-        new ActionRowBuilder().addComponents(
-          new TextInputBuilder()
-            .setCustomId(SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID)
-            .setLabel('Channel ID')
-            .setStyle(TextInputStyle.Short)
-            .setRequired(true)
-            .setValue(existingChannelId || '')
-            .setPlaceholder('1093242679493664768')
-        )
-      );
+  function createEventRolePanelEmbed(roleEntries) {
+    return new EmbedBuilder()
+      .setColor(0x1abc9c)
+      .setTitle('Event Ping Roles')
+      .setDescription([
+        'React below to toggle the event ping roles.',
+        '',
+        ...roleEntries.map((entry) => `${entry.emoji} ${entry.roleMention} - ${entry.label}`)
+      ].join('\n'))
+      .setFooter({ text: 'The bot will add or remove the matching role when you react.' });
   }
 
   function buildModUpdateFieldValue(status) {
@@ -682,7 +677,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     createReactionRoleSetupComponents,
     createMayorSetupModal,
     createEventRemindersSetupModal,
-    createEventRolePanelModal,
+    createEventRolePanelEmbed,
     createReactionRoleAddModal,
     createReactionRoleRemoveModal,
     createReactionRolePurgeChannelModal,

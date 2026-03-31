@@ -1,46 +1,9 @@
-const { ChannelType, MessageFlags, PermissionsBitField } = require('discord.js');
+const { MessageFlags } = require('discord.js');
 
 const { createSetupHubRenderers } = require('./renderers');
+const { EVENT_DEFINITIONS } = require('../eventCalendar');
 
-const EVENT_ROLE_PANEL_DEFINITIONS = [
-  {
-    key: 'spookyFestival',
-    label: 'Spooky Festival',
-    reactionEmoji: '🎃'
-  },
-  {
-    key: 'travelingZoo',
-    label: 'Traveling Zoo',
-    reactionEmoji: '🐾'
-  },
-  {
-    key: 'hoppitysHunt',
-    label: "Hoppity's Hunt",
-    reactionEmoji: '🥚'
-  },
-  {
-    key: 'seasonOfJerry',
-    label: 'Season of Jerry',
-    reactionEmoji: '🎁'
-  },
-  {
-    key: 'darkAuction',
-    label: 'Dark Auction',
-    reactionEmoji: '🕴️'
-  },
-  {
-    key: 'cakeReminder',
-    label: 'Cake Reminder',
-    reactionEmoji: '🍰'
-  },
-  {
-    key: 'cultReminder',
-    label: 'Cult Reminder',
-    reactionEmoji: '🔮'
-  }
-];
-
-function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eventReminders, reactionRoles, itemEmojis, interactionIds }) {
+function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eventReminders, reactionRoles, interactionIds }) {
   const renderers = createSetupHubRenderers({ store, reactionRoles, interactionIds });
   const {
     SETUP_VIEW_HOME_ID,
@@ -51,13 +14,10 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     SETUP_VIEW_MOD_UPDATES_ID,
     SETUP_MAYOR_EDIT_ID,
     SETUP_EVENT_REMINDERS_MODAL_ID,
-    SETUP_EVENT_REMINDERS_TEST_ALL_ID,
-    SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID,
-    SETUP_EVENT_ROLE_PANEL_MODAL_ID,
+    SETUP_EVENT_REMINDERS_QUICK_SETUP_ID,
+    SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID,
     SETUP_MAYOR_TOGGLE_ELECTION_PING_ID,
     SETUP_MAYOR_TOGGLE_CHANGE_PING_ID,
-    SETUP_MAYOR_RELOAD_ID,
-    SETUP_MAYOR_RESET_ID,
     SETUP_MOD_UPDATES_MODAL_ID,
     SETUP_MOD_UPDATES_REFRESH_ID,
     SETUP_MOD_UPDATES_TEST_ID,
@@ -81,9 +41,8 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     SETUP_MOD_UPDATES_ROLE_INPUT_ID,
     SETUP_MOD_UPDATES_REPOS_INPUT_ID,
     SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
+    SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
-    SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID,
-    SETUP_CHANNEL_INPUT_ID,
     SETUP_ROLE_INPUT_ID
   } = interactionIds;
 
@@ -91,23 +50,9 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     return /^\d{16,20}$/.test(String(value || '').trim());
   }
 
-  function formatEventRoleDisplayName(role) {
-    const roleId = String(role?.id || '').trim();
-    if (!roleId) {
-      return 'role not defined';
-    }
-
-    return `<@&${roleId}>`;
-  }
-
-  async function validateMayorSetupInputs(guild, channelId, roleId) {
-    if (!isSnowflake(channelId) || !isSnowflake(roleId)) {
-      throw new Error('Channel ID and Role ID must be valid Discord snowflakes.');
-    }
-
-    const channel = await guild.channels.fetch(channelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) {
-      throw new Error('The channel ID is invalid or not a text-based channel in this server.');
+  async function validateMayorRoleInput(guild, roleId) {
+    if (!isSnowflake(roleId)) {
+      throw new Error('Role ID must be a valid Discord snowflake.');
     }
 
     const role = await guild.roles.fetch(roleId).catch(() => null);
@@ -115,7 +60,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       throw new Error('The role ID is invalid or not part of this server.');
     }
 
-    return { channel, role };
+    return { role };
   }
 
   async function validateModUpdatesSetupInputs(guild, channelId, roleId) {
@@ -190,107 +135,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     };
   }
 
-  async function buildEventRolePanelLines(guild, guildId) {
-    const eventConfig = store.getGuildConfig(guildId).eventReminders;
-
-    return Promise.all(EVENT_ROLE_PANEL_DEFINITIONS.map(async (definition) => {
-      const roleId = eventConfig.roles[definition.key] || null;
-      const role = roleId ? await guild.roles.fetch(roleId).catch(() => null) : null;
-      const roleText = role
-        ? formatEventRoleDisplayName(role)
-        : 'role not defined';
-
-      return `${definition.reactionEmoji} ${definition.label} -> ${roleText}`;
-    }));
-  }
-
-  async function postEventRolePanel(guild, channelId) {
-    const eventConfig = store.getGuildConfig(guild.id).eventReminders;
-    const runtimeState = store.getGuildRuntimeState(guild.id).eventReminders;
-    const normalizedChannelId = String(channelId || '').trim();
-
-    if (!isSnowflake(normalizedChannelId)) {
-      throw new Error('Channel ID must be a valid Discord snowflake.');
-    }
-
-    const channel = await guild.channels.fetch(normalizedChannelId).catch(() => null);
-    if (!channel || !channel.isTextBased()) {
-      throw new Error('Selected channel is invalid or not text-based.');
-    }
-
-    if (!guild.members.me) {
-      await guild.members.fetchMe();
-    }
-
-    const botPermissions = channel.permissionsFor(guild.members.me);
-    if (!botPermissions?.has(PermissionsBitField.Flags.ManageWebhooks)) {
-      throw new Error('Bot needs Manage Webhooks in the events channel to post the event role panel via webhook.');
-    }
-
-    const existingWebhooks = await channel.fetchWebhooks().catch(() => null);
-    const webhook = existingWebhooks?.find((entry) => (
-      entry.owner?.id === guild.client.user?.id &&
-      entry.token &&
-      entry.name === 'Xclipsen Event Roles'
-    )) || await channel.createWebhook({
-      name: 'Xclipsen Event Roles',
-      avatar: guild.client.user?.displayAvatarURL() || undefined
-    });
-
-    if (runtimeState.eventRolePanelMessageId && runtimeState.eventRolePanelChannelId) {
-      const previousChannel = await guild.channels.fetch(runtimeState.eventRolePanelChannelId).catch(() => null);
-      const previousMessage = previousChannel?.isTextBased()
-        ? await previousChannel.messages.fetch(runtimeState.eventRolePanelMessageId).catch(() => null)
-        : null;
-
-      if (previousMessage) {
-        await previousMessage.delete().catch(() => null);
-      }
-
-      const remainingReactionRoles = store.getReactionRoleEntries(guild.id).filter((entry) => !(
-        entry.channelId === runtimeState.eventRolePanelChannelId &&
-        entry.messageId === runtimeState.eventRolePanelMessageId
-      ));
-      store.setReactionRoleEntries(guild.id, remainingReactionRoles);
-    }
-
-    const message = await webhook.send({
-      content: [
-        '**SkyBlock Event Roles**',
-        'React below to add or remove event ping roles.',
-        '',
-        ...(await buildEventRolePanelLines(guild, guild.id))
-      ].join('\n'),
-      allowedMentions: { parse: [] },
-      wait: true
-    });
-
-    const configuredBindings = [];
-    for (const definition of EVENT_ROLE_PANEL_DEFINITIONS) {
-      const roleId = eventConfig.roles[definition.key] || null;
-      if (!roleId) {
-        continue;
-      }
-
-      await reactionRoles.addReactionRoleBinding(guild.id, message, roleId, definition.reactionEmoji);
-      configuredBindings.push(`${definition.reactionEmoji} -> <@&${roleId}>`);
-    }
-
-    store.setGuildRuntimeState(guild.id, {
-      ...store.getGuildRuntimeState(guild.id),
-      eventReminders: {
-        ...store.getGuildRuntimeState(guild.id).eventReminders,
-        eventRolePanelMessageId: message.id,
-        eventRolePanelChannelId: message.channelId
-      }
-    });
-
-    return {
-      message,
-      configuredBindings
-    };
-  }
-
   function parseSnowflakeList(rawValue) {
     const values = String(rawValue || '')
       .split(',')
@@ -330,6 +174,210 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     };
   }
 
+  function normalizeRoleLookupValue(value) {
+    return String(value || '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '');
+  }
+
+  function findMatchingRoleId(roles, aliases) {
+    const normalizedAliases = aliases.map((alias) => normalizeRoleLookupValue(alias));
+    const match = roles.find((role) => normalizedAliases.includes(normalizeRoleLookupValue(role.name)));
+    return match?.id || null;
+  }
+
+  function createEmptyEventRoles() {
+    return Object.fromEntries(EVENT_DEFINITIONS.map((definition) => [definition.key, null]));
+  }
+
+  async function validateEventReminderRoles(guild, roles) {
+    for (const [eventKey, roleId] of Object.entries(roles || {})) {
+      if (!roleId) {
+        continue;
+      }
+
+      if (!isSnowflake(roleId)) {
+        throw new Error(`Role ID for ${eventKey} must be a valid Discord snowflake.`);
+      }
+
+      const role = await guild.roles.fetch(roleId).catch(() => null);
+      if (!role) {
+        throw new Error(`The role ID is invalid or not part of this server: ${roleId}`);
+      }
+    }
+  }
+
+  async function resolveQuickSetupEventRoles(guild) {
+    const existingConfig = store.getGuildConfig(guild.id);
+    const fetchedRoles = await guild.roles.fetch();
+    const roles = [...fetchedRoles.values()]
+      .filter((role) => role && role.id !== guild.id && !role.managed);
+    const eventRoles = createEmptyEventRoles();
+    let createdCount = 0;
+
+    for (const definition of EVENT_DEFINITIONS) {
+      const configuredRoleId = existingConfig.eventReminders.roles[definition.key] || null;
+      if (configuredRoleId) {
+        const configuredRole = await guild.roles.fetch(configuredRoleId).catch(() => null);
+        if (configuredRole) {
+          eventRoles[definition.key] = configuredRole.id;
+          continue;
+        }
+      }
+
+      const aliases = [
+        definition.roleName,
+        `${definition.roleName} Ping`,
+        `${definition.roleName} Role`,
+        ...definition.roleAliases
+      ];
+      const existingRoleId = findMatchingRoleId(roles, aliases);
+      if (existingRoleId) {
+        eventRoles[definition.key] = existingRoleId;
+        continue;
+      }
+
+      const createdRole = await guild.roles.create({
+        name: definition.roleName,
+        mentionable: false,
+        reason: `Quick setup for ${definition.label} event ping role`
+      });
+      roles.push(createdRole);
+      eventRoles[definition.key] = createdRole.id;
+      createdCount += 1;
+    }
+
+    return {
+      eventRoles,
+      createdCount
+    };
+  }
+
+  async function deleteExistingEventRoleMessage(guild) {
+    const runtimeState = store.getGuildRuntimeState(guild.id).eventReminders;
+    const messageId = runtimeState.rolePanelMessageId;
+    const channelId = runtimeState.rolePanelChannelId;
+
+    if (messageId) {
+      reactionRoles.purgeReactionRoleBindings(guild.id, { channelId: channelId || undefined, messageId });
+    }
+
+    if (messageId && channelId) {
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
+      const message = channel && channel.isTextBased()
+        ? await channel.messages.fetch(messageId).catch(() => null)
+        : null;
+      if (message) {
+        await message.delete().catch(() => null);
+      }
+    }
+
+    store.setGuildRuntimeState(guild.id, {
+      ...store.getGuildRuntimeState(guild.id),
+      eventReminders: {
+        ...store.getGuildRuntimeState(guild.id).eventReminders,
+        rolePanelMessageId: null,
+        rolePanelChannelId: null
+      }
+    });
+  }
+
+  async function postEventRoleMessage(guild, channelId, roles) {
+    if (!channelId) {
+      throw new Error('Set the Role Message channel before posting the role message.');
+    }
+
+    const channel = await guild.channels.fetch(channelId).catch(() => null);
+    if (!channel || !channel.isTextBased()) {
+      throw new Error('Configured Event Calendar channel is invalid or not text-based.');
+    }
+
+    const roleEntries = EVENT_DEFINITIONS
+      .map((definition) => {
+        const roleId = roles?.[definition.key] || null;
+        if (!roleId) {
+          return null;
+        }
+
+        return {
+          key: definition.key,
+          label: definition.label,
+          emoji: definition.emoji,
+          roleId,
+          roleMention: `<@&${roleId}>`
+        };
+      })
+      .filter(Boolean);
+
+    if (roleEntries.length === 0) {
+      throw new Error('Configure at least one event role before posting the role message.');
+    }
+
+    await deleteExistingEventRoleMessage(guild);
+
+    const message = await channel.send({
+      embeds: [renderers.createEventRolePanelEmbed(roleEntries)],
+      allowedMentions: { parse: [] }
+    });
+
+    for (const roleEntry of roleEntries) {
+      await reactionRoles.addReactionRoleBinding(guild.id, message, roleEntry.roleId, roleEntry.emoji);
+    }
+
+    store.setGuildRuntimeState(guild.id, {
+      ...store.getGuildRuntimeState(guild.id),
+      eventReminders: {
+        ...store.getGuildRuntimeState(guild.id).eventReminders,
+        rolePanelMessageId: message.id,
+        rolePanelChannelId: message.channelId
+      }
+    });
+
+    return message;
+  }
+
+  async function applyEventCalendarConfig(guild, channelId, rolePanelChannelId, eventRoles) {
+    const existingConfig = store.getGuildConfig(guild.id);
+    const existingState = store.getGuildRuntimeState(guild.id);
+
+    if (existingConfig.eventReminders.channelId || existingConfig.channelId) {
+      await mayorAlerts.deleteTrackedMessagesForGuild?.(guild.id).catch(() => null);
+    }
+
+    await deleteExistingEventRoleMessage(guild);
+
+    store.setGuildConfig(guild.id, {
+      channelId,
+      roleId: existingConfig.roleId,
+      eventReminders: {
+        ...existingConfig.eventReminders,
+        channelId,
+        rolePanelChannelId,
+        roles: {
+          ...createEmptyEventRoles(),
+          ...eventRoles
+        }
+      }
+    });
+
+    store.setGuildRuntimeState(guild.id, {
+      ...existingState,
+      statusMessageId: null,
+      statusChannelId: null,
+      eventReminders: {
+        ...existingState.eventReminders,
+        lastSentStarts: {},
+        messageIds: {},
+        messageExpireAts: {},
+        channelId,
+        rolePanelMessageId: null,
+        rolePanelChannelId: null
+      }
+    });
+
+    await mayorAlerts.refreshStatusForGuild(guild.id);
+  }
+
   async function handleSetupNavigationButton(interaction) {
     if (!(await ensureSetupAccess(interaction, 'setup panel'))) {
       return;
@@ -363,35 +411,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     if (interaction.customId === SETUP_VIEW_MOD_UPDATES_ID) {
       await interaction.deferUpdate();
       await interaction.editReply(await buildModUpdatesView(interaction.guild));
-      return;
-    }
-
-    if (interaction.customId === SETUP_MAYOR_RELOAD_ID) {
-      await interaction.deferUpdate();
-
-      let note;
-      try {
-        const data = await mayorAlerts.fetchElectionData();
-        const mayor = data.mayor;
-        const currentElection = data.current || null;
-        const boothOpen = mayorAlerts.getBoothOpen(data);
-
-        await mayorAlerts.sendMayorStatusUpdate(interaction.guildId, mayor, boothOpen, currentElection);
-        store.setGuildRuntimeState(interaction.guildId, {
-          ...store.getGuildRuntimeState(interaction.guildId),
-          boothOpen
-        });
-
-        note = `Reloaded the mayor status for ${mayor.name}.`;
-      } catch (error) {
-        console.error(`Failed to reload mayor status for guild ${interaction.guildId}:`, error);
-        note = 'Mayor status reload failed. Check the bot logs and channel access.';
-      }
-
-      await interaction.editReply({
-        embeds: [renderers.createMayorSetupEmbed(interaction.guild, note)],
-        components: renderers.createMayorSetupComponents(interaction.guild)
-      });
       return;
     }
 
@@ -445,16 +464,28 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       return;
     }
 
-    if (interaction.customId === SETUP_EVENT_REMINDERS_TEST_ALL_ID) {
+    if (interaction.customId === SETUP_EVENT_REMINDERS_QUICK_SETUP_ID) {
       await interaction.deferUpdate();
 
       let note;
       try {
-        await eventReminders.sendTestReminders(interaction.guildId);
-        note = 'Sent test reminders for all configured events to the shared events channel.';
+        if (!interaction.channel || !interaction.channel.isTextBased()) {
+          throw new Error('Current channel is not text-based.');
+        }
+
+        const quickSetupRoles = await resolveQuickSetupEventRoles(interaction.guild);
+        await applyEventCalendarConfig(interaction.guild, interaction.channelId, interaction.channelId, quickSetupRoles.eventRoles);
+        await postEventRoleMessage(interaction.guild, interaction.channelId, quickSetupRoles.eventRoles);
+        const configuredEventRoles = Object.values(quickSetupRoles.eventRoles).filter(Boolean).length;
+        note = [
+          `Event Calendar quick setup complete. Shared channel set to <#${interaction.channelId}>.`,
+          `Event roles configured: ${configuredEventRoles}.`,
+          `New roles created: ${quickSetupRoles.createdCount}.`,
+          'Reaction-role message was rebuilt in this channel.'
+        ].join('\n');
       } catch (error) {
-        console.error(`Failed to send event reminder test batch for guild ${interaction.guildId}:`, error);
-        note = 'Event reminder test batch failed. Check the configured channel, roles, and bot permissions.';
+        console.error(`Failed to quick-setup event calendar for guild ${interaction.guildId}:`, error);
+        note = `Event Calendar quick setup failed: ${error.message}`;
       }
 
       await interaction.editReply({
@@ -464,8 +495,23 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       return;
     }
 
-    if (interaction.customId === SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID) {
-      await interaction.showModal(renderers.createEventRolePanelModal(store.getGuildConfig(interaction.guildId).eventReminders.channelId || ''));
+    if (interaction.customId === SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        const config = store.getGuildConfig(interaction.guildId).eventReminders;
+        await postEventRoleMessage(interaction.guild, config.rolePanelChannelId || config.channelId, config.roles);
+        note = 'Event reaction-role message rebuilt successfully.';
+      } catch (error) {
+        console.error(`Failed to rebuild event role message for guild ${interaction.guildId}:`, error);
+        note = `Could not rebuild the event role message: ${error.message}`;
+      }
+
+      await interaction.editReply({
+        embeds: [renderers.createEventRemindersSetupEmbed(interaction.guild, note)],
+        components: renderers.createEventRemindersSetupComponents()
+      });
       return;
     }
 
@@ -526,25 +572,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       return;
     }
 
-    if (interaction.customId === SETUP_MAYOR_RESET_ID) {
-      await interaction.deferUpdate();
-
-      let note;
-      try {
-        const result = await mayorAlerts.resetMayorMessages(interaction.guildId);
-        note = `Removed old mayor bot messages and reposted the current status for ${result.mayor.name}.`;
-      } catch (error) {
-        console.error(`Failed to reset mayor messages for guild ${interaction.guildId}:`, error);
-        note = 'Mayor message reset failed. Check the bot logs and channel access.';
-      }
-
-      await interaction.editReply({
-        embeds: [renderers.createMayorSetupEmbed(interaction.guild, note)],
-        components: renderers.createMayorSetupComponents(interaction.guild)
-      });
-      return;
-    }
-
     if (interaction.customId === SETUP_REACTION_REMOVE_MODAL_ID) {
       await interaction.showModal(renderers.createReactionRoleRemoveModal());
       return;
@@ -562,19 +589,20 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    const channelId = interaction.fields.getTextInputValue(SETUP_CHANNEL_INPUT_ID).trim();
     const roleId = interaction.fields.getTextInputValue(SETUP_ROLE_INPUT_ID).trim();
-    const validationResult = await validateMayorSetupInputs(interaction.guild, channelId, roleId).catch((error) => error);
+    const validationResult = await validateMayorRoleInput(interaction.guild, roleId).catch((error) => error);
 
     if (validationResult instanceof Error) {
       await interaction.editReply({ content: validationResult.message });
       return;
     }
 
-    store.setGuildConfig(interaction.guildId, { channelId, roleId });
+    store.setGuildConfig(interaction.guildId, {
+      roleId
+    });
     store.setGuildRuntimeState(interaction.guildId, { statusMessageId: null, statusChannelId: null });
 
-    let setupNote = 'Setup saved successfully.';
+    let setupNote = 'Mayor alert config saved successfully.';
     try {
       const data = await mayorAlerts.fetchElectionData();
       const mayor = data.mayor;
@@ -582,10 +610,10 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       const boothOpen = mayorAlerts.getBoothOpen(data);
       await mayorAlerts.sendMayorStatusUpdate(interaction.guildId, mayor, boothOpen, currentElection);
       store.setGuildRuntimeState(interaction.guildId, { ...store.getGuildRuntimeState(interaction.guildId), boothOpen });
-      setupNote = `Setup saved successfully. Posted the current mayor status for ${mayor.name}.`;
+      setupNote = `Mayor alert config saved successfully. Updated the shared calendar status for ${mayor.name}.`;
     } catch (error) {
       console.error(`Failed to send immediate status update for guild ${interaction.guildId}:`, error);
-      setupNote = 'Setup saved successfully, but the current mayor status could not be posted yet.';
+      setupNote = 'Mayor alert config saved successfully, but the shared calendar status could not be posted yet.';
     }
 
     await interaction.editReply({
@@ -782,83 +810,71 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 
     await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    let validatedSetup;
+    let calendarChannelId;
+    let rolePanelChannelId;
     let roles;
     try {
       roles = parseEventReminderRoles(interaction.fields.getTextInputValue(SETUP_EVENT_REMINDERS_ROLES_INPUT_ID));
-      validatedSetup = await validateOptionalChannelRoleInputs(
+      calendarChannelId = (await validateOptionalChannelRoleInputs(
         interaction.guild,
         interaction.fields.getTextInputValue(SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID),
-        Object.values(roles).find(Boolean) || null
-      );
+        null
+      )).channelId;
+      rolePanelChannelId = (await validateOptionalChannelRoleInputs(
+        interaction.guild,
+        interaction.fields.getTextInputValue(SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID),
+        null
+      )).channelId;
+      await validateEventReminderRoles(interaction.guild, roles);
     } catch (error) {
       await interaction.editReply({ content: error.message });
       return;
     }
 
     try {
-      for (const roleId of Object.values(roles)) {
-        if (!roleId) {
-          continue;
-        }
+      if (calendarChannelId) {
+        await applyEventCalendarConfig(interaction.guild, calendarChannelId, rolePanelChannelId, roles);
+      } else {
+        await deleteExistingEventRoleMessage(interaction.guild).catch(() => null);
 
-        const role = await interaction.guild.roles.fetch(roleId).catch(() => null);
-        if (!role) {
-          throw new Error(`The role ID is invalid or not part of this server: ${roleId}`);
-        }
+        store.setGuildConfig(interaction.guildId, {
+          channelId: null,
+          eventReminders: {
+            ...store.getGuildConfig(interaction.guildId).eventReminders,
+            channelId: null,
+            rolePanelChannelId,
+            roles
+          }
+        });
+
+        store.setGuildRuntimeState(interaction.guildId, {
+          ...store.getGuildRuntimeState(interaction.guildId),
+          statusMessageId: null,
+          statusChannelId: null,
+          eventReminders: {
+            ...store.getGuildRuntimeState(interaction.guildId).eventReminders,
+            lastSentStarts: {},
+            messageIds: {},
+            messageExpireAts: {},
+            channelId: null,
+            rolePanelMessageId: null,
+            rolePanelChannelId: null
+          }
+        });
       }
     } catch (error) {
+      console.error(`Failed to save event calendar setup for guild ${interaction.guildId}:`, error);
       await interaction.editReply({ content: error.message });
       return;
     }
-
-    store.setGuildConfig(interaction.guildId, {
-      eventReminders: {
-        channelId: validatedSetup.channelId,
-        roles
-      }
-    });
-
-    store.setGuildRuntimeState(interaction.guildId, {
-      ...store.getGuildRuntimeState(interaction.guildId),
-      eventReminders: {
-        lastSentStarts: {}
-      }
-    });
 
     await interaction.editReply({
       embeds: [renderers.createEventRemindersSetupEmbed(
         interaction.guild,
-        validatedSetup.channelId
-          ? 'Event reminder config saved successfully.'
-          : 'Event reminders disabled for this server.'
+        calendarChannelId
+          ? 'Event Calendar config saved successfully.'
+          : 'Event Calendar posts disabled for this server.'
       )],
-      components: renderers.createEventRemindersSetupComponents(),
-      content: null
-    });
-  }
-
-  async function handleEventRolePanelModalSubmit(interaction) {
-    if (!(await ensureSetupAccess(interaction, 'event role panel form'))) {
-      return;
-    }
-
-    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-
-    let note;
-    try {
-      const channelId = interaction.fields.getTextInputValue(SETUP_EVENT_ROLE_PANEL_CHANNEL_INPUT_ID).trim();
-      const result = await postEventRolePanel(interaction.guild, channelId);
-      note = result.configuredBindings.length > 0
-        ? `Posted an event role panel in <#${result.message.channelId}> and bound ${result.configuredBindings.join(', ')}.`
-        : `Posted an event role panel in <#${result.message.channelId}>, but no event roles are configured yet.`;
-    } catch (error) {
-      console.error(`Failed to post event role panel for guild ${interaction.guildId}:`, error);
-      note = `Event role panel failed: ${error.message}`;
-    }
-
-    await interaction.editReply({
-      embeds: [renderers.createEventRemindersSetupEmbed(interaction.guild, note)],
       components: renderers.createEventRemindersSetupComponents(),
       content: null
     });
@@ -870,7 +886,6 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     handleSetupActionButton,
     handleMayorSetupModalSubmit,
     handleEventRemindersSetupModalSubmit,
-    handleEventRolePanelModalSubmit,
     handleModUpdatesSetupModalSubmit,
     handleReactionRoleModalSubmit,
     handleReactionRolePurgeChannelModalSubmit,
@@ -881,27 +896,21 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
 }
 
 function parseEventReminderRoles(rawValue) {
-  const aliases = {
-    spooky: 'spookyFestival',
-    zoo: 'travelingZoo',
-    hoppity: 'hoppitysHunt',
-    jerry: 'seasonOfJerry',
-    darkauction: 'darkAuction',
-    da: 'darkAuction',
-    dark_auction: 'darkAuction',
-    cake: 'cakeReminder',
-    cult: 'cultReminder'
-  };
+  const aliases = Object.fromEntries(EVENT_DEFINITIONS.flatMap((definition) => {
+    const compactKey = definition.key.toLowerCase();
+    const snakeKey = definition.key.replace(/[A-Z]/g, (match) => `_${match.toLowerCase()}`).toLowerCase();
+    const compactLabel = definition.label.toLowerCase().replace(/[^a-z0-9]+/g, '');
+    const snakeLabel = definition.label.toLowerCase().replace(/[^a-z0-9]+/g, '_').replace(/^_+|_+$/g, '');
 
-  const roles = {
-    spookyFestival: null,
-    travelingZoo: null,
-    hoppitysHunt: null,
-    seasonOfJerry: null,
-    darkAuction: null,
-    cakeReminder: null,
-    cultReminder: null
-  };
+    return [
+      [compactKey, definition.key],
+      [snakeKey, definition.key],
+      [compactLabel, definition.key],
+      [snakeLabel, definition.key]
+    ];
+  }));
+
+  const roles = Object.fromEntries(EVENT_DEFINITIONS.map((definition) => [definition.key, null]));
 
   const lines = String(rawValue || '')
     .split('\n')
@@ -916,7 +925,7 @@ function parseEventReminderRoles(rawValue) {
 
     const rawKey = line.slice(0, separatorIndex).trim().toLowerCase();
     const rawRoleId = line.slice(separatorIndex + 1).trim();
-    const key = aliases[rawKey];
+    const key = aliases[rawKey.replace(/[^a-z0-9_]+/g, '')];
 
     if (!key) {
       throw new Error(`Unknown event role key: ${rawKey}`);

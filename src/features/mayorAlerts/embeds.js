@@ -1,4 +1,5 @@
 const { ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder } = require('discord.js');
+const { EVENT_DEFINITIONS, getCalendarEntries, formatCalendarEntry } = require('../eventCalendar');
 
 const MAYOR_CANDIDATE_SELECT_ID = 'mayor-candidate-select';
 
@@ -194,6 +195,21 @@ function createMayorAlertEmbeds({ env, skyblock }) {
     return env.MAYOR_SKIN_LINKS[String(mayor.key || '').toLowerCase()] || null;
   }
 
+  function createEventCalendarEmbed() {
+    const calendarEntries = getCalendarEntries(Date.now())
+      .sort((left, right) => (
+        EVENT_DEFINITIONS.findIndex((definition) => definition.key === left.key) -
+        EVENT_DEFINITIONS.findIndex((definition) => definition.key === right.key)
+      ));
+
+    return new EmbedBuilder()
+      .setColor(0x1abc9c)
+      .setTitle('Event Calendar')
+      .setDescription(calendarEntries.map((entry) => formatCalendarEntry(entry)).join('\n\n') || 'No event data found.')
+      .setFooter({ text: 'Shows the current or next window for each tracked event.' })
+      .setTimestamp();
+  }
+
   function createMayorEmbed(title, emoji, mayor, boothOpen, currentElection = null) {
     const skyBlockDate = skyblock.formatSkyBlockDate(title === 'SkyBlock Status Update' ? env.STATUS_UPDATE_MINUTES : env.CHECK_INTERVAL_MINUTES);
     const embed = new EmbedBuilder()
@@ -231,6 +247,7 @@ function createMayorAlertEmbeds({ env, skyblock }) {
   }
 
   return {
+    createEventCalendarEmbed,
     createMayorEmbed,
     createCandidateSelectComponents,
     createCandidatePerkEmbed,

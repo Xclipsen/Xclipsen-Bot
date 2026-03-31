@@ -48,7 +48,7 @@ const minecraft = createMinecraftUtils();
 const minecraftFeatures = createMinecraftFeatures({ client, env, store });
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
-const eventReminders = createEventRemindersService({ client, store, minecraft: minecraftFeatures });
+const eventReminders = createEventRemindersService({ client, store, minecraft: minecraftFeatures, mayorAlerts });
 const reactionRoles = createReactionRoleService({
   client,
   store,
@@ -61,7 +61,6 @@ const setupHub = createSetupHub({
   modUpdates,
   eventReminders,
   reactionRoles,
-  itemEmojis,
   interactionIds
 });
 const catacombs = createCatacombsFeature({ env, minecraft });
@@ -275,11 +274,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
-    if (interaction.isButton() && interaction.customId === interactionIds.SETUP_MAYOR_RELOAD_ID) {
-      await setupHub.handleSetupNavigationButton(interaction);
-      return;
-    }
-
     if (
       interaction.isButton() &&
       (
@@ -289,14 +283,13 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === interactionIds.SETUP_REACTION_PURGE_CHANNEL_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_EDIT_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID ||
-        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_TEST_ALL_ID ||
-        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_POST_ROLE_PANEL_ID ||
+        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_QUICK_SETUP_ID ||
+        interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_REFRESH_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_TEST_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_ELECTION_PING_ID ||
         interaction.customId === interactionIds.SETUP_MAYOR_TOGGLE_CHANGE_PING_ID ||
-        interaction.customId === interactionIds.SETUP_MAYOR_RESET_ID ||
         interaction.customId === interactionIds.SETUP_SHITTER_MODAL_ID
       )
     ) {
@@ -326,11 +319,6 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID) {
       await setupHub.handleEventRemindersSetupModalSubmit(interaction);
-      return;
-    }
-
-    if (interaction.isModalSubmit() && interaction.customId === interactionIds.SETUP_EVENT_ROLE_PANEL_MODAL_ID) {
-      await setupHub.handleEventRolePanelModalSubmit(interaction);
       return;
     }
 

@@ -76,6 +76,49 @@ function createSkyblockUtils(env) {
     };
   }
 
+  function getMayorTermEndAt(now = Date.now()) {
+    const unixSeconds = now / 1000;
+    const secondsSinceEpoch = unixSeconds - env.SKYBLOCK_EPOCH_SECONDS;
+    const yearPositionSeconds = ((secondsSinceEpoch % env.SKYBLOCK_YEAR_SECONDS) + env.SKYBLOCK_YEAR_SECONDS) % env.SKYBLOCK_YEAR_SECONDS;
+    const closeSeconds = env.ELECTION_CLOSE_DAY * env.SKYBLOCK_DAY_SECONDS;
+    const nextCloseSeconds = yearPositionSeconds < closeSeconds
+      ? closeSeconds
+      : env.SKYBLOCK_YEAR_SECONDS + closeSeconds;
+
+    return now + ((nextCloseSeconds - yearPositionSeconds) * 1000);
+  }
+
+  function getElectionWindow(now = Date.now()) {
+    const unixSeconds = now / 1000;
+    const secondsSinceEpoch = unixSeconds - env.SKYBLOCK_EPOCH_SECONDS;
+    const yearPositionSeconds = ((secondsSinceEpoch % env.SKYBLOCK_YEAR_SECONDS) + env.SKYBLOCK_YEAR_SECONDS) % env.SKYBLOCK_YEAR_SECONDS;
+    const openStartSeconds = env.ELECTION_OPEN_START_DAY * env.SKYBLOCK_DAY_SECONDS;
+    const closeSeconds = env.ELECTION_CLOSE_DAY * env.SKYBLOCK_DAY_SECONDS;
+    const boothOpen = yearPositionSeconds >= openStartSeconds || yearPositionSeconds < closeSeconds;
+
+    if (boothOpen && yearPositionSeconds >= openStartSeconds) {
+      return {
+        boothOpen,
+        startAt: now - ((yearPositionSeconds - openStartSeconds) * 1000),
+        endAt: now + (((env.SKYBLOCK_YEAR_SECONDS + closeSeconds) - yearPositionSeconds) * 1000)
+      };
+    }
+
+    if (boothOpen) {
+      return {
+        boothOpen,
+        startAt: now - ((yearPositionSeconds + (env.SKYBLOCK_YEAR_SECONDS - openStartSeconds)) * 1000),
+        endAt: now + ((closeSeconds - yearPositionSeconds) * 1000)
+      };
+    }
+
+    return {
+      boothOpen,
+      startAt: now + ((openStartSeconds - yearPositionSeconds) * 1000),
+      endAt: now + (((env.SKYBLOCK_YEAR_SECONDS + closeSeconds) - yearPositionSeconds) * 1000)
+    };
+  }
+
   function getElectionTimingLine(isOpen) {
     const targetTimestamp = getElectionSchedule().nextTransitionAt;
     return isOpen
@@ -87,6 +130,8 @@ function createSkyblockUtils(env) {
     stripMinecraftFormatting,
     formatSkyBlockDate,
     getElectionSchedule,
+    getElectionWindow,
+    getMayorTermEndAt,
     getElectionTimingLine,
     toDiscordTimestamp
   };

@@ -171,13 +171,17 @@ const shitterCommand = new SlashCommandBuilder()
     .setDescription('List all shitter entries for this server.'));
 
 const linkEventChoices = [
-  { name: 'Spooky Festival', value: 'spookyFestival' },
-  { name: 'Traveling Zoo', value: 'travelingZoo' },
-  { name: "Hoppity's Hunt", value: 'hoppitysHunt' },
-  { name: 'Season of Jerry', value: 'seasonOfJerry' },
+  { name: "Spider's Den Rain", value: 'spiderRain' },
+  { name: "Spider's Den Thunder", value: 'spiderThunder' },
   { name: 'Dark Auction', value: 'darkAuction' },
-  { name: 'Cake Reminder', value: 'cakeReminder' },
-  { name: 'Cult Reminder', value: 'cultReminder' }
+  { name: "Jerry's Workshop", value: 'jerrysWorkshop' },
+  { name: 'Season of Jerry', value: 'seasonOfJerry' },
+  { name: 'New Year Celebration', value: 'newYearCelebration' },
+  { name: 'Bank Interest', value: 'bankInterest' },
+  { name: "Hoppity's Hunt", value: 'hoppitysHunt' },
+  { name: 'Traveling Zoo', value: 'travelingZoo' },
+  { name: 'Spooky Fishing', value: 'spookyFishing' },
+  { name: 'Spooky Festival', value: 'spookyFestival' }
 ];
 
 const testCommand = new SlashCommandBuilder()

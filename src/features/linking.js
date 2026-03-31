@@ -1,11 +1,15 @@
 const LINK_EVENT_CHOICES = {
-  spookyFestival: 'Spooky Festival',
-  travelingZoo: 'Traveling Zoo',
-  hoppitysHunt: "Hoppity's Hunt",
-  seasonOfJerry: 'Season of Jerry',
+  spiderRain: "Spider's Den Rain",
+  spiderThunder: "Spider's Den Thunder",
   darkAuction: 'Dark Auction',
-  cakeReminder: 'Cake Reminder',
-  cultReminder: 'Cult Reminder'
+  jerrysWorkshop: "Jerry's Workshop",
+  seasonOfJerry: 'Season of Jerry',
+  newYearCelebration: 'New Year Celebration',
+  bankInterest: 'Bank Interest',
+  hoppitysHunt: "Hoppity's Hunt",
+  travelingZoo: 'Traveling Zoo',
+  spookyFishing: 'Spooky Fishing',
+  spookyFestival: 'Spooky Festival'
 };
 
 function createLinkingFeature({ store }) {

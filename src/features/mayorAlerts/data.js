@@ -49,7 +49,8 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
   }
 
   async function getTargetChannel(guildId) {
-    const { channelId } = store.getGuildConfig(guildId);
+    const guildConfig = store.getGuildConfig(guildId);
+    const channelId = guildConfig.eventReminders.channelId || guildConfig.channelId;
     if (!channelId) {
       throw new Error(`Guild ${guildId} does not have a configured target channel.`);
     }
@@ -85,7 +86,10 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
       return false;
     }
 
-    return message.embeds.some((embed) => embed.title?.includes('SkyBlock Status Update'));
+    return message.embeds.some((embed) => (
+      embed.title === 'Event Calendar' ||
+      embed.title?.includes('SkyBlock Status Update')
+    ));
   }
 
   function isAlertMessage(message) {
