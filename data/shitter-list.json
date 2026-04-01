@@ -191,6 +191,30 @@
         "screenshots": [],
         "addedByUserId": "885542911511515146",
         "removedByUserId": null
+      },
+      {
+        "ign": "aphased",
+        "normalizedIgn": "aphased",
+        "reason": "yapyap",
+        "createdAt": "2026-04-01T23:53:21.071Z",
+        "removedAt": null,
+        "screenshotUrl": null,
+        "screenshotName": null,
+        "screenshots": [],
+        "addedByUserId": "885542911511515146",
+        "removedByUserId": null
+      },
+      {
+        "ign": "xclippy",
+        "normalizedIgn": "xclippy",
+        "reason": "sybau",
+        "createdAt": "2026-04-01T23:54:18.192Z",
+        "removedAt": null,
+        "screenshotUrl": null,
+        "screenshotName": null,
+        "screenshots": [],
+        "addedByUserId": "369870952344846336",
+        "removedByUserId": null
       }
     ]
   }

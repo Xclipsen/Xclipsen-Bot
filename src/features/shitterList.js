@@ -36,7 +36,11 @@ function addScreenshotFields(embed, screenshots) {
   return embed;
 }
 
-function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screenshots = [] }) {
+function formatAddedByUser(userId) {
+  return userId ? `<@${userId}>` : 'Unknown';
+}
+
+function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screenshots = [], addedByUserId = null }) {
   const isListed = status === 'yes';
   const embed = new EmbedBuilder()
     .setColor(isListed ? SHITTER_YES_COLOR : SHITTER_NO_COLOR)
@@ -48,7 +52,11 @@ function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screens
   }
 
   if (createdAt) {
-    embed.addFields({ name: 'Geshittet am', value: formatTimestamp(createdAt), inline: true });
+    embed.addFields({ name: 'Added at', value: formatTimestamp(createdAt), inline: true });
+  }
+
+  if (isListed) {
+    embed.addFields({ name: 'Added by', value: formatAddedByUser(addedByUserId), inline: true });
   }
 
   return addScreenshotFields(embed, screenshots);
@@ -81,7 +89,10 @@ function buildQueryEmbed({ ign, entry, entryCount }) {
     value: entry.reason.slice(0, 1024),
     inline: false
   });
-  embed.addFields({ name: 'Geshittet am', value: formatTimestamp(entry.createdAt), inline: true });
+  embed.addFields(
+    { name: 'Added at', value: formatTimestamp(entry.createdAt), inline: true },
+    { name: 'Added by', value: formatAddedByUser(entry.addedByUserId), inline: true }
+  );
 
   if (entryCount > 1) {
     embed.setFooter({ text: `Showing selected entry of ${entryCount}` });
@@ -235,7 +246,9 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     embed.setDescription(
       entries
         .slice(0, 25)
-        .map((entry, index) => `${index + 1}. **${entry.ign}** - ${getActiveEntriesByIgn(guildId, entry.ign).length} active entr${getActiveEntriesByIgn(guildId, entry.ign).length === 1 ? 'y' : 'ies'}`)
+        .map((entry, index) => (
+          `${index + 1}. **${entry.ign}** - ${getActiveEntriesByIgn(guildId, entry.ign).length} active entr${getActiveEntriesByIgn(guildId, entry.ign).length === 1 ? 'y' : 'ies'} - added by ${formatAddedByUser(entry.addedByUserId)}`
+        ))
         .join('\n')
     );
 
@@ -361,6 +374,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
         status: 'yes',
         reason,
         createdAt: now,
+        addedByUserId: interaction.user.id,
         screenshots: screenshots.map((screenshot) => ({
           url: screenshot.url,
           name: screenshot.name || null
