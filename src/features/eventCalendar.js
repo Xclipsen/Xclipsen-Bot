@@ -26,8 +26,8 @@ function getMonthOffsetMs(monthIndex, day = 1) {
   return (monthIndex * MONTH_MS) + ((day - 1) * DAY_MS);
 }
 
-function resolveYearlyWindows(now, windows) {
-  const yearPositionMs = getYearPositionMs(now);
+function resolveRepeatingWindows(now, cycleMs, windows) {
+  const cyclePositionMs = normalizeModulo(now - EPOCH_MS, cycleMs);
   const active = [];
   const upcoming = [];
 
@@ -35,8 +35,8 @@ function resolveYearlyWindows(now, windows) {
     const startOffsetMs = window.startOffsetMs;
     const durationMs = window.durationMs;
 
-    if (yearPositionMs >= startOffsetMs && yearPositionMs < (startOffsetMs + durationMs)) {
-      const startAt = now - (yearPositionMs - startOffsetMs);
+    if (cyclePositionMs >= startOffsetMs && cyclePositionMs < (startOffsetMs + durationMs)) {
+      const startAt = now - (cyclePositionMs - startOffsetMs);
       active.push({
         ...window,
         startAt,
@@ -46,9 +46,9 @@ function resolveYearlyWindows(now, windows) {
       continue;
     }
 
-    const nextStartAt = yearPositionMs < startOffsetMs
-      ? now + (startOffsetMs - yearPositionMs)
-      : now + ((YEAR_MS - yearPositionMs) + startOffsetMs);
+    const nextStartAt = cyclePositionMs < startOffsetMs
+      ? now + (startOffsetMs - cyclePositionMs)
+      : now + ((cycleMs - cyclePositionMs) + startOffsetMs);
 
     upcoming.push({
       ...window,
@@ -63,6 +63,14 @@ function resolveYearlyWindows(now, windows) {
   }
 
   return upcoming.sort((left, right) => left.startAt - right.startAt)[0];
+}
+
+function resolveYearlyWindows(now, windows) {
+  return resolveRepeatingWindows(now, YEAR_MS, windows);
+}
+
+function resolveMonthlyWindows(now, windows) {
+  return resolveRepeatingWindows(now, MONTH_MS, windows);
 }
 
 function resolvePeriodicWindow(now, predicate) {
@@ -238,11 +246,11 @@ function getSpookyFestivalSchedule(now) {
 }
 
 function getCultOfTheFallenStarSchedule(now) {
-  const resolvedWindow = resolveYearlyWindows(now, [
-    { startOffsetMs: getMonthOffsetMs(0, 7), durationMs: DAY_MS / 4 },
-    { startOffsetMs: getMonthOffsetMs(0, 14), durationMs: DAY_MS / 4 },
-    { startOffsetMs: getMonthOffsetMs(0, 21), durationMs: DAY_MS / 4 },
-    { startOffsetMs: getMonthOffsetMs(0, 28), durationMs: DAY_MS / 4 }
+  const resolvedWindow = resolveMonthlyWindows(now, [
+    { startOffsetMs: (7 - 1) * DAY_MS, durationMs: DAY_MS / 4 },
+    { startOffsetMs: (14 - 1) * DAY_MS, durationMs: DAY_MS / 4 },
+    { startOffsetMs: (21 - 1) * DAY_MS, durationMs: DAY_MS / 4 },
+    { startOffsetMs: (28 - 1) * DAY_MS, durationMs: DAY_MS / 4 }
   ]);
   return buildSchedule(EVENT_DEFINITION_MAP.cultOfTheFallenStar, resolvedWindow);
 }
