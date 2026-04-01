@@ -11,6 +11,8 @@ const {
 const { getHelpSectionById } = require('../../config/help');
 const { EVENT_DEFINITIONS } = require('../eventCalendar');
 
+const EVENT_ROLE_INPUT_PLACEHOLDER = 'darkAuction=123456789012345678\ncultOfTheFallenStar=234567890123456789';
+
 function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
   const {
     SETUP_MODAL_ID,
@@ -614,7 +616,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
             .setStyle(TextInputStyle.Paragraph)
             .setRequired(false)
             .setValue(buildEventRoleInputLines(existingConfig.roles))
-            .setPlaceholder('spiderRain=123...\nspiderThunder=123...\ndarkAuction=123...\njerrysWorkshop=123...\nseasonOfJerry=123...\nnewYearCelebration=123...\nbankInterest=123...\nhoppitysHunt=123...\ntravelingZoo=123...\nspookyFishing=123...\nspookyFestival=123...')
+            .setPlaceholder(EVENT_ROLE_INPUT_PLACEHOLDER)
         )
       );
   }

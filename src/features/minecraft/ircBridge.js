@@ -1,5 +1,8 @@
 const http = require('node:http');
 
+const COOP_RELAY_DEDUPE_WINDOW_MS = 2500;
+const MAX_RECENT_COOP_RELAYS = 250;
+
 function createIrcBridge({ client, env, store }) {
   const mentionPattern = /(^|[\s(])@([a-zA-Z0-9._-]{2,32})\b/g;
   const bufferedMessages = [];
@@ -555,10 +558,10 @@ function createIrcBridge({ client, env, store }) {
 
     recentCoopRelayKeys.push({
       key,
-      expiresAt: Date.now() + 10_000
+      expiresAt: Date.now() + COOP_RELAY_DEDUPE_WINDOW_MS
     });
 
-    while (recentCoopRelayKeys.length > 100) {
+    while (recentCoopRelayKeys.length > MAX_RECENT_COOP_RELAYS) {
       recentCoopRelayKeys.shift();
     }
 

@@ -1,16 +1,8 @@
-const LINK_EVENT_CHOICES = {
-  spiderRain: "Spider's Den Rain",
-  spiderThunder: "Spider's Den Thunder",
-  darkAuction: 'Dark Auction',
-  jerrysWorkshop: "Jerry's Workshop",
-  seasonOfJerry: 'Season of Jerry',
-  newYearCelebration: 'New Year Celebration',
-  bankInterest: 'Bank Interest',
-  hoppitysHunt: "Hoppity's Hunt",
-  travelingZoo: 'Traveling Zoo',
-  spookyFishing: 'Spooky Fishing',
-  spookyFestival: 'Spooky Festival'
-};
+const { EVENT_DEFINITIONS } = require('./eventCalendar');
+
+const LINK_EVENT_CHOICES = Object.fromEntries(
+  EVENT_DEFINITIONS.map((definition) => [definition.key, definition.label])
+);
 
 function createLinkingFeature({ store }) {
   async function handleLinkCommand(interaction) {

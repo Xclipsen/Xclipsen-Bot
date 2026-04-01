@@ -1,21 +1,10 @@
 const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
 
 const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
-const BRIDGE_EVENT_KEYS = [
-  'spiderRain',
-  'spiderThunder',
-  'darkAuction',
-  'jerrysWorkshop',
-  'seasonOfJerry',
-  'newYearCelebration',
-  'bankInterest',
-  'hoppitysHunt',
-  'travelingZoo',
-  'spookyFishing',
-  'spookyFestival'
-];
+const BRIDGE_EVENT_KEYS = EVENT_DEFINITIONS.map((definition) => definition.key);
 
 function loadJsonFile(filePath, fallbackValue) {
   try {
@@ -68,19 +57,9 @@ function normalizeEventReminderConfig(config) {
   return {
     channelId: config?.channelId || null,
     rolePanelChannelId: config?.rolePanelChannelId || null,
-    roles: {
-      spiderRain: config?.roles?.spiderRain || null,
-      spiderThunder: config?.roles?.spiderThunder || null,
-      darkAuction: config?.roles?.darkAuction || null,
-      jerrysWorkshop: config?.roles?.jerrysWorkshop || null,
-      seasonOfJerry: config?.roles?.seasonOfJerry || null,
-      newYearCelebration: config?.roles?.newYearCelebration || null,
-      bankInterest: config?.roles?.bankInterest || null,
-      hoppitysHunt: config?.roles?.hoppitysHunt || null,
-      travelingZoo: config?.roles?.travelingZoo || null,
-      spookyFishing: config?.roles?.spookyFishing || null,
-      spookyFestival: config?.roles?.spookyFestival || null
-    }
+    roles: Object.fromEntries(
+      EVENT_DEFINITIONS.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
+    )
   };
 }
 

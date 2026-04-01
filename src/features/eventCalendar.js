@@ -237,6 +237,16 @@ function getSpookyFestivalSchedule(now) {
   return buildSchedule(EVENT_DEFINITION_MAP.spookyFestival, resolvedWindow);
 }
 
+function getCultOfTheFallenStarSchedule(now) {
+  const resolvedWindow = resolveYearlyWindows(now, [
+    { startOffsetMs: getMonthOffsetMs(0, 7), durationMs: DAY_MS / 4 },
+    { startOffsetMs: getMonthOffsetMs(0, 14), durationMs: DAY_MS / 4 },
+    { startOffsetMs: getMonthOffsetMs(0, 21), durationMs: DAY_MS / 4 },
+    { startOffsetMs: getMonthOffsetMs(0, 28), durationMs: DAY_MS / 4 }
+  ]);
+  return buildSchedule(EVENT_DEFINITION_MAP.cultOfTheFallenStar, resolvedWindow);
+}
+
 const EVENT_DEFINITIONS = [
   {
     key: 'spiderRain',
@@ -348,6 +358,22 @@ const EVENT_DEFINITIONS = [
     roleAliases: ['spooky festival', 'spooky festival ping', 'spooky festival role', 'spooky'],
     showEnd: true,
     getSchedule: getSpookyFestivalSchedule
+  },
+  {
+    key: 'cultOfTheFallenStar',
+    label: 'Cult of the Fallen Star',
+    emoji: '⭐',
+    color: 0x8e44ad,
+    roleName: 'Cult of the Fallen Star',
+    roleAliases: [
+      'cult of the fallen star',
+      'fallen star cult',
+      'cult ping',
+      'cult of the fallen star ping',
+      'cult of the fallen star role'
+    ],
+    showEnd: true,
+    getSchedule: getCultOfTheFallenStarSchedule
   }
 ];
 

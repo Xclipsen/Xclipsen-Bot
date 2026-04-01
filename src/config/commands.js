@@ -1,6 +1,7 @@
 const { SlashCommandBuilder } = require('discord.js');
 const { getHelpSectionChoices } = require('./help');
 const { simulatedMayors } = require('./simulationData');
+const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
 
 const helpCommand = new SlashCommandBuilder()
   .setName('help')
@@ -170,19 +171,10 @@ const shitterCommand = new SlashCommandBuilder()
     .setName('list')
     .setDescription('List all shitter entries for this server.'));
 
-const linkEventChoices = [
-  { name: "Spider's Den Rain", value: 'spiderRain' },
-  { name: "Spider's Den Thunder", value: 'spiderThunder' },
-  { name: 'Dark Auction', value: 'darkAuction' },
-  { name: "Jerry's Workshop", value: 'jerrysWorkshop' },
-  { name: 'Season of Jerry', value: 'seasonOfJerry' },
-  { name: 'New Year Celebration', value: 'newYearCelebration' },
-  { name: 'Bank Interest', value: 'bankInterest' },
-  { name: "Hoppity's Hunt", value: 'hoppitysHunt' },
-  { name: 'Traveling Zoo', value: 'travelingZoo' },
-  { name: 'Spooky Fishing', value: 'spookyFishing' },
-  { name: 'Spooky Festival', value: 'spookyFestival' }
-];
+const linkEventChoices = EVENT_DEFINITIONS.map((definition) => ({
+  name: definition.label,
+  value: definition.key
+}));
 
 const testCommand = new SlashCommandBuilder()
   .setName('test')
