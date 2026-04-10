@@ -70,50 +70,340 @@ If a Discord user has linked a Minecraft account, `/cata` and `/catacombs` can u
 - `/simulate clear` switches back to live API data.
 - `MOCK_MODE=true` forces startup in mock-election mode.
 
-## Command Reference
+## Commands
 
-### General
+This section describes the bot commands in more detail, including what each command does and which options it accepts.
 
-- `/help [section]`
-- `/setup`
+### General Commands
 
-### Player Tools
+#### `/help [section]`
 
-- `/uuid player:<ign>`
-- `/namehistory player:<ign>`
-- `/gif media:<image>`
-- `/cata [player:<ign>]`
-- `/catacombs [player:<ign>]`
-- `/itememoji item:<skyblock_id> [enchanted:true|false]`
+Shows the in-Discord command guide.
 
-### Linking
+- `section` is optional.
+- Valid sections are the grouped help categories such as `getting-started`, `player-tools`, `moderation`, and `admin-tools`.
 
-- `/link start usernames:<name1,name2>`
-- `/link status`
-- `/link add usernames:<name1,name2>`
-- `/link remove username:<name>`
-- `/link event event:<event> enabled:<true|false>`
-- `/unlink`
+Example:
 
-### Moderation
+```text
+/help section:player-tools
+```
 
-- `/shitter add name:<ign> reason:<text> [screenshots...]`
-- `/shitter query name:<ign>`
-- `/shitter remove name:<ign>`
-- `/shitter list`
+#### `/setup`
 
-### Reaction Roles
+Opens the interactive setup hub for the current server.
 
-- `/reactionrole add channel:<channel> message_id:<id> role:<role> emoji:<emoji> [required_role:<role>]`
-- `/reactionrole remove channel:<channel> message_id:<id> emoji:<emoji>`
-- `/reactionrole list`
-- `/reactionrole purge [channel:<channel>] [message_id:<id>]`
+- Intended for server administrators or users who pass the bot's setup access checks.
+- Used to configure mayor alerts, event reminders, mod updates, reaction roles, and shitter permissions.
 
-### Admin / Testing
+Example:
 
-- `/simulate custom mayor:<key> perk_count:<1-5> [booth_open:true|false]`
-- `/simulate clear`
-- `/test event event:<key>`
+```text
+/setup
+```
+
+### Player Commands
+
+#### `/uuid player:<ign>`
+
+Looks up a Minecraft player's UUID using Mojang.
+
+- `player` is required.
+- Returns compact and dashed UUID forms.
+- Also shows the UUID percentile/ranking output used by this bot.
+
+Example:
+
+```text
+/uuid player:Xclipsen
+```
+
+#### `/namehistory player:<ign>`
+
+Shows the current Minecraft name and known historical names.
+
+- `player` is required.
+- Uses Mojang for the current account and NameMC scraping for history.
+
+Example:
+
+```text
+/namehistory player:Xclipsen
+```
+
+#### `/gif media:<image>`
+
+Converts an uploaded image into a GIF.
+
+- `media` is required.
+- Expects an image attachment.
+
+Example:
+
+```text
+/gif media:<upload>
+```
+
+#### `/cata [player:<ign>] [profile:<name>]`
+
+Shows the catacombs overview for a player.
+
+- `player` is optional.
+- If `player` is omitted, the bot uses the caller's linked Minecraft username when available.
+- `profile` is optional.
+- If `profile` is omitted, the bot uses the currently selected Hypixel SkyBlock profile.
+- Includes `Basic Info` and `Boss Collections` view buttons in the response.
+
+Example:
+
+```text
+/cata
+/cata player:Xclipsen
+/cata player:Xclipsen profile:Cucumber
+```
+
+#### `/catacombs [player:<ign>] [profile:<name>]`
+
+Alias of `/cata`.
+
+- Supports the same options and behavior as `/cata`.
+
+Example:
+
+```text
+/catacombs player:Xclipsen profile:Cucumber
+```
+
+#### `/itememoji item:<skyblock_id> [enchanted:true|false]`
+
+Posts a SkyBlock item emoji image into the current channel.
+
+- `item` is required.
+- The option supports autocomplete suggestions.
+- `enchanted` is optional and requests the enchanted variant when available.
+- If an exact match is not found, the bot suggests similar item IDs.
+
+Example:
+
+```text
+/itememoji item:HYPERION enchanted:true
+```
+
+### Linking Commands
+
+#### `/link start usernames:<name1,name2>`
+
+Starts the Discord-to-Minecraft link flow.
+
+- `usernames` is required.
+- Accepts one or more comma-separated Minecraft usernames.
+- Returns a temporary link code to complete in Minecraft.
+
+Example:
+
+```text
+/link start usernames:Xclipsen,AltName
+```
+
+#### `/link status`
+
+Shows the current link state for the caller.
+
+- Displays linked usernames, link date, enabled event pings, and pending link code information if present.
+
+Example:
+
+```text
+/link status
+```
+
+#### `/link add usernames:<name1,name2>`
+
+Adds more Minecraft usernames to an existing link.
+
+- `usernames` is required.
+- The caller must already be linked.
+
+Example:
+
+```text
+/link add usernames:AltName,IronmanAlt
+```
+
+#### `/link remove username:<name>`
+
+Removes one linked Minecraft username from the caller's account.
+
+- `username` is required.
+
+Example:
+
+```text
+/link remove username:AltName
+```
+
+#### `/link event event:<event> enabled:<true|false>`
+
+Enables or disables one backend event ping for the linked Minecraft account.
+
+- `event` is required.
+- `enabled` is required.
+- Valid event choices come from the bot's tracked SkyBlock event reminder keys.
+
+Example:
+
+```text
+/link event event:darkAuction enabled:false
+```
+
+#### `/unlink`
+
+Deletes the caller's full backend link and all linked Minecraft usernames.
+
+Example:
+
+```text
+/unlink
+```
+
+### Moderation Commands
+
+#### `/shitter add name:<ign> reason:<text> [screenshot...]`
+
+Adds or updates a shitter list entry.
+
+- `name` is required.
+- `reason` is required.
+- Up to 5 screenshot attachments may be included.
+
+Example:
+
+```text
+/shitter add name:Example reason:Scam evidence
+```
+
+#### `/shitter query name:<ign>`
+
+Checks whether an IGN is currently listed.
+
+- `name` is required.
+
+Example:
+
+```text
+/shitter query name:Example
+```
+
+#### `/shitter remove name:<ign>`
+
+Marks active entries for an IGN as removed while preserving history.
+
+- `name` is required.
+
+Example:
+
+```text
+/shitter remove name:Example
+```
+
+#### `/shitter list`
+
+Lists unique shitter names for the current guild and opens the follow-up selection flow.
+
+Example:
+
+```text
+/shitter list
+```
+
+### Reaction Role Commands
+
+#### `/reactionrole add channel:<channel> message_id:<id> role:<role> emoji:<emoji> [required_role:<role>]`
+
+Adds a reaction role binding to a message.
+
+- `channel`, `message_id`, `role`, and `emoji` are required.
+- `required_role` is optional.
+
+Example:
+
+```text
+/reactionrole add channel:#roles message_id:123 role:@Member emoji:✅
+```
+
+#### `/reactionrole remove channel:<channel> message_id:<id> emoji:<emoji>`
+
+Removes one reaction role binding from a message.
+
+- `channel`, `message_id`, and `emoji` are required.
+
+Example:
+
+```text
+/reactionrole remove channel:#roles message_id:123 emoji:✅
+```
+
+#### `/reactionrole list`
+
+Lists all configured reaction role bindings for the current guild.
+
+Example:
+
+```text
+/reactionrole list
+```
+
+#### `/reactionrole purge [channel:<channel>] [message_id:<id>]`
+
+Deletes reaction role bindings in bulk.
+
+- With no options, purges all bindings in the current guild.
+- With `channel`, scopes the purge to one channel.
+- With both `channel` and `message_id`, scopes the purge to one message.
+
+Example:
+
+```text
+/reactionrole purge channel:#roles message_id:123
+```
+
+### Admin and Testing Commands
+
+#### `/simulate custom mayor:<key> perk_count:<1-5> [booth_open:true|false]`
+
+Creates a local simulated election state.
+
+- `mayor` is required.
+- `perk_count` is required.
+- `booth_open` is optional.
+
+Example:
+
+```text
+/simulate custom mayor:diaz perk_count:3 booth_open:true
+```
+
+#### `/simulate clear`
+
+Clears the current simulated election state and returns the bot to live data.
+
+Example:
+
+```text
+/simulate clear
+```
+
+#### `/test event event:<key>`
+
+Sends a test reminder for one configured event through Discord and the IRC bridge.
+
+- `event` is required.
+
+Example:
+
+```text
+/test event event:darkAuction
+```
 
 ## Setup Flow
 
