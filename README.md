@@ -18,6 +18,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
+- Includes `/trophyfishing` for a Trophy Fish overview with per-fish info about location and catch chance.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
 - Includes `/namehistory` to show a player's known Minecraft name history.

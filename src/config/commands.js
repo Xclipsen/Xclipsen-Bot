@@ -2,6 +2,8 @@ const { SlashCommandBuilder } = require('discord.js');
 const { getHelpSectionChoices } = require('./help');
 const { simulatedMayors } = require('./simulationData');
 const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
+const { PESTS, INSTA_SELL, SELL_ORDER, NPC_SELL } = require('../features/bestPest');
+const { BAITS, CROPS, REFORGE_OPTIONS } = require('../features/pestFarmingProfit');
 
 const helpCommand = new SlashCommandBuilder()
   .setName('help')
@@ -103,6 +105,122 @@ const itemEmojiCommand = new SlashCommandBuilder()
     .setName('enchanted')
     .setDescription('Use the enchanted emoji variant if available')
     .setRequired(false));
+
+const trophyFishingCommand = new SlashCommandBuilder()
+  .setName('trophyfishing')
+  .setDescription('Show a Trophy Fish overview for a player.')
+  .addStringOption((option) => option
+    .setName('player')
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('profile')
+    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
+    .setRequired(false));
+
+function addPestOptions(command) {
+  return command
+    .addIntegerOption((option) => option
+      .setName('fortune')
+      .setDescription('Farming Fortune used for the pest profit estimate')
+      .setRequired(true)
+      .setMinValue(0))
+    .addStringOption((option) => option
+      .setName('sell_method')
+      .setDescription('How to value pest drops')
+      .setRequired(true)
+      .addChoices(
+        { name: 'Instasell', value: INSTA_SELL },
+        { name: 'Sell Order', value: SELL_ORDER },
+        { name: 'NPC Sell', value: NPC_SELL }
+      ));
+}
+
+function addSellMethodOptions(option) {
+  return option.addChoices(
+    { name: 'Instasell', value: INSTA_SELL },
+    { name: 'Sell Order', value: SELL_ORDER },
+    { name: 'NPC Sell', value: NPC_SELL }
+  );
+}
+
+const pestCommand = addPestOptions(new SlashCommandBuilder()
+  .setName('pest')
+  .setDescription('Show the best pest to farm for a given Farming Fortune.'));
+
+const pestsCommand = addPestOptions(new SlashCommandBuilder()
+  .setName('pests')
+  .setDescription('Alias of /pest for the same pest profit estimate.'));
+
+const setFarmingStatsCommand = new SlashCommandBuilder()
+  .setName('setfarmingstats')
+  .setDescription('Save your pest farming stats for the profit calculator.')
+  .addIntegerOption((option) => option
+    .setName('bonus_pest_chance')
+    .setDescription('Your Bonus Pest Chance stat')
+    .setRequired(true)
+    .setMinValue(0)
+    .setMaxValue(1000))
+  .addIntegerOption((option) => option
+    .setName('pest_shard_level')
+    .setDescription('Your Pest Shard level')
+    .setRequired(true)
+    .setMinValue(0)
+    .setMaxValue(10))
+  .addIntegerOption((option) => option
+    .setName('cropeetle_level')
+    .setDescription('Your Cropeetle level')
+    .setRequired(true)
+    .setMinValue(0)
+    .setMaxValue(10))
+  .addIntegerOption((option) => option
+    .setName('rarefinder_level')
+    .setDescription('Your Rarefinder level')
+    .setRequired(true)
+    .setMinValue(0)
+    .setMaxValue(20))
+  .addStringOption((option) => option
+    .setName('reforge')
+    .setDescription('Your farming tool reforge')
+    .setRequired(true)
+    .addChoices(
+      { name: REFORGE_OPTIONS.blessed.label, value: 'blessed' },
+      { name: REFORGE_OPTIONS.bountiful.label, value: 'bountiful' }
+    ));
+
+const pestFarmingProfitsCommand = new SlashCommandBuilder()
+  .setName('pestfarmingprofits')
+  .setDescription('Calculate profit per hour from pest farming with baits and vinyls.')
+  .addStringOption((option) => option
+    .setName('bait')
+    .setDescription('Which bait to use in the Sprayonator')
+    .setRequired(true)
+    .addChoices(...BAITS.map((bait) => ({ name: bait.label, value: bait.key }))))
+  .addStringOption((option) => option
+    .setName('vinyl')
+    .setDescription('Which pest to boost with InfiniVacuum')
+    .setRequired(true)
+    .addChoices(...PESTS.map((pest) => ({ name: pest.label, value: pest.key }))))
+  .addStringOption((option) => option
+    .setName('crop')
+    .setDescription('Which crop are you farming')
+    .setRequired(true)
+    .addChoices(...CROPS.map((crop) => ({ name: crop.label, value: crop.key }))))
+  .addIntegerOption((option) => option
+    .setName('fortune')
+    .setDescription('Your farming fortune while farming')
+    .setRequired(true)
+    .setMinValue(0))
+  .addIntegerOption((option) => option
+    .setName('plots')
+    .setDescription('How many plots your farm uses')
+    .setRequired(true)
+    .setMinValue(1)
+    .setMaxValue(25))
+  .addStringOption((option) => addSellMethodOptions(option
+    .setName('sell_method')
+    .setDescription('How to value crop and pest drops')
+    .setRequired(true)));
 
 const uuidCommand = new SlashCommandBuilder()
   .setName('uuid')
@@ -249,6 +367,11 @@ const commands = [
   cataCommand,
   catacombsCommand,
   itemEmojiCommand,
+  trophyFishingCommand,
+  pestCommand,
+  pestsCommand,
+  setFarmingStatsCommand,
+  pestFarmingProfitsCommand,
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
@@ -267,6 +390,11 @@ module.exports = {
     cata: 'cata',
     catacombs: 'catacombs',
     itememoji: 'itememoji',
+    trophyfishing: 'trophyfishing',
+    pest: 'pest',
+    pests: 'pests',
+    setfarmingstats: 'setfarmingstats',
+    pestfarmingprofits: 'pestfarmingprofits',
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',

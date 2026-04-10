@@ -203,6 +203,31 @@ function normalizeBridgeLinkedUser(entry) {
   };
 }
 
+function normalizeFarmingStatsState(state) {
+  const users = state?.users && typeof state.users === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.users)
+        .map(([discordUserId, entry]) => [String(discordUserId || '').trim(), normalizeFarmingStatsEntry(entry)])
+        .filter(([discordUserId]) => /^\d{16,20}$/.test(discordUserId))
+    )
+    : {};
+
+  return { users };
+}
+
+function normalizeFarmingStatsEntry(entry) {
+  return {
+    bonusPestChance: Math.max(0, Number(entry?.bonusPestChance) || 0),
+    pestShardLevel: Math.min(10, Math.max(0, Number(entry?.pestShardLevel) || 0)),
+    cropeetleLevel: Math.min(10, Math.max(0, Number(entry?.cropeetleLevel) || 0)),
+    rarefinderLevel: Math.min(20, Math.max(0, Number(entry?.rarefinderLevel) || 0)),
+    reforge: ['blessed', 'bountiful'].includes(String(entry?.reforge || '').trim().toLowerCase())
+      ? String(entry.reforge).trim().toLowerCase()
+      : null,
+    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
+  };
+}
+
 function normalizeBridgeEventPreferences(preferences) {
   return Object.fromEntries(BRIDGE_EVENT_KEYS.map((eventKey) => [eventKey, preferences?.[eventKey] !== false]));
 }
@@ -605,6 +630,28 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       });
 
       return { ok: true, account: updated };
+    },
+    getUserFarmingStats(discordUserId) {
+      return normalizeFarmingStatsState(guildState.farming).users[String(discordUserId || '').trim()] || null;
+    },
+    setUserFarmingStats(discordUserId, partialEntry) {
+      const key = String(discordUserId || '').trim();
+      const farming = normalizeFarmingStatsState(guildState.farming);
+      guildState = {
+        ...guildState,
+        farming: {
+          users: {
+            ...farming.users,
+            [key]: normalizeFarmingStatsEntry({
+              ...farming.users[key],
+              ...partialEntry,
+              updatedAt: Date.now()
+            })
+          }
+        }
+      };
+      saveState();
+      return this.getUserFarmingStats(key);
     }
   };
 }
@@ -618,13 +665,18 @@ function loadState(stateFilePath) {
   const state = loadJsonFile(stateFilePath, null);
 
   if (!state) {
-    return { guilds: {} };
+    return {
+      guilds: {},
+      links: normalizeBridgeLinksState(),
+      farming: normalizeFarmingStatsState()
+    };
   }
 
   if (state.guilds && typeof state.guilds === 'object') {
     return {
       ...state,
-      links: normalizeBridgeLinksState(state.links)
+      links: normalizeBridgeLinksState(state.links),
+      farming: normalizeFarmingStatsState(state.farming)
     };
   }
 
@@ -638,7 +690,8 @@ function loadState(stateFilePath) {
         statusChannelId: state.statusChannelId ?? null
       }
     },
-    links: normalizeBridgeLinksState()
+    links: normalizeBridgeLinksState(),
+    farming: normalizeFarmingStatsState()
   };
 }
 

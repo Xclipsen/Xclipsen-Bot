@@ -31,6 +31,7 @@ Important: most event windows are currently calculated locally from the SkyBlock
 - `/uuid` for Mojang UUID lookup.
 - `/namehistory` for current and previous Minecraft names.
 - `/cata` and `/catacombs` for dungeon overview via the official Hypixel API.
+- `/trophyfishing` for Trophy Fish progress and fish lookup info.
 - `/itememoji` for posting mapped SkyBlock item emojis.
 - `/gif` for converting an uploaded image into a GIF.
 
@@ -187,6 +188,24 @@ Example:
 
 ```text
 /itememoji item:HYPERION enchanted:true
+```
+
+#### `/trophyfishing [player:<ign>] [profile:<name>]`
+
+Shows a Trophy Fish overview for a player.
+
+- `player` is optional.
+- If `player` is omitted, the bot uses the caller's linked Minecraft username when available.
+- `profile` is optional.
+- If `profile` is omitted, the bot uses the currently selected Hypixel SkyBlock profile.
+- The response includes a fish selection menu that shows chance, location, and requirement details for each Trophy Fish.
+
+Example:
+
+```text
+/trophyfishing
+/trophyfishing player:Xclipsen
+/trophyfishing player:Xclipsen profile:Cucumber
 ```
 
 ### Linking Commands

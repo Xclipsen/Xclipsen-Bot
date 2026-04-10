@@ -71,6 +71,31 @@ const helpSections = [
         example: '/itememoji item:HYPERION enchanted:true'
       },
       {
+        command: '/trophyfishing [player:<ign>] [profile:<name>]',
+        description: 'Show a Trophy Fish overview with a fish info selector for locations and chances.',
+        example: '/trophyfishing'
+      },
+      {
+        command: '/pest fortune:<amount> sell_method:NPC Sell',
+        description: 'Estimate which Garden pest is worth the most per kill for your Farming Fortune, with Instasell, Sell Order, or NPC Sell.',
+        example: '/pest fortune:2500 sell_method:NPC Sell'
+      },
+      {
+        command: '/pests fortune:<amount> sell_method:Instasell',
+        description: 'Alias of /pest for the same pest profit estimate.',
+        example: '/pests fortune:2500 sell_method:Instasell'
+      },
+      {
+        command: '/setfarmingstats bonus_pest_chance:<value> pest_shard_level:<value> cropeetle_level:<value> rarefinder_level:<value> reforge:<name>',
+        description: 'Save your pest farming stats for the profit calculator.',
+        example: '/setfarmingstats bonus_pest_chance:497 pest_shard_level:10 cropeetle_level:10 rarefinder_level:10 reforge:Bountiful'
+      },
+      {
+        command: '/pestfarmingprofits bait:<name> vinyl:<pest> crop:<crop> fortune:<amount> plots:<count> sell_method:<method>',
+        description: 'Calculate pest farming profit per hour with your saved farming stats and live market costs.',
+        example: '/pestfarmingprofits bait:Plant Matter (Slug + Locust) vinyl:Slug crop:Wheat fortune:2500 plots:2 sell_method:NPC Sell'
+      },
+      {
         command: '/link start usernames:<name1,name2>',
         description: 'Create a backend link code and finish the link in Minecraft with /link CODE.',
         example: '/link start usernames:Xclipsen,AltName'

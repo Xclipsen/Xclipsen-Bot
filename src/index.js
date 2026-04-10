@@ -23,6 +23,9 @@ const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
 const { createMinecraftFeatures } = require('./features/minecraft');
 const { createLinkingFeature } = require('./features/linking');
+const { createTrophyFishingFeature } = require('./features/trophyFishing');
+const { createBestPestFeature } = require('./features/bestPest');
+const { createPestFarmingProfitFeature } = require('./features/pestFarmingProfit');
 
 const client = new Client({
   intents: [
@@ -65,6 +68,9 @@ const setupHub = createSetupHub({
 });
 const catacombs = createCatacombsFeature({ env, minecraft, store });
 const itemEmoji = createItemEmojiFeature({ itemEmojis });
+const trophyFishing = createTrophyFishingFeature({ env, minecraft, store });
+const bestPest = createBestPestFeature({ env });
+const pestFarmingProfit = createPestFarmingProfitFeature({ env, store });
 const gif = createGifFeature();
 const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft });
@@ -235,6 +241,29 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.trophyfishing) {
+      await trophyFishing.handleTrophyFishingCommand(interaction);
+      return;
+    }
+
+    if (
+      interaction.isChatInputCommand() &&
+      (interaction.commandName === commandNames.pest || interaction.commandName === commandNames.pests)
+    ) {
+      await bestPest.handleBestPestCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.setfarmingstats) {
+      await pestFarmingProfit.handleSetFarmingStatsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.pestfarmingprofits) {
+      await pestFarmingProfit.handlePestFarmingProfitsCommand(interaction);
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.uuid) {
       await playerUuid.handlePlayerUuidCommand(interaction);
       return;
@@ -261,6 +290,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
     }
 
     if (interaction.isStringSelectMenu()) {
+      if (await trophyFishing.handleTrophyFishSelect(interaction)) {
+        return;
+      }
+
       if (await mayorAlerts.handleCandidateSelect(interaction)) {
         return;
       }
