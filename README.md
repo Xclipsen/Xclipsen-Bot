@@ -2,6 +2,8 @@
 
 A Discord bot that checks the Hypixel SkyBlock election API, pings a configured role for election and mayor changes, and keeps a single status embed updated with the current mayor and active perks.
 
+Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
+
 ## Features
 
 - Polls `https://api.hypixel.net/v2/resources/skyblock/election` on a fixed interval.
@@ -15,7 +17,7 @@ A Discord bot that checks the Hypixel SkyBlock election API, pings a configured 
 - Sends cake reminders into a dedicated configured channel on a fixed 124-hour cycle.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
-- Includes `/cata` and `/catacombs` for a quick dungeon overview lookup.
+- Includes `/cata` and `/catacombs` for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
 - Includes `/namehistory` to show a player's known Minecraft name history.
@@ -156,7 +158,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 - Use `/namehistory player:<ign>` to show a player's known username history.
 - The bot shows the current name, UUID, and each known previous name.
-- This command uses Mojang for the current profile and Liforra for history data.
+- This command uses Mojang for the current profile and scrapes the name history directly from NameMC over HTTPS.
 
 ## Media Tools
 

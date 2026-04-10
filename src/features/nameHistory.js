@@ -1,6 +1,10 @@
 const { EmbedBuilder } = require('discord.js');
 
 function createNameHistoryFeature({ minecraft }) {
+  function getHistorySourceText(profile) {
+    return 'NameMC';
+  }
+
   function formatDate(value) {
     if (!value) {
       return null;
@@ -62,7 +66,8 @@ function createNameHistoryFeature({ minecraft }) {
     const renameCount = getPastNames(profile).length;
     const createdAt = formatDate(profile.createdAt);
     const meta = [
-      `Past Names: \`${renameCount}\``
+      `Past Names: \`${renameCount}\``,
+      `History Source: \`${getHistorySourceText(profile)}\``
     ];
 
     if (createdAt) {
@@ -82,7 +87,9 @@ function createNameHistoryFeature({ minecraft }) {
         ...historyLines,
         '```'
       ].join('\n'))
-      .setFooter({ text: 'Current profile from Mojang, history from Liforra' })
+      .setFooter({
+        text: 'Current profile from Mojang, history from NameMC'
+      })
       .setTimestamp();
   }
 

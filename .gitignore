@@ -3,3 +3,5 @@ node_modules/
 npm-debug.log*
 data/state.json
 data/config.json
+data/shitter-list.json
+data/mock-election.json

@@ -2,6 +2,7 @@ const { ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder } = require('dis
 const { EVENT_DEFINITIONS, getCalendarEntries, formatCalendarEntry } = require('../eventCalendar');
 
 const MAYOR_CANDIDATE_SELECT_ID = 'mayor-candidate-select';
+const MINISTER_PERK_MARKER = '✯';
 
 function createMayorAlertEmbeds({ env, skyblock }) {
   function normalizeCandidateProfile(candidate) {
@@ -31,6 +32,15 @@ function createMayorAlertEmbeds({ env, skyblock }) {
     return perks
       .map((perk) => `- **${perk.name}**: ${skyblock.stripMinecraftFormatting(perk.description)}`)
       .join('\n');
+  }
+
+  function formatPerkLine(perk, prefix = null) {
+    if (!perk) {
+      return null;
+    }
+
+    const label = prefix ? `${prefix} ` : '';
+    return `${label}**${perk.name}**: ${skyblock.stripMinecraftFormatting(perk.description)}`;
   }
 
   function getCandidateVoteCount(candidate) {
@@ -80,7 +90,7 @@ function createMayorAlertEmbeds({ env, skyblock }) {
     return `${filledEmoji.repeat(Math.min(length, filled))}${emptyEmoji.repeat(Math.max(0, length - filled))}`;
   }
 
-  function addCandidateFields(embed, currentElection, selectedMayorName) {
+  function addCandidateFields(embed, currentElection, selectedMayorName, minister = null) {
     const candidates = Array.isArray(currentElection?.candidates) ? currentElection.candidates : [];
     if (candidates.length === 0) {
       return;
@@ -106,21 +116,33 @@ function createMayorAlertEmbeds({ env, skyblock }) {
 
     const maxVotes = sortedCandidates.reduce((highest, candidate) => Math.max(highest, candidate.votes || 0), 0);
     const totalVotes = sortedCandidates.reduce((sum, candidate) => sum + (candidate.votes || 0), 0);
+    const ministerPerkPreview = minister?.perk
+      ? [
+        `${MINISTER_PERK_MARKER} **${skyblock.stripMinecraftFormatting(minister.perk.name)}**`,
+        skyblock.stripMinecraftFormatting(minister.perk.description)
+      ].filter(Boolean)
+      : [];
 
     embed.addFields({
       name: 'Election Candidates',
-      value: sortedCandidates
+      value: [
+        ...ministerPerkPreview,
+        ...(
+          ministerPerkPreview.length > 0
+            ? ['']
+            : []
+        ),
+        ...sortedCandidates
         .slice(0, 5)
         .map((candidate) => {
-          const isSelected = String(candidate.name).toLowerCase() === String(selectedMayorName || '').toLowerCase();
           if (candidate.votes === null) {
-            return `**${isSelected ? `>> ${candidate.name}` : candidate.name}**\nNo vote data`;
+            return `${candidate.name}\nNo vote data`;
           }
 
           const voteShare = formatVoteShare(candidate.votes, totalVotes);
-          return `**${isSelected ? `>> ${candidate.name}` : candidate.name}**\n${buildVoteBar(candidate.votes, maxVotes)} ${formatCompactVoteCount(candidate.votes)}${voteShare ? ` | ${voteShare}` : ''}`;
+          return `${candidate.name}\n${buildVoteBar(candidate.votes, maxVotes)} ${formatCompactVoteCount(candidate.votes)}${voteShare ? ` | ${voteShare}` : ''}`;
         })
-        .join('\n'),
+      ].join('\n'),
       inline: false
     });
   }
@@ -163,28 +185,19 @@ function createMayorAlertEmbeds({ env, skyblock }) {
 
   function createCandidatePerkEmbed(candidateProfile, emoji = '👤') {
     const perks = Array.isArray(candidateProfile?.perks) ? candidateProfile.perks : [];
-    const ministerPerk = candidateProfile?.ministerPerk || null;
 
-    const embed = new EmbedBuilder()
+    return new EmbedBuilder()
       .setColor(0x3498db)
       .setTitle(`${emoji} ${candidateProfile?.name || 'Candidate'} Perks`)
       .setDescription(
         `If elected mayor, all listed perks become active. If elected minister, only the marked minister perk becomes active.\n\n${
         perks.length > 0
-          ? perks.map((perk) => `- **${perk.name}**: ${skyblock.stripMinecraftFormatting(perk.description)}`).join('\n')
+          ? perks
+            .map((perk) => formatPerkLine(perk, perk.minister ? MINISTER_PERK_MARKER : '•'))
+            .join('\n')
           : 'No perk data from API for this candidate.'
         }`
       );
-
-    if (ministerPerk) {
-      embed.addFields({
-        name: 'Minister Perk',
-        value: `**${ministerPerk.name}**: ${skyblock.stripMinecraftFormatting(ministerPerk.description)}`,
-        inline: false
-      });
-    }
-
-    return embed;
   }
 
   function getMayorHeadUrl(mayor) {
@@ -231,12 +244,7 @@ function createMayorAlertEmbeds({ env, skyblock }) {
       .setFooter({ text: `SkyBlock Date: ${skyBlockDate}` })
       .setTimestamp();
 
-    addCandidateFields(embed, currentElection, mayor.name);
-
-    const skinLink = getMayorSkinLink(mayor);
-    if (skinLink) {
-      embed.addFields({ name: 'Skin', value: `[View mayor skin](${skinLink})`, inline: false });
-    }
+    addCandidateFields(embed, currentElection, mayor.name, mayor.minister);
 
     const headUrl = getMayorHeadUrl(mayor);
     if (headUrl) {

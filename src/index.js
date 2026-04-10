@@ -44,7 +44,7 @@ const store = createStore({
 const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
 const itemEmojis = createSkyblockItemEmojiUtils(env);
-const minecraft = createMinecraftUtils();
+const minecraft = createMinecraftUtils(env);
 const minecraftFeatures = createMinecraftFeatures({ client, env, store });
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
@@ -63,7 +63,7 @@ const setupHub = createSetupHub({
   reactionRoles,
   interactionIds
 });
-const catacombs = createCatacombsFeature({ env, minecraft });
+const catacombs = createCatacombsFeature({ env, minecraft, store });
 const itemEmoji = createItemEmojiFeature({ itemEmojis });
 const gif = createGifFeature();
 const help = createHelpFeature();
@@ -179,6 +179,11 @@ client.on(Events.MessageCreate, async (message) => {
 
 client.on(Events.InteractionCreate, async (interaction) => {
   try {
+    if (interaction.isAutocomplete() && interaction.commandName === commandNames.itememoji) {
+      await itemEmoji.handleItemEmojiAutocomplete(interaction);
+      return;
+    }
+
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.help) {
       await help.handleHelpCommand(interaction);
       return;
@@ -267,6 +272,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
       if (await shitterList.handleShitterEntrySelect(interaction)) {
         return;
       }
+    }
+
+    if (interaction.isButton() && (await catacombs.handleCatacombsViewButton(interaction))) {
+      return;
     }
 
     if (interaction.isButton() && interaction.customId.startsWith('setup-view-')) {

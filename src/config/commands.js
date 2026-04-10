@@ -72,16 +72,24 @@ const cataCommand = new SlashCommandBuilder()
   .setDescription('Show a catacombs overview for a player.')
   .addStringOption((option) => option
     .setName('player')
-    .setDescription('Minecraft username')
-    .setRequired(true));
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('profile')
+    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
+    .setRequired(false));
 
 const catacombsCommand = new SlashCommandBuilder()
   .setName('catacombs')
   .setDescription('Show a catacombs overview for a player.')
   .addStringOption((option) => option
     .setName('player')
-    .setDescription('Minecraft username')
-    .setRequired(true));
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('profile')
+    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
+    .setRequired(false));
 
 const itemEmojiCommand = new SlashCommandBuilder()
   .setName('itememoji')
@@ -89,7 +97,8 @@ const itemEmojiCommand = new SlashCommandBuilder()
   .addStringOption((option) => option
     .setName('item')
     .setDescription('SkyBlock custom item ID, for example HYPERION')
-    .setRequired(true))
+    .setRequired(true)
+    .setAutocomplete(true))
   .addBooleanOption((option) => option
     .setName('enchanted')
     .setDescription('Use the enchanted emoji variant if available')

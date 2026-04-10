@@ -56,14 +56,14 @@ const helpSections = [
         example: '/gif media:<upload>'
       },
       {
-        command: '/cata player:<ign>',
-        description: 'Show a catacombs overview for a player.',
-        example: '/cata player:Xclipsen'
+        command: '/cata [player:<ign>] [profile:<name>]',
+        description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections.',
+        example: '/cata'
       },
       {
-        command: '/catacombs player:<ign>',
-        description: 'Alias of /cata for the same catacombs lookup.',
-        example: '/catacombs player:Xclipsen'
+        command: '/catacombs [player:<ign>] [profile:<name>]',
+        description: 'Alias of /cata for the same catacombs lookup, including linked-account, selected-profile, and view selection support.',
+        example: '/catacombs'
       },
       {
         command: '/itememoji item:<skyblock_id>',

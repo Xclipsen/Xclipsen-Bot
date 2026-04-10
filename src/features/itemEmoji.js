@@ -1,6 +1,20 @@
-const { MessageFlags, PermissionsBitField } = require('discord.js');
+const { AttachmentBuilder, MessageFlags, PermissionsBitField } = require('discord.js');
 
 function createItemEmojiFeature({ itemEmojis }) {
+  async function handleItemEmojiAutocomplete(interaction) {
+    const focusedValue = interaction.options.getFocused();
+
+    try {
+      const suggestions = await itemEmojis.suggestCustomIds(focusedValue, { limit: 25 });
+      await interaction.respond(suggestions.map((customId) => ({
+        name: customId,
+        value: customId
+      })));
+    } catch (error) {
+      await interaction.respond([]).catch(() => null);
+    }
+  }
+
   async function handleItemEmojiCommand(interaction) {
     const customIdInput = interaction.options.getString('item', true);
     const enchanted = interaction.options.getBoolean('enchanted') || false;
@@ -10,8 +24,11 @@ function createItemEmojiFeature({ itemEmojis }) {
     try {
       const resolved = await itemEmojis.resolveEmoji(customIdInput, { enchanted });
       if (!resolved) {
+        const suggestions = await itemEmojis.suggestCustomIds(customIdInput, { limit: 5 });
         await interaction.editReply({
-          content: `No emoji mapping found for \`${itemEmojis.normalizeCustomId(customIdInput)}\`.`
+          content: suggestions.length > 0
+            ? `No emoji mapping found for \`${itemEmojis.normalizeCustomId(customIdInput)}\`.\nDid you mean: ${suggestions.map((entry) => `\`${entry}\``).join(', ')}`
+            : `No emoji mapping found for \`${itemEmojis.normalizeCustomId(customIdInput)}\`.`
         });
         return;
       }
@@ -24,19 +41,38 @@ function createItemEmojiFeature({ itemEmojis }) {
       }
 
       const botMember = interaction.guild?.members?.me || null;
-      if (botMember && !interaction.channel.permissionsFor(botMember).has(PermissionsBitField.Flags.SendMessages)) {
+      const channelPermissions = botMember ? interaction.channel.permissionsFor(botMember) : null;
+      if (channelPermissions && !channelPermissions.has(PermissionsBitField.Flags.SendMessages)) {
         await interaction.editReply({
           content: 'I do not have permission to send messages in this channel.'
         });
         return;
       }
 
+      if (channelPermissions && !channelPermissions.has(PermissionsBitField.Flags.AttachFiles)) {
+        await interaction.editReply({
+          content: 'I do not have permission to attach files in this channel.'
+        });
+        return;
+      }
+
+      const emojiResponse = await fetch(resolved.cdnUrl, {
+        headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
+      });
+      if (!emojiResponse.ok) {
+        throw new Error(`Failed to download the item emoji image (${emojiResponse.status}).`);
+      }
+
+      const emojiBuffer = Buffer.from(await emojiResponse.arrayBuffer());
+      const fileName = `${resolved.customId.toLowerCase()}-${resolved.variant}.${resolved.fileExtension}`;
+
       await interaction.channel.send({
-        content: `${resolved.formatted} \`${resolved.customId}\`\nData credit: Altpapier/Skyblock-Item-Emojis`
+        content: `\`${resolved.customId}\`${resolved.variant === 'enchanted' ? ' (enchanted)' : ''}\nData credit: Altpapier/Skyblock-Item-Emojis`,
+        files: [new AttachmentBuilder(emojiBuffer, { name: fileName })]
       });
 
       await interaction.editReply({
-        content: `Posted the ${resolved.variant} emoji for \`${resolved.customId}\` in <#${interaction.channelId}>.`
+        content: `Posted the ${resolved.variant} item emoji image for \`${resolved.customId}\` in <#${interaction.channelId}>.`
       });
     } catch (error) {
       await interaction.editReply({
@@ -46,6 +82,7 @@ function createItemEmojiFeature({ itemEmojis }) {
   }
 
   return {
+    handleItemEmojiAutocomplete,
     handleItemEmojiCommand
   };
 }
