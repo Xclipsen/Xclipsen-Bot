@@ -2,7 +2,7 @@ const { EmbedBuilder } = require('discord.js');
 
 function createNameHistoryFeature({ minecraft }) {
   function getHistorySourceText(profile) {
-    return 'NameMC';
+    return profile.historySourceLabel || 'Unknown';
   }
 
   function formatDate(value) {
@@ -88,7 +88,7 @@ function createNameHistoryFeature({ minecraft }) {
         '```'
       ].join('\n'))
       .setFooter({
-        text: 'Current profile from Mojang, history from NameMC'
+        text: `Current profile from Mojang, history from ${getHistorySourceText(profile)}`
       })
       .setTimestamp();
   }
