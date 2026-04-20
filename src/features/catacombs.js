@@ -62,6 +62,10 @@ const CATACOMBS_XP_TABLE = [
 const LEVEL_50_TOTAL_XP = CATACOMBS_XP_TABLE.slice(1).reduce((sum, value) => sum + value, 0);
 const DUNGEON_OVERFLOW_XP = 200000000;
 const CLASS_ORDER = ['healer', 'mage', 'berserk', 'archer', 'tank'];
+const FLOOR_RANGES = {
+  F: { start: 0, end: 7 },
+  M: { start: 1, end: 7 }
+};
 const CATACOMBS_VIEW_BASIC = 'basic';
 const CATACOMBS_VIEW_BOSS_COLLECTIONS = 'boss_collections';
 const CATACOMBS_VIEW_BASIC_BUTTON_ID = 'catacombs-view-basic';
@@ -261,30 +265,42 @@ function createCatacombsFeature({ env, minecraft, store }) {
     };
   }
 
+  function buildFloorKeys(prefix, dungeons = {}) {
+    const range = FLOOR_RANGES[prefix] || FLOOR_RANGES.F;
+    const defaultKeys = Array.from(
+      { length: (range.end - range.start) + 1 },
+      (_, index) => String(range.start + index)
+    );
+    const extraKeys = [...new Set([
+      ...Object.keys(dungeons?.tier_completions || {}),
+      ...Object.keys(dungeons?.fastest_time_s_plus || {}),
+      ...Object.keys(dungeons?.fastest_time_s || {})
+    ])]
+      .filter((key) => /^\d+$/.test(key) && (Number(key) < range.start || Number(key) > range.end))
+      .sort((a, b) => Number(a) - Number(b));
+
+    return [...defaultKeys, ...extraKeys];
+  }
+
   function formatFloorLines(prefix, dungeons = {}) {
     const completions = dungeons?.tier_completions || {};
     const fastestSPlus = dungeons?.fastest_time_s_plus || {};
     const fastestS = dungeons?.fastest_time_s || {};
+    const rows = buildFloorKeys(prefix, dungeons).map((key) => ({
+      label: `${prefix}${key}`,
+      runs: `${formatNumber(Number(completions[key]) || 0)} runs`,
+      pbSPlus: formatDuration(fastestSPlus[key]),
+      pbS: formatDuration(fastestS[key])
+    }));
 
-    const keys = [...new Set([
-      ...Object.keys(completions || {}),
-      ...Object.keys(fastestSPlus || {}),
-      ...Object.keys(fastestS || {})
-    ])]
-      .filter((key) => /^\d+$/.test(key))
-      .sort((a, b) => Number(a) - Number(b));
+    const runsWidth = rows.reduce((width, row) => Math.max(width, row.runs.length), 0);
+    const pbSPlusWidth = rows.reduce((width, row) => Math.max(width, row.pbSPlus.length), 0);
+    const pbSWidth = rows.reduce((width, row) => Math.max(width, row.pbS.length), 0);
 
-    if (keys.length === 0) {
-      return 'No floor data';
-    }
-
-    return keys
-      .map((key) => {
-        const runCount = Number(completions[key]) || 0;
-        const pbSPlus = formatDuration(fastestSPlus[key]);
-        const pbS = formatDuration(fastestS[key]);
-        return `**${prefix}${key}**: ${formatNumber(runCount)} runs | PB S+: ${pbSPlus} | PB S: ${pbS}`;
-      })
+    return rows
+      .map((row) => (
+        `**${row.label}**: \`${row.runs.padStart(runsWidth, ' ')}\` | PB S+: \`${row.pbSPlus.padEnd(pbSPlusWidth, ' ')}\` | PB S: \`${row.pbS.padEnd(pbSWidth, ' ')}\``
+      ))
       .join('\n');
   }
 
@@ -463,7 +479,7 @@ function createCatacombsFeature({ env, minecraft, store }) {
       .setColor(0x3498db)
       .setTitle(`${playerName}'s Catacombs on ${profileName || 'Unknown'}`)
       .setDescription([
-        `💀 **Catacombs:** ${formatLevelSummary(catacombsExperience)} ${formatCompactNumber(catacombsExperience)} XP`,
+        `💀 **Catacombs:** ${formatLevelSummary(catacombsExperience)} | ${formatCompactNumber(catacombsExperience)} XP`,
         `🧰 **Secrets found:** ${formatNumber(secretsFound)}${totalRuns > 0 ? ` (Per Run: ${(secretsFound / totalRuns).toFixed(2)})` : ''}`,
         `🏃 **Total Runs:** ${formatNumber(totalRuns)}`,
         `🩸 **Blood Mob Kills:** ${formatNumber(getBloodMobKills(catacombs))}`,
