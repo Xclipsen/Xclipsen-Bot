@@ -224,6 +224,20 @@ function normalizeFarmingStatsEntry(entry) {
     reforge: ['blessed', 'bountiful'].includes(String(entry?.reforge || '').trim().toLowerCase())
       ? String(entry.reforge).trim().toLowerCase()
       : null,
+    lastPestFarmingProfits: normalizeLastPestFarmingProfitsEntry(entry?.lastPestFarmingProfits),
+    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
+  };
+}
+
+function normalizeLastPestFarmingProfitsEntry(entry) {
+  return {
+    bait: typeof entry?.bait === 'string' ? entry.bait.trim() : null,
+    vinyl: typeof entry?.vinyl === 'string' ? entry.vinyl.trim() : null,
+    crop: typeof entry?.crop === 'string' ? entry.crop.trim() : null,
+    fortune: Math.max(0, Number(entry?.fortune) || 0),
+    pestFortune: Math.max(0, Number(entry?.pestFortune) || 0),
+    plots: Math.max(1, Number(entry?.plots) || 1),
+    sellMethod: typeof entry?.sellMethod === 'string' ? entry.sellMethod.trim() : null,
     updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
   };
 }
@@ -652,6 +666,21 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       };
       saveState();
       return this.getUserFarmingStats(key);
+    },
+    getUserLastPestFarmingProfits(discordUserId) {
+      return this.getUserFarmingStats(discordUserId)?.lastPestFarmingProfits || null;
+    },
+    setUserLastPestFarmingProfits(discordUserId, partialEntry) {
+      const key = String(discordUserId || '').trim();
+      const current = this.getUserFarmingStats(key) || {};
+      return this.setUserFarmingStats(key, {
+        ...current,
+        lastPestFarmingProfits: {
+          ...current.lastPestFarmingProfits,
+          ...partialEntry,
+          updatedAt: Date.now()
+        }
+      });
     }
   };
 }

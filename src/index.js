@@ -69,7 +69,7 @@ const setupHub = createSetupHub({
 const catacombs = createCatacombsFeature({ env, minecraft, store });
 const itemEmoji = createItemEmojiFeature({ itemEmojis });
 const trophyFishing = createTrophyFishingFeature({ env, minecraft, store });
-const bestPest = createBestPestFeature({ env });
+const bestPest = createBestPestFeature({ env, store });
 const pestFarmingProfit = createPestFarmingProfitFeature({ env, store });
 const gif = createGifFeature();
 const help = createHelpFeature();
@@ -261,6 +261,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.pestfarmingprofits) {
       await pestFarmingProfit.handlePestFarmingProfitsCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.lastpestfarmingprofits) {
+      await pestFarmingProfit.handleLastPestFarmingProfitsCommand(interaction);
       return;
     }
 

@@ -91,9 +91,14 @@ const helpSections = [
         example: '/setfarmingstats bonus_pest_chance:497 pest_shard_level:10 cropeetle_level:10 rarefinder_level:10 reforge:Bountiful'
       },
       {
-        command: '/pestfarmingprofits bait:<name> vinyl:<pest> crop:<crop> fortune:<amount> plots:<count> sell_method:<method>',
+        command: '/pestfarmingprofits bait:<name> vinyl:<pest> crop:<crop> fortune:<amount> [pest_fortune:<amount>] plots:<count> sell_method:<method>',
         description: 'Calculate pest farming profit per hour with your saved farming stats and live market costs.',
-        example: '/pestfarmingprofits bait:Plant Matter (Slug + Locust) vinyl:Slug crop:Wheat fortune:2500 plots:2 sell_method:NPC Sell'
+        example: '/pestfarmingprofits bait:Plant Matter (Slug + Locust) vinyl:Slug crop:Wheat fortune:2900 pest_fortune:2600 plots:2 sell_method:NPC Sell'
+      },
+      {
+        command: '/lastpestfarmingprofits',
+        description: 'Recalculate your most recently used pest farming setup with current prices and mayor state.',
+        example: '/lastpestfarmingprofits'
       },
       {
         command: '/link start usernames:<name1,name2>',

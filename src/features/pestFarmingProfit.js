@@ -12,14 +12,16 @@ const {
 const BAZAAR_CACHE_TTL_MS = 60 * 1000;
 const ELECTION_CACHE_TTL_MS = 60 * 1000;
 const BASE_PEST_COOLDOWN_SECONDS = 300;
-const SPRAYONATOR_COOLDOWN_REDUCTION = 0.5;
+const FULL_PEST_HUNTER_CDR = 0.55;
 const FINNEGAN_COOLDOWN_REDUCTION = 0.2;
+const EXPECTED_CROPS_PER_PEST_ROLL = 500;
+const ASSUMED_PEST_FARM_CROPS_PER_SECOND = 20;
+const DEFAULT_PEST_FORTUNE_DELTA = 300;
 const BAIT_PEST_WEIGHT = 12;
 const VINYL_PEST_WEIGHT = 3;
-const NON_BAIT_FORTUNE_DELTA = 275;
 const BASE_GUARANTEED_COINS = 1000;
 const REFERENCE_FORTUNE = 2500;
-const CALIBRATED_PEST_SHARD_RARE_BONUS_PER_LEVEL = 0.015;
+const CALIBRATED_PEST_SHARD_RARE_BONUS_PER_LEVEL = 0.02;
 const BASE_CROP_BREAKS_PER_HOUR_PER_PLOT = 66320;
 const KILL_SECONDS_PER_PEST = 4.628140703517589;
 
@@ -262,8 +264,24 @@ function createPestFarmingProfitFeature({ env, store }) {
   }
 
   function getEffectiveCooldownSeconds(finneganEnabled) {
-    const reduction = SPRAYONATOR_COOLDOWN_REDUCTION + (finneganEnabled ? FINNEGAN_COOLDOWN_REDUCTION : 0);
+    const reduction = FULL_PEST_HUNTER_CDR + (finneganEnabled ? FINNEGAN_COOLDOWN_REDUCTION : 0);
     return Math.max(1, BASE_PEST_COOLDOWN_SECONDS * (1 - reduction));
+  }
+
+  function getExpectedAdditionalSpawnDelaySeconds() {
+    return EXPECTED_CROPS_PER_PEST_ROLL / ASSUMED_PEST_FARM_CROPS_PER_SECOND;
+  }
+
+  function formatDuration(seconds) {
+    const totalSeconds = Math.max(0, Number(seconds) || 0);
+    const minutes = Math.floor(totalSeconds / 60);
+    const remainingSeconds = Math.round(totalSeconds % 60);
+
+    if (minutes <= 0) {
+      return `${remainingSeconds}s`;
+    }
+
+    return `${minutes}m ${String(remainingSeconds).padStart(2, '0')}s`;
   }
 
   function getPestWeights(bait, vinylKey) {
@@ -290,6 +308,30 @@ function createPestFarmingProfitFeature({ env, store }) {
     }
 
     return stats;
+  }
+
+  function resolvePestFarmingInputOrThrow(rawInput) {
+    const fortune = Math.max(0, Number(rawInput?.fortune) || 0);
+    const pestFortune = Math.max(0, Number(rawInput?.pestFortune) || Math.max(0, fortune - DEFAULT_PEST_FORTUNE_DELTA));
+    const plots = Math.max(1, Number(rawInput?.plots) || 0);
+    const bait = BAIT_BY_KEY[String(rawInput?.bait || '').trim()];
+    const vinyl = PEST_BY_KEY[String(rawInput?.vinyl || '').trim()];
+    const crop = CROP_BY_KEY[String(rawInput?.crop || '').trim()];
+    const sellMethod = String(rawInput?.sellMethod || '').trim();
+
+    if (!bait || !vinyl || !crop || !Number.isFinite(fortune) || !Number.isFinite(plots) || !sellMethod) {
+      throw new Error('No previous pest farming setup found. Run `/pestfarmingprofits` first.');
+    }
+
+    return {
+      fortune,
+      pestFortune,
+      plots,
+      bait,
+      vinyl,
+      crop,
+      sellMethod
+    };
   }
 
   function buildFarmingStatsEmbed(stats) {
@@ -345,10 +387,11 @@ function createPestFarmingProfitFeature({ env, store }) {
     grossCropProfitPerHour,
     cropProfitPerHour,
     uptimeMultiplier,
+    averageSpawnTimeSeconds,
     pestProfitPerHour,
     netProfitPerHour,
     topPests,
-    nonBaitFortune
+    pestFortune
   }) {
     const reforge = REFORGE_OPTIONS[stats.reforge] || REFORGE_OPTIONS.blessed;
     const description = [
@@ -362,6 +405,7 @@ function createPestFarmingProfitFeature({ env, store }) {
       `**Bonus Pest Chance:** ${formatNumber(stats.bonusPestChance)}`,
       `**Pest Shard Level:** ${formatNumber(stats.pestShardLevel)} (+${formatNumber(stats.pestShardLevel * 2)}% rare drops)`,
       `**Reforge:** ${reforge.label}`,
+      `**Average Time to Spawn:** ${formatDuration(averageSpawnTimeSeconds)}`,
       '',
       `**Pests per Hour:** ${formatNumber(pestsPerHour, 1)}`,
       `**Bait Cost per Hour:** ${formatCoins(baitCostPerHour)}`,
@@ -380,7 +424,7 @@ function createPestFarmingProfitFeature({ env, store }) {
       .setTitle('Pest Farming Profit Calculator')
       .setDescription(description.join('\n'))
       .setFooter({
-        text: `Calculated with ${formatNumber(pestsPerHour, 0)} total pests/hr • Non-bait pests use ${formatNumber(nonBaitFortune)} fortune`
+        text: `Calculated with ${formatNumber(pestsPerHour, 0)} total pests/hr • Pests use ${formatNumber(pestFortune)} fortune`
       })
       .setTimestamp();
   }
@@ -404,16 +448,15 @@ function createPestFarmingProfitFeature({ env, store }) {
 
     try {
       const stats = getStoredFarmingStatsOrThrow(interaction.user.id);
-      const fortune = interaction.options.getInteger('fortune', true);
-      const plots = interaction.options.getInteger('plots', true);
-      const bait = BAIT_BY_KEY[interaction.options.getString('bait', true)];
-      const vinyl = PEST_BY_KEY[interaction.options.getString('vinyl', true)];
-      const crop = CROP_BY_KEY[interaction.options.getString('crop', true)];
-      const sellMethod = interaction.options.getString('sell_method', true);
-
-      if (!bait || !vinyl || !crop) {
-        throw new Error('One or more selected options are invalid.');
-      }
+      const { fortune, pestFortune, plots, bait, vinyl, crop, sellMethod } = resolvePestFarmingInputOrThrow({
+        fortune: interaction.options.getInteger('fortune', true),
+        pestFortune: interaction.options.getInteger('pest_fortune', false),
+        plots: interaction.options.getInteger('plots', true),
+        bait: interaction.options.getString('bait', true),
+        vinyl: interaction.options.getString('vinyl', true),
+        crop: interaction.options.getString('crop', true),
+        sellMethod: interaction.options.getString('sell_method', true)
+      });
 
       const [products, finneganEnabled] = await Promise.all([
         fetchBazaarProducts(),
@@ -421,11 +464,11 @@ function createPestFarmingProfitFeature({ env, store }) {
       ]);
 
       const effectiveCooldownSeconds = getEffectiveCooldownSeconds(finneganEnabled);
+      const averageSpawnTimeSeconds = effectiveCooldownSeconds + getExpectedAdditionalSpawnDelaySeconds();
       const pestsPerSpawn = getPestsPerSpawn(stats.bonusPestChance);
-      const eventsPerHour = 3600 / effectiveCooldownSeconds;
+      const eventsPerHour = 3600 / averageSpawnTimeSeconds;
       const pestsPerHour = eventsPerHour * pestsPerSpawn;
       const baitCostPerHour = (getProductUnitPrice(products, bait.productId, SELL_ORDER) || 0) * plots * 2;
-      const nonBaitFortune = Math.max(0, fortune - NON_BAIT_FORTUNE_DELTA);
       const cropUnitValue = resolveCropUnitValue(products, crop, sellMethod);
       const reforgeBonus = REFORGE_OPTIONS[stats.reforge]?.coinsPerCrop || 0;
       const grossCropProfitPerHour = plots * BASE_CROP_BREAKS_PER_HOUR_PER_PLOT * (1 + (fortune / 100)) * (cropUnitValue + reforgeBonus);
@@ -435,8 +478,7 @@ function createPestFarmingProfitFeature({ env, store }) {
       const weights = getPestWeights(bait, vinyl.key);
       const totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
       const pestBreakdown = await Promise.all(weights.map(async (entry) => {
-        const effectiveFortune = bait.pestKeys.includes(entry.pest.key) ? fortune : nonBaitFortune;
-        const valuePerKill = await calculatePestValuePerKill(effectiveFortune, entry.pest, sellMethod, stats.pestShardLevel);
+        const valuePerKill = await calculatePestValuePerKill(pestFortune, entry.pest, sellMethod, stats.pestShardLevel);
         const share = entry.weight / totalWeight;
         const pestRate = pestsPerHour * share;
         return {
@@ -468,11 +510,22 @@ function createPestFarmingProfitFeature({ env, store }) {
           grossCropProfitPerHour,
           cropProfitPerHour,
           uptimeMultiplier,
+          averageSpawnTimeSeconds,
           pestProfitPerHour,
           netProfitPerHour,
           topPests: pestBreakdown.slice(0, 5),
-          nonBaitFortune
+          pestFortune
         })]
+      });
+
+      store.setUserLastPestFarmingProfits(interaction.user.id, {
+        bait: bait.key,
+        vinyl: vinyl.key,
+        crop: crop.key,
+        fortune,
+        pestFortune,
+        plots,
+        sellMethod
       });
     } catch (error) {
       await interaction.editReply({
@@ -481,9 +534,84 @@ function createPestFarmingProfitFeature({ env, store }) {
     }
   }
 
+  async function handleLastPestFarmingProfitsCommand(interaction) {
+    await interaction.deferReply();
+
+    try {
+      const stats = getStoredFarmingStatsOrThrow(interaction.user.id);
+      const savedInput = store.getUserLastPestFarmingProfits(interaction.user.id);
+      const { fortune, pestFortune, plots, bait, vinyl, crop, sellMethod } = resolvePestFarmingInputOrThrow(savedInput);
+
+      const [products, finneganEnabled] = await Promise.all([
+        fetchBazaarProducts(),
+        isPestEradicatorActive()
+      ]);
+
+      const effectiveCooldownSeconds = getEffectiveCooldownSeconds(finneganEnabled);
+      const averageSpawnTimeSeconds = effectiveCooldownSeconds + getExpectedAdditionalSpawnDelaySeconds();
+      const pestsPerSpawn = getPestsPerSpawn(stats.bonusPestChance);
+      const eventsPerHour = 3600 / averageSpawnTimeSeconds;
+      const pestsPerHour = eventsPerHour * pestsPerSpawn;
+      const baitCostPerHour = (getProductUnitPrice(products, bait.productId, SELL_ORDER) || 0) * plots * 2;
+      const cropUnitValue = resolveCropUnitValue(products, crop, sellMethod);
+      const reforgeBonus = REFORGE_OPTIONS[stats.reforge]?.coinsPerCrop || 0;
+      const grossCropProfitPerHour = plots * BASE_CROP_BREAKS_PER_HOUR_PER_PLOT * (1 + (fortune / 100)) * (cropUnitValue + reforgeBonus);
+      const uptimeMultiplier = Math.max(0, 1 - ((pestsPerHour * KILL_SECONDS_PER_PEST) / 3600));
+      const cropProfitPerHour = grossCropProfitPerHour * uptimeMultiplier;
+
+      const weights = getPestWeights(bait, vinyl.key);
+      const totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
+      const pestBreakdown = await Promise.all(weights.map(async (entry) => {
+        const valuePerKill = await calculatePestValuePerKill(pestFortune, entry.pest, sellMethod, stats.pestShardLevel);
+        const share = entry.weight / totalWeight;
+        const pestRate = pestsPerHour * share;
+        return {
+          pest: entry.pest,
+          share: share * 100,
+          pestsPerHour: pestRate,
+          valuePerKill,
+          profitPerHour: pestRate * valuePerKill
+        };
+      }));
+
+      pestBreakdown.sort((left, right) => right.profitPerHour - left.profitPerHour || left.pest.label.localeCompare(right.pest.label));
+
+      const pestProfitPerHour = pestBreakdown.reduce((sum, entry) => sum + entry.profitPerHour, 0);
+      const netProfitPerHour = cropProfitPerHour + pestProfitPerHour - baitCostPerHour;
+
+      await interaction.editReply({
+        embeds: [buildProfitEmbed({
+          fortune,
+          plots,
+          bait,
+          vinyl,
+          crop,
+          sellMethod,
+          finneganEnabled,
+          stats,
+          pestsPerHour,
+          baitCostPerHour,
+          grossCropProfitPerHour,
+          cropProfitPerHour,
+          uptimeMultiplier,
+          averageSpawnTimeSeconds,
+          pestProfitPerHour,
+          netProfitPerHour,
+          topPests: pestBreakdown.slice(0, 5),
+          pestFortune
+        })]
+      });
+    } catch (error) {
+      await interaction.editReply({
+        content: error.message || 'Failed to recalculate pest farming profit.'
+      });
+    }
+  }
+
   return {
     handleSetFarmingStatsCommand,
     handlePestFarmingProfitsCommand,
+    handleLastPestFarmingProfitsCommand,
     BAITS,
     CROPS
   };

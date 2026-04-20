@@ -9,6 +9,7 @@ const PEST_ERADICATOR_NAME = 'Pest Eradicator';
 const PEST_ERADICATOR_DESCRIPTION = 'The duration of Pesthunter Phillip\'s Farming Fortune bonus is now 60m. Decreases the spawn cooldown of Pests by 20%.';
 const BAZAAR_CACHE_TTL_MS = 60 * 1000;
 const ELECTION_CACHE_TTL_MS = 60 * 1000;
+const PEST_SHARD_RARE_BONUS_PER_LEVEL = 0.02;
 
 const SELL_METHOD_LABELS = {
   [INSTA_SELL]: 'Instasell',
@@ -25,8 +26,8 @@ const PESTS = [
       scaling: 35,
       unitNpcValue: 1596,
       marketBundle: [
-        { type: 'direct', productId: 'ENCHANTED_RED_MUSHROOM', amount: 1 },
-        { type: 'direct', productId: 'ENCHANTED_BROWN_MUSHROOM', amount: 1 }
+        { type: 'direct', productId: 'ENCHANTED_RED_MUSHROOM', amount: 1, poolId: 'enchanted_mushroom' },
+        { type: 'direct', productId: 'ENCHANTED_BROWN_MUSHROOM', amount: 1, poolId: 'enchanted_mushroom' }
       ]
     },
     targetNpcAt2500: 187190
@@ -35,7 +36,7 @@ const PESTS = [
     key: 'beetle',
     label: 'Beetle',
     guaranteed: {
-      baseAmount: 3,
+      baseAmount: 1,
       scaling: 12,
       unitNpcValue: 480,
       marketBundle: [
@@ -48,7 +49,7 @@ const PESTS = [
     key: 'earthworm',
     label: 'Earthworm',
     guaranteed: {
-      baseAmount: 5,
+      baseAmount: 1,
       scaling: 7,
       unitNpcValue: 320,
       marketBundle: [
@@ -61,7 +62,7 @@ const PESTS = [
     key: 'cricket',
     label: 'Cricket',
     guaranteed: {
-      baseAmount: 3,
+      baseAmount: 1,
       scaling: 10.5,
       unitNpcValue: 480,
       marketBundle: [
@@ -74,7 +75,7 @@ const PESTS = [
     key: 'locust',
     label: 'Locust',
     guaranteed: {
-      baseAmount: 3,
+      baseAmount: 1,
       scaling: 10.5,
       unitNpcValue: 480,
       marketBundle: [
@@ -100,7 +101,7 @@ const PESTS = [
     key: 'moth',
     label: 'Moth',
     guaranteed: {
-      baseAmount: 3,
+      baseAmount: 1,
       scaling: 12,
       unitNpcValue: 480,
       marketBundle: [
@@ -185,7 +186,7 @@ let cachedBazaarFetchedAt = 0;
 let cachedElectionState = null;
 let cachedElectionFetchedAt = 0;
 
-function createBestPestFeature({ env }) {
+function createBestPestFeature({ env, store }) {
   function normalizeText(value) {
     return String(value || '')
       .replace(/§./g, '')
@@ -208,11 +209,11 @@ function createBestPestFeature({ env }) {
     return (1 + (Math.max(0, Number(fortune) || 0) / 600)) / (1 + (REFERENCE_FORTUNE / 600));
   }
 
-  function calculateNpcValuePerKill(fortune, pest) {
+  function calculateNpcValuePerKill(fortune, pest, rareMultiplier = 1) {
     const guaranteedValue = calculateGuaranteedNpcValue(fortune, pest);
     const guaranteedAtReference = calculateGuaranteedNpcValue(REFERENCE_FORTUNE, pest);
     const referenceRareValue = Math.max(0, pest.targetNpcAt2500 - guaranteedAtReference);
-    const scaledRareValue = referenceRareValue * calculateRareScaling(fortune);
+    const scaledRareValue = referenceRareValue * calculateRareScaling(fortune) * rareMultiplier;
     return guaranteedValue + scaledRareValue;
   }
 
@@ -297,15 +298,35 @@ function createBestPestFeature({ env }) {
       return calculateGuaranteedNpcValue(fortune, pest);
     }
 
-    const bundleUnitValue = bundle.reduce((sum, component) => {
+    const pooledBundleValues = new Map();
+    const directBundleValue = bundle.reduce((sum, component) => {
       const componentUnitPrice = getBazaarUnitPrice(products, method, component);
       if (componentUnitPrice == null) {
         return sum;
       }
 
       const componentAmount = component.type === 'direct' ? component.amount : 1;
-      return sum + (componentUnitPrice * componentAmount);
+      const componentValue = componentUnitPrice * componentAmount;
+      if (component.poolId) {
+        const poolValues = pooledBundleValues.get(component.poolId) || [];
+        poolValues.push(componentValue);
+        pooledBundleValues.set(component.poolId, poolValues);
+        return sum;
+      }
+
+      return sum + componentValue;
     }, 0);
+
+    const pooledBundleValue = [...pooledBundleValues.values()].reduce((sum, values) => {
+      if (values.length === 0) {
+        return sum;
+      }
+
+      // Shared drop pools represent one drop choice, not multiple guaranteed drops.
+      return sum + (values.reduce((poolSum, value) => poolSum + value, 0) / values.length);
+    }, 0);
+
+    const bundleUnitValue = directBundleValue + pooledBundleValue;
 
     if (bundleUnitValue <= 0) {
       return calculateGuaranteedNpcValue(fortune, pest);
@@ -333,13 +354,22 @@ function createBestPestFeature({ env }) {
     );
   }
 
-  async function calculateValuePerKill(fortune, pest, sellMethod) {
+  function getPestShardLevel(discordUserId) {
+    if (!store || typeof store.getUserFarmingStats !== 'function') {
+      return 0;
+    }
+
+    return Math.max(0, Number(store.getUserFarmingStats(discordUserId)?.pestShardLevel) || 0);
+  }
+
+  async function calculateValuePerKill(fortune, pest, sellMethod, pestShardLevel = 0) {
+    const rareMultiplier = 1 + (Math.max(0, Number(pestShardLevel) || 0) * PEST_SHARD_RARE_BONUS_PER_LEVEL);
     if (sellMethod === NPC_SELL) {
-      return calculateNpcValuePerKill(fortune, pest);
+      return calculateNpcValuePerKill(fortune, pest, rareMultiplier);
     }
 
     const products = await fetchBazaarProducts();
-    const npcValue = calculateNpcValuePerKill(fortune, pest);
+    const npcValue = calculateNpcValuePerKill(fortune, pest, rareMultiplier);
     const npcGuaranteedValue = calculateGuaranteedNpcValue(fortune, pest);
     const marketGuaranteedValue = calculateGuaranteedMarketValue(fortune, pest, products, sellMethod);
     return npcValue - npcGuaranteedValue + marketGuaranteedValue;
@@ -371,6 +401,7 @@ function createBestPestFeature({ env }) {
   async function handleBestPestCommand(interaction) {
     const fortune = interaction.options.getInteger('fortune', true);
     const sellMethod = interaction.options.getString('sell_method', true);
+    const pestShardLevel = getPestShardLevel(interaction.user.id);
 
     await interaction.deferReply();
 
@@ -384,7 +415,7 @@ function createBestPestFeature({ env }) {
         Promise.all(PESTS.map(async (pest, index) => ({
           ...pest,
           originalIndex: index,
-          valuePerKill: await calculateValuePerKill(fortune, pest, sellMethod)
+          valuePerKill: await calculateValuePerKill(fortune, pest, sellMethod, pestShardLevel)
         })))
       ]);
 
@@ -401,6 +432,7 @@ function createBestPestFeature({ env }) {
           `Farming Fortune: ${formatFortune(fortune)}`,
           `Sell Method: ${SELL_METHOD_LABELS[sellMethod] || sellMethod}`,
           getMayorStatusLine(finneganEnabled),
+          `Pest Shard Level: ${pestShardLevel} (+${pestShardLevel * 2}% rare drops)`,
           '',
           ...rankedPests.map((pest, index) => `${index + 1}. **${pest.label}** - ${formatCoins(pest.valuePerKill)} per kill`)
         ].join('\n'))

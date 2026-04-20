@@ -208,8 +208,13 @@ const pestFarmingProfitsCommand = new SlashCommandBuilder()
     .addChoices(...CROPS.map((crop) => ({ name: crop.label, value: crop.key }))))
   .addIntegerOption((option) => option
     .setName('fortune')
-    .setDescription('Your farming fortune while farming')
+    .setDescription('Your true Farming Fortune for harvested crops while farming')
     .setRequired(true)
+    .setMinValue(0))
+  .addIntegerOption((option) => option
+    .setName('pest_fortune')
+    .setDescription('Your Farming Fortune when vacuuming pests; leave empty to use `fortune - 300`')
+    .setRequired(false)
     .setMinValue(0))
   .addIntegerOption((option) => option
     .setName('plots')
@@ -221,6 +226,10 @@ const pestFarmingProfitsCommand = new SlashCommandBuilder()
     .setName('sell_method')
     .setDescription('How to value crop and pest drops')
     .setRequired(true)));
+
+const lastPestFarmingProfitsCommand = new SlashCommandBuilder()
+  .setName('lastpestfarmingprofits')
+  .setDescription('Recalculate your last pest farming profit setup with current prices.');
 
 const uuidCommand = new SlashCommandBuilder()
   .setName('uuid')
@@ -372,6 +381,7 @@ const commands = [
   pestsCommand,
   setFarmingStatsCommand,
   pestFarmingProfitsCommand,
+  lastPestFarmingProfitsCommand,
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
@@ -395,6 +405,7 @@ module.exports = {
     pests: 'pests',
     setfarmingstats: 'setfarmingstats',
     pestfarmingprofits: 'pestfarmingprofits',
+    lastpestfarmingprofits: 'lastpestfarmingprofits',
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',
