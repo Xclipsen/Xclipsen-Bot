@@ -285,21 +285,18 @@ function createCatacombsFeature({ env, minecraft, store }) {
   function formatFloorLines(prefix, dungeons = {}) {
     const completions = dungeons?.tier_completions || {};
     const fastestSPlus = dungeons?.fastest_time_s_plus || {};
-    const fastestS = dungeons?.fastest_time_s || {};
     const rows = buildFloorKeys(prefix, dungeons).map((key) => ({
       label: `${prefix}${key}`,
       runs: `${formatNumber(Number(completions[key]) || 0)} runs`,
-      pbSPlus: formatDuration(fastestSPlus[key]),
-      pbS: formatDuration(fastestS[key])
+      pbSPlus: formatDuration(fastestSPlus[key])
     }));
 
     const runsWidth = rows.reduce((width, row) => Math.max(width, row.runs.length), 0);
     const pbSPlusWidth = rows.reduce((width, row) => Math.max(width, row.pbSPlus.length), 0);
-    const pbSWidth = rows.reduce((width, row) => Math.max(width, row.pbS.length), 0);
 
     return rows
       .map((row) => (
-        `**${row.label}**: \`${row.runs.padStart(runsWidth, ' ')}\` | PB S+: \`${row.pbSPlus.padEnd(pbSPlusWidth, ' ')}\` | PB S: \`${row.pbS.padEnd(pbSWidth, ' ')}\``
+        `**${row.label}**: \`${row.runs.padStart(runsWidth, ' ')}\` | PB S+: \`${row.pbSPlus.padEnd(pbSPlusWidth, ' ')}\``
       ))
       .join('\n');
   }
