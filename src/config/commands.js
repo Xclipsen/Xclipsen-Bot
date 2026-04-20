@@ -262,13 +262,13 @@ const shitterCommand = new SlashCommandBuilder()
     .setName('add')
     .setDescription('Add or update a shitter list entry.')
     .addStringOption((option) => option
-      .setName('name')
-      .setDescription('Minecraft IGN, or leave empty to use your linked account')
-      .setRequired(false))
-    .addStringOption((option) => option
       .setName('reason')
       .setDescription('Why this IGN is on the list')
       .setRequired(true))
+    .addStringOption((option) => option
+      .setName('name')
+      .setDescription('Minecraft IGN, or leave empty to use your linked account')
+      .setRequired(false))
     .addAttachmentOption((option) => option
       .setName('screenshot')
       .setDescription('Optional screenshot proof')
