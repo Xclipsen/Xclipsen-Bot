@@ -212,11 +212,6 @@ const pestFarmingProfitsCommand = new SlashCommandBuilder()
     .setRequired(true)
     .setMinValue(0))
   .addIntegerOption((option) => option
-    .setName('pest_fortune')
-    .setDescription('Your Farming Fortune when vacuuming pests; leave empty to use `fortune - 300`')
-    .setRequired(false)
-    .setMinValue(0))
-  .addIntegerOption((option) => option
     .setName('plots')
     .setDescription('How many plots your farm uses')
     .setRequired(true)
@@ -225,7 +220,12 @@ const pestFarmingProfitsCommand = new SlashCommandBuilder()
   .addStringOption((option) => addSellMethodOptions(option
     .setName('sell_method')
     .setDescription('How to value crop and pest drops')
-    .setRequired(true)));
+    .setRequired(true)))
+  .addIntegerOption((option) => option
+    .setName('pest_fortune')
+    .setDescription('Your Farming Fortune when vacuuming pests; leave empty to use `fortune - 300`')
+    .setRequired(false)
+    .setMinValue(0));
 
 const lastPestFarmingProfitsCommand = new SlashCommandBuilder()
   .setName('lastpestfarmingprofits')
@@ -236,16 +236,16 @@ const uuidCommand = new SlashCommandBuilder()
   .setDescription('Look up a Minecraft player UUID from an IGN.')
   .addStringOption((option) => option
     .setName('player')
-    .setDescription('Minecraft username')
-    .setRequired(true));
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false));
 
 const nameHistoryCommand = new SlashCommandBuilder()
   .setName('namehistory')
   .setDescription('Look up a Minecraft player name history.')
   .addStringOption((option) => option
     .setName('player')
-    .setDescription('Minecraft username')
-    .setRequired(true));
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false));
 
 const gifCommand = new SlashCommandBuilder()
   .setName('gif')
@@ -263,8 +263,8 @@ const shitterCommand = new SlashCommandBuilder()
     .setDescription('Add or update a shitter list entry.')
     .addStringOption((option) => option
       .setName('name')
-      .setDescription('Minecraft IGN')
-      .setRequired(true))
+      .setDescription('Minecraft IGN, or leave empty to use your linked account')
+      .setRequired(false))
     .addStringOption((option) => option
       .setName('reason')
       .setDescription('Why this IGN is on the list')
@@ -294,15 +294,15 @@ const shitterCommand = new SlashCommandBuilder()
     .setDescription('Check whether an IGN is on the shitter list.')
     .addStringOption((option) => option
       .setName('name')
-      .setDescription('Minecraft IGN')
-      .setRequired(true)))
+      .setDescription('Minecraft IGN, or leave empty to use your linked account')
+      .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
     .setName('remove')
     .setDescription('Mark an IGN as no longer on the shitter list.')
     .addStringOption((option) => option
       .setName('name')
-      .setDescription('Minecraft IGN')
-      .setRequired(true)))
+      .setDescription('Minecraft IGN, or leave empty to use your linked account')
+      .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
     .setName('list')
     .setDescription('List all shitter entries for this server.'));
@@ -349,8 +349,15 @@ const linkCommand = new SlashCommandBuilder()
     .setDescription('Remove one Minecraft username from your link.')
     .addStringOption((option) => option
       .setName('username')
-      .setDescription('Minecraft username to remove')
-      .setRequired(true)))
+      .setDescription('Minecraft username to remove, or leave empty to use your prioritized linked account')
+      .setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('prio')
+    .setDescription('Choose which linked Minecraft username should be used by default.')
+    .addStringOption((option) => option
+      .setName('username')
+      .setDescription('Minecraft username to prioritize, or leave empty to reuse your current prioritized account')
+      .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
     .setName('event')
     .setDescription('Enable or disable one event ping for your linked backend account.')

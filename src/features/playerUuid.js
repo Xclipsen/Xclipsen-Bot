@@ -1,6 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
+const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
-function createPlayerUuidFeature({ minecraft }) {
+function createPlayerUuidFeature({ minecraft, store }) {
   function buildPlayerUuidEmbed(player) {
     const uuidData = minecraft.getUuidData(player.uuid);
     const formattedUuid = minecraft.formatUuid(player.uuid);
@@ -20,13 +21,22 @@ function createPlayerUuidFeature({ minecraft }) {
   }
 
   async function handlePlayerUuidCommand(interaction) {
-    const player = interaction.options.getString('player', true).trim();
-
     await interaction.deferReply();
 
     try {
+      const { username, usedLinkedAccount } = resolveMinecraftUsernameOption({
+        interaction,
+        store,
+        optionName: 'player',
+        missingMessage: 'No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.'
+      });
+
+      const player = username;
       const profile = await minecraft.resolvePlayerProfile(player);
-      await interaction.editReply({ embeds: [buildPlayerUuidEmbed(profile)] });
+      await interaction.editReply({
+        content: usedLinkedAccount ? buildLinkedUsernameNotice(profile.name) : undefined,
+        embeds: [buildPlayerUuidEmbed(profile)]
+      });
     } catch (error) {
       await interaction.editReply({
         content: error.message || 'Failed to fetch player UUID.'

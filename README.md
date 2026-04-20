@@ -18,12 +18,12 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
-- Includes `/trophyfishing` for a Trophy Fish overview with per-fish info about location and catch chance.
+- Includes `/trophyfishing` for a Trophy Fish overview with per-fish info about location and catch chance, with linked-account fallback when no player is provided.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
-- Includes `/uuid` to fetch a player's Minecraft UUID from their IGN.
-- Includes `/namehistory` to show a player's known Minecraft name history.
+- Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
+- Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
 - Includes `/gif` to convert an uploaded image into a GIF.
-- Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots.
+- Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 - Stores shitter list entries in `data/shitter-list.json`.
@@ -130,19 +130,20 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Shitter List
 
-- Use `/shitter add name:<ign> reason:<text>` to add or update an entry.
+- Use `/shitter add [name:<ign>] reason:<text>` to add or update an entry.
 - `/shitter add` also accepts up to 5 optional screenshot image attachments.
 - IGNs are validated like Minecraft names: 3-16 characters, letters, numbers, and `_` only.
 - Multiple active entries can be stored for the same IGN, and `/shitter query` lets you select which one to view.
 - The bot automatically stores the current date and time for each entry.
-- Use `/shitter query name:<ign>` to check whether an IGN is listed.
-- Use `/shitter remove name:<ign>` to mark all active entries for that IGN as removed while keeping history.
+- Use `/shitter query [name:<ign>]` to check whether an IGN is listed.
+- Use `/shitter remove [name:<ign>]` to mark all active entries for that IGN as removed while keeping history.
+- If you leave the name field empty on supported commands, the bot uses your prioritized linked Minecraft username.
 - Use `/shitter list` to show unique names for the server and select one from a menu.
 - In `/setup -> Discord -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
 
 ## Minecraft UUID Lookup
 
-- Use `/uuid player:<ign>` to fetch a player's current Mojang UUID.
+- Use `/uuid [player:<ign>]` to fetch a player's current Mojang UUID.
 - The bot returns both the raw UUID and dashed UUID form.
 - `/uuid` also shows a Stuffy-style UUID percentile and leaderboard position.
 - This command uses the official Mojang API and does not require a Hypixel API key.
@@ -157,7 +158,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Minecraft Name History
 
-- Use `/namehistory player:<ign>` to show a player's known username history.
+- Use `/namehistory [player:<ign>]` to show a player's known username history.
 - The bot shows the current name, UUID, and each known previous name.
 - This command uses Mojang for the current profile and scrapes the name history directly from NameMC over HTTPS.
 

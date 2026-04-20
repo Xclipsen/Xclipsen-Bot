@@ -1,6 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
+const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
-function createNameHistoryFeature({ minecraft }) {
+function createNameHistoryFeature({ minecraft, store }) {
   function getHistorySourceText(profile) {
     return profile.historySourceLabel || 'Unknown';
   }
@@ -94,13 +95,22 @@ function createNameHistoryFeature({ minecraft }) {
   }
 
   async function handleNameHistoryCommand(interaction) {
-    const player = interaction.options.getString('player', true).trim();
-
     await interaction.deferReply();
 
     try {
+      const { username, usedLinkedAccount } = resolveMinecraftUsernameOption({
+        interaction,
+        store,
+        optionName: 'player',
+        missingMessage: 'No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.'
+      });
+
+      const player = username;
       const profile = await minecraft.fetchNameHistory(player);
-      await interaction.editReply({ embeds: [buildNameHistoryEmbed(profile)] });
+      await interaction.editReply({
+        content: usedLinkedAccount ? buildLinkedUsernameNotice(profile.name) : undefined,
+        embeds: [buildNameHistoryEmbed(profile)]
+      });
     } catch (error) {
       await interaction.editReply({
         content: error.message || 'Failed to fetch name history.'

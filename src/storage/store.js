@@ -191,10 +191,17 @@ function normalizeBridgeLinksState(state) {
 }
 
 function normalizeBridgeLinkedUser(entry) {
+  const minecraftUsernames = normalizeMinecraftUsernameList(entry?.minecraftUsernames);
+  const preferredMinecraftUsername = selectPreferredMinecraftUsername(
+    minecraftUsernames,
+    entry?.preferredMinecraftUsername
+  );
+
   return {
     discordUsername: typeof entry?.discordUsername === 'string' ? entry.discordUsername.trim() : '',
     discordDisplayName: typeof entry?.discordDisplayName === 'string' ? entry.discordDisplayName.trim() : '',
-    minecraftUsernames: normalizeMinecraftUsernameList(entry?.minecraftUsernames),
+    minecraftUsernames,
+    preferredMinecraftUsername,
     pendingMinecraftUsernames: normalizeMinecraftUsernameList(entry?.pendingMinecraftUsernames),
     linkCode: typeof entry?.linkCode === 'string' ? entry.linkCode.trim().toUpperCase() : null,
     linkCodeExpiresAt: Number.isFinite(entry?.linkCodeExpiresAt) ? Number(entry.linkCodeExpiresAt) : null,
@@ -257,6 +264,19 @@ function normalizeMinecraftUsernameList(values) {
 function normalizeMinecraftUsername(value) {
   const raw = String(value || '').trim();
   return /^[A-Za-z0-9_]{3,16}$/.test(raw) ? raw : '';
+}
+
+function selectPreferredMinecraftUsername(usernames, preferredUsername) {
+  if (!Array.isArray(usernames) || usernames.length === 0) {
+    return null;
+  }
+
+  const normalizedPreferred = normalizeMinecraftUsername(preferredUsername).toLowerCase();
+  if (!normalizedPreferred) {
+    return usernames[0];
+  }
+
+  return usernames.find((username) => username.toLowerCase() === normalizedPreferred) || usernames[0];
 }
 
 function normalizeSnowflakeList(values) {
@@ -470,6 +490,10 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     getBridgeLinkedAccount(discordUserId) {
       return normalizeBridgeLinksState(guildState.links).users[String(discordUserId || '').trim()] || null;
     },
+    getPreferredBridgeMinecraftUsername(discordUserId) {
+      const account = this.getBridgeLinkedAccount(discordUserId);
+      return account?.preferredMinecraftUsername || account?.minecraftUsernames?.[0] || null;
+    },
     setBridgeLinkedAccount(discordUserId, partialEntry) {
       const key = String(discordUserId || '').trim();
       const links = normalizeBridgeLinksState(guildState.links);
@@ -487,6 +511,25 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       };
       saveState();
       return this.getBridgeLinkedAccount(key);
+    },
+    setPreferredBridgeMinecraftUsername(discordUserId, minecraftUsername) {
+      const key = String(discordUserId || '').trim();
+      const account = this.getBridgeLinkedAccount(key);
+      if (!account || account.minecraftUsernames.length === 0) {
+        return { ok: false, error: 'You are not linked yet.' };
+      }
+
+      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
+      const preferredMinecraftUsername = account.minecraftUsernames.find(
+        (username) => username.toLowerCase() === normalizedUsername.toLowerCase()
+      );
+
+      if (!preferredMinecraftUsername) {
+        return { ok: false, error: 'That username is not part of your linked accounts.' };
+      }
+
+      const updated = this.setBridgeLinkedAccount(key, { preferredMinecraftUsername });
+      return { ok: true, account: updated, username: updated.preferredMinecraftUsername };
     },
     removeBridgeLinkedAccount(discordUserId) {
       const key = String(discordUserId || '').trim();

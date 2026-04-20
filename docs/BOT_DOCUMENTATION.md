@@ -35,7 +35,7 @@ Important: most event windows are currently calculated locally from the SkyBlock
 - `/itememoji` for posting mapped SkyBlock item emojis.
 - `/gif` for converting an uploaded image into a GIF.
 
-If a Discord user has linked a Minecraft account, `/cata` and `/catacombs` can use the linked username automatically when no `player` argument is provided.
+If a Discord user has linked one or more Minecraft accounts, `/uuid`, `/namehistory`, `/cata`, `/catacombs`, `/trophyfishing`, and the name-based `/shitter` subcommands can use the prioritized linked username automatically when the relevant player/name argument is omitted.
 
 ### 4. Linking and IRC Bridge
 
@@ -105,30 +105,34 @@ Example:
 
 ### Player Commands
 
-#### `/uuid player:<ign>`
+#### `/uuid [player:<ign>]`
 
 Looks up a Minecraft player's UUID using Mojang.
 
-- `player` is required.
+- `player` is optional.
+- If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 - Returns compact and dashed UUID forms.
 - Also shows the UUID percentile/ranking output used by this bot.
 
 Example:
 
 ```text
+/uuid
 /uuid player:Xclipsen
 ```
 
-#### `/namehistory player:<ign>`
+#### `/namehistory [player:<ign>]`
 
 Shows the current Minecraft name and known historical names.
 
-- `player` is required.
+- `player` is optional.
+- If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 - Uses Mojang for the current account and NameMC scraping for history.
 
 Example:
 
 ```text
+/namehistory
 /namehistory player:Xclipsen
 ```
 
@@ -150,7 +154,7 @@ Example:
 Shows the catacombs overview for a player.
 
 - `player` is optional.
-- If `player` is omitted, the bot uses the caller's linked Minecraft username when available.
+- If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 - `profile` is optional.
 - If `profile` is omitted, the bot uses the currently selected Hypixel SkyBlock profile.
 - Includes `Basic Info` and `Boss Collections` view buttons in the response.
@@ -195,7 +199,7 @@ Example:
 Shows a Trophy Fish overview for a player.
 
 - `player` is optional.
-- If `player` is omitted, the bot uses the caller's linked Minecraft username when available.
+- If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 - `profile` is optional.
 - If `profile` is omitted, the bot uses the currently selected Hypixel SkyBlock profile.
 - The response includes a fish selection menu that shows chance, location, and requirement details for each Trophy Fish.
@@ -229,6 +233,7 @@ Example:
 Shows the current link state for the caller.
 
 - Displays linked usernames, link date, enabled event pings, and pending link code information if present.
+- Also shows which linked username is currently prioritized for player commands.
 
 Example:
 
@@ -249,16 +254,31 @@ Example:
 /link add usernames:AltName,IronmanAlt
 ```
 
-#### `/link remove username:<name>`
+#### `/link remove [username:<name>]`
 
 Removes one linked Minecraft username from the caller's account.
 
-- `username` is required.
+- `username` is optional.
+- If `username` is omitted, the bot removes the caller's prioritized linked Minecraft username.
 
 Example:
 
 ```text
+/link remove
 /link remove username:AltName
+```
+
+#### `/link prio [username:<name>]`
+
+Sets which linked Minecraft username should be used automatically by supported player commands.
+
+- `username` is optional.
+- If `username` is omitted, the bot reuses the caller's current prioritized linked Minecraft username.
+
+Example:
+
+```text
+/link prio username:AltName
 ```
 
 #### `/link event event:<event> enabled:<true|false>`
@@ -287,41 +307,47 @@ Example:
 
 ### Moderation Commands
 
-#### `/shitter add name:<ign> reason:<text> [screenshot...]`
+#### `/shitter add [name:<ign>] reason:<text> [screenshot...]`
 
 Adds or updates a shitter list entry.
 
-- `name` is required.
+- `name` is optional.
+- If `name` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 - `reason` is required.
 - Up to 5 screenshot attachments may be included.
 
 Example:
 
 ```text
+/shitter add reason:Scam evidence
 /shitter add name:Example reason:Scam evidence
 ```
 
-#### `/shitter query name:<ign>`
+#### `/shitter query [name:<ign>]`
 
 Checks whether an IGN is currently listed.
 
-- `name` is required.
+- `name` is optional.
+- If `name` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 
 Example:
 
 ```text
+/shitter query
 /shitter query name:Example
 ```
 
-#### `/shitter remove name:<ign>`
+#### `/shitter remove [name:<ign>]`
 
 Marks active entries for an IGN as removed while preserving history.
 
-- `name` is required.
+- `name` is optional.
+- If `name` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
 
 Example:
 
 ```text
+/shitter remove
 /shitter remove name:Example
 ```
 

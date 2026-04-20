@@ -1,4 +1,5 @@
 const { ActionRowBuilder, EmbedBuilder, MessageFlags, PermissionsBitField, StringSelectMenuBuilder } = require('discord.js');
+const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
 const SHITTER_YES_COLOR = 0xc0392b;
 const SHITTER_NO_COLOR = 0x2ecc71;
@@ -116,6 +117,22 @@ function formatTimestamp(value) {
 function createShitterListFeature({ store, ensureSetupAccess }) {
   function normalizeIgn(value) {
     return String(value || '').trim().toLowerCase();
+  }
+
+  function resolveIgn(interaction) {
+    return resolveMinecraftUsernameOption({
+      interaction,
+      store,
+      optionName: 'name',
+      missingMessage: 'No username provided and no linked Minecraft username found. Use `/link start` first or pass `name:`.'
+    });
+  }
+
+  function buildReplyContent(content, ign, usedLinkedAccount) {
+    return [
+      usedLinkedAccount ? buildLinkedUsernameNotice(ign) : null,
+      content
+    ].filter(Boolean).join('\n') || undefined;
   }
 
   function isValidIgn(value) {
@@ -302,7 +319,19 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       return;
     }
 
-    const ign = interaction.options.getString('name', true).trim();
+    let username;
+    let usedLinkedAccount;
+    try {
+      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+    } catch (error) {
+      await interaction.reply({
+        content: error.message,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    const ign = username.trim();
     const reason = interaction.options.getString('reason', true).trim();
     const screenshots = [
       interaction.options.getAttachment('screenshot'),
@@ -368,7 +397,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     store.setShitterEntries(interaction.guildId, nextEntries);
 
     await interaction.reply({
-      content: `IGN \`${ign}\` wurde zur Shitter-Liste hinzugefugt.`,
+      content: buildReplyContent(`IGN \`${ign}\` wurde zur Shitter-Liste hinzugefugt.`, ign, usedLinkedAccount),
       embeds: [buildEntryEmbed({
         ign,
         status: 'yes',
@@ -393,7 +422,19 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       return;
     }
 
-    const ign = interaction.options.getString('name', true).trim();
+    let username;
+    let usedLinkedAccount;
+    try {
+      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+    } catch (error) {
+      await interaction.reply({
+        content: error.message,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    const ign = username.trim();
     if (!isValidIgn(ign)) {
       await interaction.reply({
         content: 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.',
@@ -406,6 +447,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
 
     if (entries.length === 0) {
       await interaction.reply({
+        content: buildReplyContent(null, ign, usedLinkedAccount),
         embeds: [buildNoEntryEmbed({ ign, wasShitterInThePast: hadPastEntries(interaction.guildId, ign) })],
         allowedMentions: { parse: [] }
       });
@@ -413,6 +455,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     }
 
     await interaction.reply({
+      content: buildReplyContent(null, ign, usedLinkedAccount),
       embeds: [buildQueryEmbed({ ign: entries[0].ign, entry: entries[0], entryCount: entries.length })],
       components: createEntrySelectComponents({
         userId: interaction.user.id,
@@ -442,7 +485,19 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       return;
     }
 
-    const ign = interaction.options.getString('name', true).trim();
+    let username;
+    let usedLinkedAccount;
+    try {
+      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+    } catch (error) {
+      await interaction.reply({
+        content: error.message,
+        flags: MessageFlags.Ephemeral
+      });
+      return;
+    }
+
+    const ign = username.trim();
     if (!isValidIgn(ign)) {
       await interaction.reply({
         content: 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.',
@@ -457,6 +512,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
 
     if (activeEntries.length === 0) {
       await interaction.reply({
+        content: buildReplyContent(null, ign, usedLinkedAccount),
         embeds: [buildNoEntryEmbed({ ign, wasShitterInThePast: hadPastEntries(interaction.guildId, ign) })],
         flags: MessageFlags.Ephemeral,
         allowedMentions: { parse: [] }
@@ -478,6 +534,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     store.setShitterEntries(interaction.guildId, nextEntries);
 
     await interaction.reply({
+      content: buildReplyContent(null, ign, usedLinkedAccount),
       embeds: [buildNoEntryEmbed({ ign, wasShitterInThePast: true })],
       flags: MessageFlags.Ephemeral,
       allowedMentions: { parse: [] }

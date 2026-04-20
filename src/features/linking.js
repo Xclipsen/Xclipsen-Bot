@@ -1,4 +1,5 @@
 const { EVENT_DEFINITIONS } = require('./eventCalendar');
+const { resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
 const LINK_EVENT_CHOICES = Object.fromEntries(
   EVENT_DEFINITIONS.map((definition) => [definition.key, definition.label])
@@ -69,8 +70,47 @@ function createLinkingFeature({ store }) {
         discordUsername: interaction.user.username,
         discordDisplayName: interaction.user.globalName || interaction.user.username
       });
-      const result = store.removeBridgeMinecraftUsername(userId, interaction.options.getString('username', true));
+      let username;
+      try {
+        ({ username } = resolveMinecraftUsernameOption({
+          interaction,
+          store,
+          optionName: 'username',
+          missingMessage: 'No username provided and no linked Minecraft username found. Use `/link start` first or pass `username:`.'
+        }));
+      } catch (error) {
+        await interaction.reply({ content: error.message, ephemeral: true });
+        return;
+      }
+
+      const result = store.removeBridgeMinecraftUsername(userId, username);
       await interaction.reply({ content: result.ok ? `Remaining usernames: ${result.account.minecraftUsernames.join(', ') || 'none'}` : result.error, ephemeral: true });
+      return;
+    }
+
+    if (subcommand === 'prio') {
+      store.setBridgeLinkedAccount(userId, {
+        discordUsername: interaction.user.username,
+        discordDisplayName: interaction.user.globalName || interaction.user.username
+      });
+      let username;
+      try {
+        ({ username } = resolveMinecraftUsernameOption({
+          interaction,
+          store,
+          optionName: 'username',
+          missingMessage: 'No username provided and no linked Minecraft username found. Use `/link start` first or pass `username:`.'
+        }));
+      } catch (error) {
+        await interaction.reply({ content: error.message, ephemeral: true });
+        return;
+      }
+
+      const result = store.setPreferredBridgeMinecraftUsername(userId, username);
+      await interaction.reply({
+        content: result.ok ? `Prioritized username: ${result.username}` : result.error,
+        ephemeral: true
+      });
       return;
     }
 
@@ -112,6 +152,7 @@ function formatLinkStatus(account) {
 
   return [
     `Linked usernames: ${account.minecraftUsernames.join(', ')}`,
+    `Prioritized username: ${account.preferredMinecraftUsername || 'none'}`,
     `Linked since: ${account.linkedAt ? `<t:${Math.floor(account.linkedAt / 1000)}:f>` : 'unknown'}`,
     `Enabled event pings: ${enabledEvents.join(', ') || 'none'}`,
     account.linkCode ? `Pending code: \`${account.linkCode}\`` : null,

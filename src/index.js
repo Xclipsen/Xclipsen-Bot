@@ -73,8 +73,8 @@ const bestPest = createBestPestFeature({ env, store });
 const pestFarmingProfit = createPestFarmingProfitFeature({ env, store });
 const gif = createGifFeature();
 const help = createHelpFeature();
-const nameHistory = createNameHistoryFeature({ minecraft });
-const playerUuid = createPlayerUuidFeature({ minecraft });
+const nameHistory = createNameHistoryFeature({ minecraft, store });
+const playerUuid = createPlayerUuidFeature({ minecraft, store });
 const shitterList = createShitterListFeature({
   store,
   ensureSetupAccess: accessControl.ensureSetupAccess

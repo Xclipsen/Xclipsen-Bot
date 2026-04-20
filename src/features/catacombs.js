@@ -5,6 +5,7 @@ const {
   EmbedBuilder,
   MessageFlags
 } = require('discord.js');
+const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
 const CATACOMBS_XP_TABLE = [
   0,
@@ -505,18 +506,14 @@ function createCatacombsFeature({ env, minecraft, store }) {
   }
 
   function resolveRequestedPlayer(interaction) {
-    const requestedPlayer = interaction.options.getString('player', false)?.trim();
-    if (requestedPlayer) {
-      return { player: requestedPlayer, usedLinkedAccount: false };
-    }
+    const { username, usedLinkedAccount } = resolveMinecraftUsernameOption({
+      interaction,
+      store,
+      optionName: 'player',
+      missingMessage: 'No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.'
+    });
 
-    const linkedAccount = store.getBridgeLinkedAccount(interaction.user.id);
-    const linkedPlayer = linkedAccount?.minecraftUsernames?.[0];
-    if (linkedPlayer) {
-      return { player: linkedPlayer, usedLinkedAccount: true };
-    }
-
-    throw new Error('No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.');
+    return { player: username, usedLinkedAccount };
   }
 
   async function handleCatacombsCommand(interaction) {
@@ -538,7 +535,7 @@ function createCatacombsFeature({ env, minecraft, store }) {
         name,
         bestProfile.cuteName,
         bestProfile.member,
-        usedLinkedAccount ? `Using linked username \`${name}\`.` : undefined
+        usedLinkedAccount ? buildLinkedUsernameNotice(name) : undefined
       ));
 
       const message = await interaction.fetchReply();
