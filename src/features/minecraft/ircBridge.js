@@ -3,6 +3,28 @@ const http = require('node:http');
 const COOP_RELAY_DEDUPE_WINDOW_MS = 2500;
 const MAX_RECENT_COOP_RELAYS = 250;
 
+// ── Hypixel Bazaar price cache ───────────────────────────────────────────────
+// Items tracked in the Shard Profit Tracker.
+// Key = Hypixel Bazaar item ID, value = display name as it appears in the Mod HUD
+// (i.e. the name extracted from the chat drop message after stripping formatting).
+const TRACKED_ITEM_IDS = {
+  SHARD_HIDEONLEAF:  'Hideonleaf Shards',
+  SHARD_HIDEONBOX:   'Hideonbox Shards',
+  SHARD_HIDEONCAVE:  'Hideoncave Shards',
+  SHARD_HIDEONDRA:   'Hideondra Shards',
+  SHARD_HIDEONGEON:  'Hideongeon Shards',
+  SHARD_HIDEONGIFT:  'Hideongift Shards',
+  SHARD_HIDEONRING:  'Hideonring Shards',
+  SHARD_HIDEONSACK:  'Hideonsack Shards',
+};
+
+const BAZAAR_API_URL = 'https://api.hypixel.net/v2/skyblock/bazaar';
+const BAZAAR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
+
+let bazaarCache = null;      // { prices: { displayName -> { buyPrice, sellPrice, lastUpdated } } }
+let bazaarCacheAt = 0;
+let bazaarFetchInFlight = false;
+
 function createIrcBridge({ client, env, store }) {
   const mentionPattern = /(^|[\s(])@([a-zA-Z0-9._-]{2,32})\b/g;
   const bufferedMessages = [];
@@ -201,6 +223,74 @@ function createIrcBridge({ client, env, store }) {
     );
   }
 
+  // ── Bazaar price helpers ───────────────────────────────────────────────────
+
+  async function fetchBazaarPrices() {
+    // Return cached result if still fresh
+    if (bazaarCache && Date.now() - bazaarCacheAt < BAZAAR_CACHE_TTL_MS) {
+      return bazaarCache;
+    }
+
+    // Avoid parallel in-flight fetches
+    if (bazaarFetchInFlight) {
+      return bazaarCache;
+    }
+
+    if (!env.HYPIXEL_API_KEY) {
+      console.warn('[prices] HYPIXEL_API_KEY is not set — cannot fetch Bazaar prices.');
+      return bazaarCache;
+    }
+
+    bazaarFetchInFlight = true;
+    try {
+      const response = await fetch(BAZAAR_API_URL, {
+        headers: { 'API-Key': env.HYPIXEL_API_KEY },
+        signal: AbortSignal.timeout(10_000),
+      });
+
+      if (!response.ok) {
+        console.warn(`[prices] Bazaar API returned HTTP ${response.status}`);
+        return bazaarCache; // serve stale on error
+      }
+
+      const data = await response.json();
+
+      if (!data.success || !data.products) {
+        console.warn('[prices] Bazaar API response missing products field.');
+        return bazaarCache;
+      }
+
+      const prices = {};
+      for (const [itemId, displayName] of Object.entries(TRACKED_ITEM_IDS)) {
+        const product = data.products[itemId];
+        if (!product) {
+          // Item not in Bazaar — leave price at 0 so the Mod falls back to manual value
+          continue;
+        }
+
+        const buySummary = product.buy_summary;
+        const sellSummary = product.sell_summary;
+        prices[displayName] = {
+          buyPrice: buySummary?.[0]?.pricePerUnit ?? 0,
+          sellPrice: sellSummary?.[0]?.pricePerUnit ?? 0,
+          lastUpdated: Date.now(),
+        };
+      }
+
+      bazaarCache = { prices };
+      bazaarCacheAt = Date.now();
+      console.log(`[prices] Bazaar prices refreshed for ${Object.keys(prices).length} item(s).`);
+      return bazaarCache;
+    } catch (error) {
+      console.error('[prices] Failed to fetch Bazaar prices:', error);
+      return bazaarCache; // serve stale on error
+    } finally {
+      bazaarFetchInFlight = false;
+    }
+  }
+
+  // ── Request handler ────────────────────────────────────────────────────────
+
   async function handleRequest(request, response) {
     if (request.url === '/health') {
       writeJson(response, 200, { status: 'ok' });
@@ -243,6 +333,22 @@ function createIrcBridge({ client, env, store }) {
           : { error: result.error });
       } catch (error) {
         console.error('IRC link completion failed:', error);
+        writeJson(response, 500, { error: 'internal error' });
+      }
+      return;
+    }
+
+    if (request.url === '/api/skyblock/prices') {
+      if (!isAuthorized(request)) {
+        writeJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+
+      try {
+        const result = await fetchBazaarPrices();
+        writeJson(response, 200, result ?? { prices: {} });
+      } catch (error) {
+        console.error('[prices] Price endpoint failed:', error);
         writeJson(response, 500, { error: 'internal error' });
       }
       return;
