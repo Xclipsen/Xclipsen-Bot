@@ -77,7 +77,7 @@ function createHideonleafFeature({ store }) {
 }
 
 function formatEntryName(store, entry) {
-  const linked = store.getBridgeLinkedAccount(entry.discordUserId);
+  const linked = store.findBridgeLinkByMinecraftUsername(entry.minecraftUsername)?.entry || null;
   const discordName = String(
     linked?.discordDisplayName ||
     linked?.discordUsername ||
@@ -94,7 +94,7 @@ function formatEntryName(store, entry) {
     return `${discordName} (${minecraftName})`;
   }
 
-  return discordName || minecraftName || `User ${entry.discordUserId}`;
+  return discordName || minecraftName || 'Unknown user';
 }
 
 function formatCoins(value) {

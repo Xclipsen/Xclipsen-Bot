@@ -374,7 +374,7 @@ function createIrcBridge({ client, env, store }) {
           return;
         }
 
-        store.setUserHideonleafStats(linked.discordUserId, {
+        store.setUserHideonleafStats(playerName, {
           minecraftUsername: playerName || linked.entry.preferredMinecraftUsername || linked.entry.minecraftUsernames?.[0] || '',
           kills: Math.max(0, Number(payload?.kills) || 0),
           totalShards: Math.max(0, Number(payload?.totalShards) || 0),
@@ -402,7 +402,7 @@ function createIrcBridge({ client, env, store }) {
       const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
       const playerName = String(url.searchParams.get('playerName') || '');
       const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-      writeJson(response, 200, linked ? (store.getUserHideonleafStats(linked.discordUserId) || {}) : {});
+      writeJson(response, 200, linked ? (store.getUserHideonleafStats(playerName) || {}) : {});
       return;
     }
 

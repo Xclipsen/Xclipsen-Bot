@@ -224,11 +224,26 @@ function normalizeFarmingStatsState(state) {
 
 function normalizeHideonleafStatsState(state) {
   const users = state?.users && typeof state.users === 'object'
-    ? Object.fromEntries(
-      Object.entries(state.users)
-        .map(([discordUserId, entry]) => [String(discordUserId || '').trim(), normalizeHideonleafStatsEntry(entry)])
-        .filter(([discordUserId]) => /^\d{16,20}$/.test(discordUserId))
-    )
+    ? Object.entries(state.users)
+      .reduce((result, [storedKey, entry]) => {
+        const normalizedEntry = normalizeHideonleafStatsEntry(entry);
+        const normalizedKey = normalizeMinecraftUsername(normalizedEntry.minecraftUsername || storedKey);
+        if (!normalizedKey) {
+          return result;
+        }
+
+        const existingEntry = result[normalizedKey] || null;
+        const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
+        const incomingUpdatedAt = Number.isFinite(normalizedEntry?.updatedAt) ? Number(normalizedEntry.updatedAt) : 0;
+        if (!existingEntry || incomingUpdatedAt >= existingUpdatedAt) {
+          result[normalizedKey] = {
+            ...normalizedEntry,
+            minecraftUsername: normalizedKey
+          };
+        }
+
+        return result;
+      }, {})
     : {};
 
   return { users };
@@ -770,11 +785,20 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
         }
       });
     },
-    getUserHideonleafStats(discordUserId) {
-      return normalizeHideonleafStatsState(guildState.hideonleaf).users[String(discordUserId || '').trim()] || null;
+    getUserHideonleafStats(minecraftUsername) {
+      const key = normalizeMinecraftUsername(minecraftUsername);
+      if (!key) {
+        return null;
+      }
+
+      return normalizeHideonleafStatsState(guildState.hideonleaf).users[key] || null;
     },
-    setUserHideonleafStats(discordUserId, partialEntry) {
-      const key = String(discordUserId || '').trim();
+    setUserHideonleafStats(minecraftUsername, partialEntry) {
+      const key = normalizeMinecraftUsername(minecraftUsername || partialEntry?.minecraftUsername);
+      if (!key) {
+        return null;
+      }
+
       const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
       const existingEntry = hideonleaf.users[key] || null;
       const incomingUpdatedAt = Number.isFinite(partialEntry?.updatedAt) ? Number(partialEntry.updatedAt) : Date.now();
@@ -791,6 +815,7 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
             [key]: normalizeHideonleafStatsEntry({
               ...existingEntry,
               ...partialEntry,
+              minecraftUsername: key,
               updatedAt: incomingUpdatedAt
             })
           }
@@ -801,8 +826,8 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     },
     listHideonleafStats() {
       const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
-      return Object.entries(hideonleaf.users).map(([discordUserId, entry]) => ({
-        discordUserId,
+      return Object.entries(hideonleaf.users).map(([minecraftUsername, entry]) => ({
+        minecraftUsername,
         ...entry
       }));
     }
