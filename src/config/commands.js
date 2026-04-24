@@ -255,6 +255,10 @@ const gifCommand = new SlashCommandBuilder()
     .setDescription('Image to convert')
     .setRequired(true));
 
+const hideonleafCommand = new SlashCommandBuilder()
+  .setName('hideonleaf')
+  .setDescription('Show the Hideonleaf leaderboard for kills, shards, money, and money per hour.');
+
 const shitterCommand = new SlashCommandBuilder()
   .setName('shitter')
   .setDescription('Manage and query the shitter list.')
@@ -392,6 +396,7 @@ const commands = [
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
+  hideonleafCommand,
   shitterCommand,
   linkCommand
 ];
@@ -416,6 +421,7 @@ module.exports = {
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',
+    hideonleaf: 'hideonleaf',
     shitter: 'shitter',
     link: 'link'
   }

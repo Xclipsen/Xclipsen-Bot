@@ -222,6 +222,18 @@ function normalizeFarmingStatsState(state) {
   return { users };
 }
 
+function normalizeHideonleafStatsState(state) {
+  const users = state?.users && typeof state.users === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.users)
+        .map(([discordUserId, entry]) => [String(discordUserId || '').trim(), normalizeHideonleafStatsEntry(entry)])
+        .filter(([discordUserId]) => /^\d{16,20}$/.test(discordUserId))
+    )
+    : {};
+
+  return { users };
+}
+
 function normalizeFarmingStatsEntry(entry) {
   return {
     bonusPestChance: Math.max(0, Number(entry?.bonusPestChance) || 0),
@@ -246,6 +258,39 @@ function normalizeLastPestFarmingProfitsEntry(entry) {
     plots: Math.max(1, Number(entry?.plots) || 1),
     sellMethod: typeof entry?.sellMethod === 'string' ? entry.sellMethod.trim() : null,
     updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
+  };
+}
+
+function normalizeHideonleafStatsEntry(entry) {
+  return {
+    minecraftUsername: normalizeMinecraftUsername(entry?.minecraftUsername),
+    kills: Math.max(0, Number(entry?.kills) || 0),
+    totalShards: Math.max(0, Number(entry?.totalShards) || 0),
+    totalProfit: Math.max(0, Number(entry?.totalProfit) || 0),
+    profitPerHour: Math.max(0, Number(entry?.profitPerHour) || 0),
+    totalDurationMs: Math.max(0, Number(entry?.totalDurationMs) || 0),
+    items: normalizeHideonleafItems(entry?.items),
+    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
+  };
+}
+
+function normalizeHideonleafItems(items) {
+  if (!items || typeof items !== 'object') {
+    return {};
+  }
+
+  return Object.fromEntries(
+    Object.entries(items)
+      .map(([name, item]) => [String(name || '').trim(), normalizeHideonleafItemEntry(item)])
+      .filter(([name]) => name)
+  );
+}
+
+function normalizeHideonleafItemEntry(item) {
+  return {
+    amount: Math.max(0, Number(item?.amount) || 0),
+    timesDropped: Math.max(0, Number(item?.timesDropped) || 0),
+    pricePerUnit: Math.max(0, Number(item?.pricePerUnit) || 0)
   };
 }
 
@@ -724,6 +769,42 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
           updatedAt: Date.now()
         }
       });
+    },
+    getUserHideonleafStats(discordUserId) {
+      return normalizeHideonleafStatsState(guildState.hideonleaf).users[String(discordUserId || '').trim()] || null;
+    },
+    setUserHideonleafStats(discordUserId, partialEntry) {
+      const key = String(discordUserId || '').trim();
+      const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
+      const existingEntry = hideonleaf.users[key] || null;
+      const incomingUpdatedAt = Number.isFinite(partialEntry?.updatedAt) ? Number(partialEntry.updatedAt) : Date.now();
+      const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
+      if (existingEntry && incomingUpdatedAt < existingUpdatedAt) {
+        return this.getUserHideonleafStats(key);
+      }
+
+      guildState = {
+        ...guildState,
+        hideonleaf: {
+          users: {
+            ...hideonleaf.users,
+            [key]: normalizeHideonleafStatsEntry({
+              ...existingEntry,
+              ...partialEntry,
+              updatedAt: incomingUpdatedAt
+            })
+          }
+        }
+      };
+      saveState();
+      return this.getUserHideonleafStats(key);
+    },
+    listHideonleafStats() {
+      const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
+      return Object.entries(hideonleaf.users).map(([discordUserId, entry]) => ({
+        discordUserId,
+        ...entry
+      }));
     }
   };
 }
@@ -740,7 +821,8 @@ function loadState(stateFilePath) {
     return {
       guilds: {},
       links: normalizeBridgeLinksState(),
-      farming: normalizeFarmingStatsState()
+      farming: normalizeFarmingStatsState(),
+      hideonleaf: normalizeHideonleafStatsState()
     };
   }
 
@@ -748,7 +830,8 @@ function loadState(stateFilePath) {
     return {
       ...state,
       links: normalizeBridgeLinksState(state.links),
-      farming: normalizeFarmingStatsState(state.farming)
+      farming: normalizeFarmingStatsState(state.farming),
+      hideonleaf: normalizeHideonleafStatsState(state.hideonleaf)
     };
   }
 
@@ -763,7 +846,8 @@ function loadState(stateFilePath) {
       }
     },
     links: normalizeBridgeLinksState(),
-    farming: normalizeFarmingStatsState()
+    farming: normalizeFarmingStatsState(),
+    hideonleaf: normalizeHideonleafStatsState()
   };
 }
 

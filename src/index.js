@@ -22,6 +22,7 @@ const { createPlayerUuidFeature } = require('./features/playerUuid');
 const { createShitterListFeature } = require('./features/shitterList');
 const { createSimulationFeature } = require('./features/simulation');
 const { createMinecraftFeatures } = require('./features/minecraft');
+const { createHideonleafFeature } = require('./features/hideonleaf');
 const { createLinkingFeature } = require('./features/linking');
 const { createTrophyFishingFeature } = require('./features/trophyFishing');
 const { createBestPestFeature } = require('./features/bestPest');
@@ -80,6 +81,7 @@ const shitterList = createShitterListFeature({
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
 const simulation = createSimulationFeature({ store });
+const hideonleaf = createHideonleafFeature({ store });
 const linking = createLinkingFeature({ store });
 
 let isCheckingElectionState = false;
@@ -281,6 +283,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isChatInputCommand() && interaction.commandName === commandNames.gif) {
       await gif.handleGifCommand(interaction);
+      return;
+    }
+
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.hideonleaf) {
+      await hideonleaf.handleHideonleafCommand(interaction);
       return;
     }
 
