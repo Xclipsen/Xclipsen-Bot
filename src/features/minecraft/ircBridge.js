@@ -1,4 +1,5 @@
 const http = require('node:http');
+const { MessageFlags, MessageReferenceType } = require('discord.js');
 
 const COOP_RELAY_DEDUPE_WINDOW_MS = 2500;
 const MAX_RECENT_COOP_RELAYS = 250;
@@ -111,7 +112,7 @@ function createIrcBridge({ client, env, store }) {
         ? await resolveLinkedDisplayName(channel, linked.discordUserId, coopPlayer)
         : coopPlayer.replace(/@/g, '@\u200b');
       const resolved = await resolveUserMentions(channel, sanitizedMessage);
-      content = `**${playerName}**: ${resolved.content}`;
+      content = `[Forwarded Co-op] **${playerName}**: ${resolved.content}`;
       allowedUserMentions = resolved.allowedUserMentions;
     } else {
       const linked = store.findBridgeLinkByMinecraftUsername(String(payload.playerName || ''));
@@ -528,9 +529,10 @@ function createIrcBridge({ client, env, store }) {
       return;
     }
 
+    const forwardedPrefix = await extractForwardedPrefix(message);
     const content = (message.cleanContent || '').trim();
     const attachmentInfo = extractAttachmentInfo(message.attachments);
-    const finalContent = [content, ...attachmentInfo.imageLinks, ...attachmentInfo.fallbackLabels]
+    const finalContent = [forwardedPrefix, content, ...attachmentInfo.imageLinks, ...attachmentInfo.fallbackLabels]
       .filter(Boolean)
       .join(' ')
       .trim();
@@ -539,11 +541,83 @@ function createIrcBridge({ client, env, store }) {
       return;
     }
 
-    const replyPrefix = await buildReplyPrefix(message);
+    const replyPrefix = isForwardedMessage(message) ? '' : await buildReplyPrefix(message);
 
     addBufferedMessage('discord', message.member?.displayName || message.author.username, `${replyPrefix}${finalContent}`, {
       discordUserId: message.author.id
     });
+  }
+
+  async function extractForwardedPrefix(message) {
+    if (!isForwardedMessage(message)) {
+      return '';
+    }
+
+    const forwardedParts = [];
+
+    if (message?.messageSnapshots && typeof message.messageSnapshots.values === 'function') {
+      for (const snapshot of message.messageSnapshots.values()) {
+        const snapshotContent = buildForwardedSnapshotContent(snapshot);
+        if (snapshotContent) {
+          let snapshotAuthor = buildForwardedSnapshotAuthor(snapshot);
+
+          // Fallback: Discord liefert im Snapshot oft keinen Autor mit —
+          // dann die Originalnachricht über die Referenz abrufen.
+          if (!snapshotAuthor) {
+            const original = await message.fetchReference().catch(() => null);
+            if (original) {
+              snapshotAuthor = String(
+                original.member?.displayName ||
+                original.author?.globalName ||
+                original.author?.username ||
+                ''
+              ).replace(/@/g, '@​').trim();
+            }
+          }
+
+          forwardedParts.push(snapshotAuthor ? `↱ ${snapshotAuthor}: ${snapshotContent}` : `↱ ${snapshotContent}`);
+        }
+      }
+    }
+
+    if (forwardedParts.length === 0) {
+      return '↱ Forwarded';
+    }
+
+    return forwardedParts.join(' | ');
+  }
+
+  function isForwardedMessage(message) {
+    return (
+      message?.reference?.type === MessageReferenceType.Forward ||
+      message?.flags?.has?.(MessageFlags.HasSnapshot) === true ||
+      (message?.messageSnapshots?.size || 0) > 0
+    );
+  }
+
+  function buildForwardedSnapshotContent(snapshot) {
+    if (!snapshot) {
+      return '';
+    }
+
+    const snapshotText = String(snapshot.cleanContent || snapshot.content || '').trim();
+    const attachmentInfo = extractAttachmentInfo(snapshot.attachments);
+
+    return [snapshotText, ...attachmentInfo.imageLinks, ...attachmentInfo.fallbackLabels]
+      .filter(Boolean)
+      .join(' ')
+      .trim();
+  }
+
+  function buildForwardedSnapshotAuthor(snapshot) {
+    return String(
+      snapshot?.member?.displayName ||
+      snapshot?.author?.globalName ||
+      snapshot?.author?.username ||
+      ''
+    )
+      .replace(/@/g, '@\u200b')
+      .trim();
   }
 
   async function buildReplyPrefix(message) {
