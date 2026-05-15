@@ -106,6 +106,42 @@
           "censored": true
         }
       ]
+    },
+    "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6": {
+      "query": "goy2",
+      "uuid": "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6",
+      "current_name": "goy2",
+      "last_seen_at": "2026-04-28T18:57:25.450Z",
+      "history": [
+        {
+          "id": 1,
+          "name": "Sudsycoolalex",
+          "changed_at": "2017-01-01T00:00:00.000Z",
+          "observed_at": "2026-04-28T18:57:25.450Z",
+          "censored": false
+        },
+        {
+          "id": 2,
+          "name": "Cygn3us",
+          "changed_at": "2020-04-29T13:24:26.000Z",
+          "observed_at": "2026-04-28T18:57:25.450Z",
+          "censored": false
+        },
+        {
+          "id": 3,
+          "name": "freakycoolalex",
+          "changed_at": "2024-09-08T21:19:08.000Z",
+          "observed_at": "2024-11-10T13:21:04.000Z",
+          "censored": true
+        },
+        {
+          "id": 4,
+          "name": "goy2",
+          "changed_at": "2026-04-27T03:30:40.000Z",
+          "observed_at": "2026-04-28T18:49:17.000Z",
+          "censored": false
+        }
+      ]
     }
   },
   "nameIndex": {
@@ -123,6 +159,10 @@
     "ciote": "ffd52a01-d1f4-4f6b-bd32-48a272855a33",
     "_koiboi": "ffd52a01-d1f4-4f6b-bd32-48a272855a33",
     "theyareahacker": "ffd52a01-d1f4-4f6b-bd32-48a272855a33",
-    "bardropper": "ffd52a01-d1f4-4f6b-bd32-48a272855a33"
+    "bardropper": "ffd52a01-d1f4-4f6b-bd32-48a272855a33",
+    "goy2": "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6",
+    "sudsycoolalex": "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6",
+    "cygn3us": "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6",
+    "freakycoolalex": "4e9b8ee3-5211-4c11-9ca5-067fc843bbc6"
   }
 }

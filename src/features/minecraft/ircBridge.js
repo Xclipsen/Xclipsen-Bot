@@ -394,6 +394,42 @@ function createIrcBridge({ client, env, store }) {
       return;
     }
 
+    if (request.url === '/api/mob-model') {
+      if (!isAuthorized(request)) {
+        writeJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+
+      if (request.method !== 'POST') {
+        writeJson(response, 405, { error: 'method not allowed' });
+        return;
+      }
+
+      try {
+        const payload = await readJson(request);
+        const playerName = normalizeMinecraftUsername(payload?.minecraftUsername);
+        const linked = store.findBridgeLinkByMinecraftUsername(playerName);
+        if (!linked) {
+          writeJson(response, 403, { error: 'link required' });
+          return;
+        }
+
+        store.setUserMobModel(playerName, {
+          minecraftUsername: playerName || linked.entry.preferredMinecraftUsername || linked.entry.minecraftUsernames?.[0] || '',
+          enabled: payload?.enabled === true,
+          entityType: payload?.entityType,
+          baby: payload?.baby === true,
+          updatedAt: Math.max(0, Number(payload?.updatedAt) || 0)
+        });
+
+        writeJson(response, 202, { status: 'accepted' });
+      } catch (error) {
+        console.error('[mob-model] State upload failed:', error);
+        writeJson(response, 500, { error: 'internal error' });
+      }
+      return;
+    }
+
     if (request.url.startsWith('/api/hideonleaf/status')) {
       if (!isAuthorized(request)) {
         writeJson(response, 401, { error: 'unauthorized' });
@@ -404,6 +440,21 @@ function createIrcBridge({ client, env, store }) {
       const playerName = String(url.searchParams.get('playerName') || '');
       const linked = store.findBridgeLinkByMinecraftUsername(playerName);
       writeJson(response, 200, linked ? (store.getUserHideonleafStats(playerName) || {}) : {});
+      return;
+    }
+
+    if (request.url.startsWith('/api/mob-models')) {
+      if (!isAuthorized(request)) {
+        writeJson(response, 401, { error: 'unauthorized' });
+        return;
+      }
+
+      const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
+      const playerName = String(url.searchParams.get('playerName') || '');
+      const linked = store.findBridgeLinkByMinecraftUsername(playerName);
+      writeJson(response, 200, {
+        states: linked ? store.listMobModels() : []
+      });
       return;
     }
 

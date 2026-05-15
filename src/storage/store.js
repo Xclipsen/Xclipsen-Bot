@@ -249,6 +249,53 @@ function normalizeHideonleafStatsState(state) {
   return { users };
 }
 
+function normalizeMobModelState(state) {
+  const users = state?.users && typeof state.users === 'object'
+    ? Object.entries(state.users)
+      .reduce((result, [storedKey, entry]) => {
+        const normalizedEntry = normalizeMobModelEntry(entry);
+        const normalizedKey = normalizeMinecraftUsername(normalizedEntry.minecraftUsername || storedKey);
+        if (!normalizedKey) {
+          return result;
+        }
+
+        const existingEntry = result[normalizedKey] || null;
+        const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
+        const incomingUpdatedAt = Number.isFinite(normalizedEntry?.updatedAt) ? Number(normalizedEntry.updatedAt) : 0;
+        if (!existingEntry || incomingUpdatedAt >= existingUpdatedAt) {
+          result[normalizedKey] = {
+            ...normalizedEntry,
+            minecraftUsername: normalizedKey
+          };
+        }
+
+        return result;
+      }, {})
+    : {};
+
+  return { users };
+}
+
+function normalizeMobModelEntry(entry) {
+  return {
+    minecraftUsername: normalizeMinecraftUsername(entry?.minecraftUsername),
+    enabled: entry?.enabled === true,
+    entityType: normalizeMobModelEntityType(entry?.entityType),
+    baby: entry?.baby === true,
+    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
+  };
+}
+
+function normalizeMobModelEntityType(value) {
+  const raw = String(value || '').trim().toLowerCase();
+  if (!raw) {
+    return 'minecraft:zombie';
+  }
+
+  const namespaced = raw.includes(':') ? raw : `minecraft:${raw}`;
+  return /^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(namespaced) ? namespaced : 'minecraft:zombie';
+}
+
 function normalizeFarmingStatsEntry(entry) {
   return {
     bonusPestChance: Math.max(0, Number(entry?.bonusPestChance) || 0),
@@ -824,6 +871,52 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       saveState();
       return this.getUserHideonleafStats(key);
     },
+    getUserMobModel(minecraftUsername) {
+      const key = normalizeMinecraftUsername(minecraftUsername);
+      if (!key) {
+        return null;
+      }
+
+      return normalizeMobModelState(guildState.mobModels).users[key] || null;
+    },
+    setUserMobModel(minecraftUsername, partialEntry) {
+      const key = normalizeMinecraftUsername(minecraftUsername || partialEntry?.minecraftUsername);
+      if (!key) {
+        return null;
+      }
+
+      const mobModels = normalizeMobModelState(guildState.mobModels);
+      const existingEntry = mobModels.users[key] || null;
+      const incomingUpdatedAt = Number.isFinite(partialEntry?.updatedAt) ? Number(partialEntry.updatedAt) : Date.now();
+      const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
+      if (existingEntry && incomingUpdatedAt < existingUpdatedAt) {
+        return this.getUserMobModel(key);
+      }
+
+      guildState = {
+        ...guildState,
+        mobModels: {
+          users: {
+            ...mobModels.users,
+            [key]: normalizeMobModelEntry({
+              ...existingEntry,
+              ...partialEntry,
+              minecraftUsername: key,
+              updatedAt: incomingUpdatedAt
+            })
+          }
+        }
+      };
+      saveState();
+      return this.getUserMobModel(key);
+    },
+    listMobModels() {
+      const mobModels = normalizeMobModelState(guildState.mobModels);
+      return Object.entries(mobModels.users).map(([minecraftUsername, entry]) => ({
+        minecraftUsername,
+        ...entry
+      }));
+    },
     listHideonleafStats() {
       const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
       return Object.entries(hideonleaf.users).map(([minecraftUsername, entry]) => ({
@@ -847,7 +940,8 @@ function loadState(stateFilePath) {
       guilds: {},
       links: normalizeBridgeLinksState(),
       farming: normalizeFarmingStatsState(),
-      hideonleaf: normalizeHideonleafStatsState()
+      hideonleaf: normalizeHideonleafStatsState(),
+      mobModels: normalizeMobModelState()
     };
   }
 
@@ -856,7 +950,8 @@ function loadState(stateFilePath) {
       ...state,
       links: normalizeBridgeLinksState(state.links),
       farming: normalizeFarmingStatsState(state.farming),
-      hideonleaf: normalizeHideonleafStatsState(state.hideonleaf)
+      hideonleaf: normalizeHideonleafStatsState(state.hideonleaf),
+      mobModels: normalizeMobModelState(state.mobModels)
     };
   }
 
@@ -872,7 +967,8 @@ function loadState(stateFilePath) {
     },
     links: normalizeBridgeLinksState(),
     farming: normalizeFarmingStatsState(),
-    hideonleaf: normalizeHideonleafStatsState()
+    hideonleaf: normalizeHideonleafStatsState(),
+    mobModels: normalizeMobModelState()
   };
 }
 
