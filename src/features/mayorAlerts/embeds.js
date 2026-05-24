@@ -208,8 +208,8 @@ function createMayorAlertEmbeds({ env, skyblock }) {
     return env.MAYOR_SKIN_LINKS[String(mayor.key || '').toLowerCase()] || null;
   }
 
-  function createEventCalendarEmbed() {
-    const calendarEntries = getCalendarEntries(Date.now())
+  function createEventCalendarEmbed(mayor = null) {
+    const calendarEntries = getCalendarEntries(Date.now(), { mayor })
       .sort((left, right) => (
         EVENT_DEFINITIONS.findIndex((definition) => definition.key === left.key) -
         EVENT_DEFINITIONS.findIndex((definition) => definition.key === right.key)

@@ -10,9 +10,33 @@ const {
 } = require('./eventCalendar');
 
 function createEventRemindersService({ client, store, minecraft = null, mayorAlerts = null }) {
+  async function loadElectionDataForSchedules({ logErrors = true } = {}) {
+    const cachedElectionData = mayorAlerts?.getCachedElectionData?.();
+    if (cachedElectionData) {
+      return cachedElectionData;
+    }
+
+    if (typeof mayorAlerts?.fetchElectionData !== 'function') {
+      return null;
+    }
+
+    try {
+      return await mayorAlerts.fetchElectionData();
+    } catch (error) {
+      if (logErrors) {
+        console.error('Could not load mayor data for event reminders:', error);
+      }
+      return null;
+    }
+  }
+
   async function checkForReminders() {
     const now = Date.now();
-    const schedules = getAllEventSchedules(now);
+    const electionData = await loadElectionDataForSchedules();
+    const schedules = getAllEventSchedules(now, {
+      mayor: electionData?.mayor || null,
+      mayorFetchedAt: mayorAlerts?.getCachedElectionDataFetchedAt?.() ?? null
+    });
 
     for (const guildId of store.getEventReminderConfiguredGuildIds()) {
       try {
@@ -107,8 +131,12 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
 
     const config = store.getGuildConfig(guildId).eventReminders;
     const channel = await getReminderChannel(guildId);
+    const electionData = await loadElectionDataForSchedules({ logErrors: false });
     const schedule = {
-      ...definition.getSchedule(Date.now()),
+      ...definition.getSchedule(Date.now(), {
+        mayor: electionData?.mayor || null,
+        mayorFetchedAt: mayorAlerts?.getCachedElectionDataFetchedAt?.() ?? null
+      }),
       isActive: true
     };
 
@@ -233,10 +261,19 @@ function isEventReminderMessage(message, clientUserId, definition) {
 function createEventReminderEmbed(definition, schedule) {
   const displayStartAt = getDisplayStartAt(schedule);
   const displayEndAt = getDisplayEndAt(schedule);
-  const lines = [
-    `Start: <t:${Math.floor(displayStartAt / 1000)}:F>`,
-    Number.isFinite(displayEndAt) ? `End: <t:${Math.floor(displayEndAt / 1000)}:F>` : null
-  ].filter(Boolean);
+  const lines = [];
+
+  if (Number.isFinite(displayStartAt)) {
+    lines.push(`Start: <t:${Math.floor(displayStartAt / 1000)}:F>`);
+  }
+
+  if (Number.isFinite(displayEndAt)) {
+    lines.push(`End: <t:${Math.floor(displayEndAt / 1000)}:F>`);
+  }
+
+  if (lines.length === 0) {
+    lines.push('Schedule depends on mayor election data.');
+  }
 
   return new EmbedBuilder()
     .setColor(definition.color)

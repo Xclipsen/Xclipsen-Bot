@@ -6,6 +6,8 @@ const { createMayorAlertEmbeds } = require('./embeds');
 function createMayorAlerts({ client, env, store, skyblock }) {
   let lastMayorKey = null;
   let initializedMayorState = false;
+  let cachedElectionData = null;
+  let cachedElectionDataFetchedAt = null;
   const resolvedMayorEmojiCache = new Map();
 
   const data = createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache });
@@ -13,6 +15,12 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
   function getMayorAlertConfig(guildId) {
     return store.getGuildConfig(guildId).mayorAlerts;
+  }
+
+  async function fetchElectionData() {
+    cachedElectionData = await data.fetchElectionData();
+    cachedElectionDataFetchedAt = Date.now();
+    return cachedElectionData;
   }
 
   async function sendRolePing(guildId, content, embedsToSend = []) {
@@ -33,7 +41,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     const mayorEmoji = await data.getMayorEmoji(guildId, mayor);
     const payload = {
       embeds: [
-        embeds.createEventCalendarEmbed(),
+        embeds.createEventCalendarEmbed(mayor),
         embeds.createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor, boothOpen, currentElection)
       ],
       components: boothOpen ? embeds.createCandidateSelectComponents(currentElection) : []
@@ -87,7 +95,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
       return false;
     }
 
-    const electionData = await data.fetchElectionData();
+    const electionData = await fetchElectionData();
     const currentElection = electionData.current || null;
     const boothOpen = data.getBoothOpen(electionData);
 
@@ -128,7 +136,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
   async function checkElectionState() {
     try {
-      const electionData = await data.fetchElectionData();
+      const electionData = await fetchElectionData();
       const mayor = electionData.mayor;
       const currentElection = electionData.current || null;
       const currentMayorKey = String(mayor.key || '').toLowerCase();
@@ -188,7 +196,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
   async function sendScheduledStatusUpdate() {
     try {
-      const electionData = await data.fetchElectionData();
+      const electionData = await fetchElectionData();
       const mayor = electionData.mayor;
       const currentElection = electionData.current || null;
       const boothOpen = data.getBoothOpen(electionData);
@@ -204,7 +212,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   }
 
   async function refreshStatusForGuild(guildId) {
-    const electionData = await data.fetchElectionData();
+    const electionData = await fetchElectionData();
     const mayor = electionData.mayor;
     const currentElection = electionData.current || null;
     const boothOpen = data.getBoothOpen(electionData);
@@ -235,7 +243,9 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   }
 
   return {
-    fetchElectionData: data.fetchElectionData,
+    fetchElectionData,
+    getCachedElectionData: () => cachedElectionData,
+    getCachedElectionDataFetchedAt: () => cachedElectionDataFetchedAt,
     getBoothOpen: data.getBoothOpen,
     handleCandidateSelect,
     sendMayorStatusUpdate,

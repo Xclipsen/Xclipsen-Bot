@@ -9,6 +9,8 @@ const WEATHER_ANCHOR_MS = (env.SKYBLOCK_EPOCH_SECONDS + (40 * 60)) * 1000;
 const WEATHER_PERIOD_MS = 60 * 60 * 1000;
 const WEATHER_DURATION_MS = 20 * 60 * 1000;
 const LEGENDARY_ZOO_PETS = ['Giraffe', 'Tiger', 'Elephant', 'Monkey'];
+const HARVEST_FEAST_START_OFFSET_MS = getMonthOffsetMs(6, 1);
+const HARVEST_FEAST_DURATION_MS = MONTH_MS * 3;
 
 function normalizeModulo(value, modulo) {
   return ((value % modulo) + modulo) % modulo;
@@ -20,6 +22,10 @@ function getYearPositionMs(now) {
 
 function getYearIndexAt(timestamp) {
   return Math.floor((timestamp - EPOCH_MS) / YEAR_MS);
+}
+
+function getYearStartAt(timestamp) {
+  return EPOCH_MS + (getYearIndexAt(timestamp) * YEAR_MS);
 }
 
 function getMonthOffsetMs(monthIndex, day = 1) {
@@ -142,6 +148,40 @@ function buildSchedule(definition, resolvedWindow, extra = {}) {
   };
 }
 
+function normalizeText(value) {
+  return String(value || '')
+    .replace(/§./g, '')
+    .trim()
+    .toLowerCase();
+}
+
+function hasGrandFeastPerk(mayor) {
+  const mayorKey = normalizeText(mayor?.key);
+  const mayorName = normalizeText(mayor?.name);
+  if (mayorKey !== 'finnegan' && mayorName !== 'finnegan') {
+    return false;
+  }
+
+  return Array.isArray(mayor?.perks) && mayor.perks.some((perk) => normalizeText(perk?.name).includes('grand feast'));
+}
+
+function getGrandFeastWindow(now, context = {}) {
+  if (Number.isFinite(context.mayorFetchedAt) && getYearIndexAt(context.mayorFetchedAt) !== getYearIndexAt(now)) {
+    return null;
+  }
+
+  if (!hasGrandFeastPerk(context.mayor)) {
+    return null;
+  }
+
+  const startAt = getYearStartAt(now);
+  return {
+    startAt,
+    endAt: startAt + YEAR_MS,
+    isActive: true
+  };
+}
+
 function getSpiderRainSchedule(now) {
   const resolvedWindow = resolvePeriodicWindow(now, (index) => normalizeModulo(index, 3) !== 0);
   return buildSchedule(EVENT_DEFINITION_MAP.spiderRain, resolvedWindow);
@@ -216,6 +256,46 @@ function getHoppitysHuntSchedule(now) {
     durationMs: DAY_MS * 93
   }]);
   return buildSchedule(EVENT_DEFINITION_MAP.hoppitysHunt, resolvedWindow);
+}
+
+function getHarvestFeastSchedule(now, context = {}) {
+  const resolvedWindow = resolveYearlyWindows(now, [{
+    startOffsetMs: HARVEST_FEAST_START_OFFSET_MS,
+    durationMs: HARVEST_FEAST_DURATION_MS
+  }]);
+  const grandFeastWindow = getGrandFeastWindow(now, context);
+
+  if (grandFeastWindow && resolvedWindow.startAt < grandFeastWindow.endAt) {
+    const nextYearIndex = Math.ceil((grandFeastWindow.endAt - EPOCH_MS - HARVEST_FEAST_START_OFFSET_MS) / YEAR_MS);
+    const startAt = EPOCH_MS + (nextYearIndex * YEAR_MS) + HARVEST_FEAST_START_OFFSET_MS;
+    return buildSchedule(EVENT_DEFINITION_MAP.harvestFeast, {
+      startAt,
+      endAt: startAt + HARVEST_FEAST_DURATION_MS,
+      isActive: false
+    });
+  }
+
+  return buildSchedule(EVENT_DEFINITION_MAP.harvestFeast, resolvedWindow);
+}
+
+function getGrandFeastSchedule(now, context = {}) {
+  const grandFeastWindow = getGrandFeastWindow(now, context);
+  if (grandFeastWindow) {
+    return buildSchedule(EVENT_DEFINITION_MAP.grandFeast, grandFeastWindow, {
+      reason: 'Finnegan is mayor with the Grand Feast perk.'
+    });
+  }
+
+  return {
+    key: 'grandFeast',
+    isActive: false,
+    windowStartAt: null,
+    windowEndAt: null,
+    displayStartAt: null,
+    displayEndAt: null,
+    reminderDeleteAt: null,
+    reason: 'Only active while Finnegan is mayor with the Grand Feast perk.'
+  };
 }
 
 function getTravelingZooSchedule(now) {
@@ -337,6 +417,28 @@ const EVENT_DEFINITIONS = [
     getSchedule: getHoppitysHuntSchedule
   },
   {
+    key: 'harvestFeast',
+    label: 'Harvest Feast',
+    emoji: '🥣',
+    color: 0xd35400,
+    roleName: 'Harvest Feast',
+    roleAliases: ['harvest feast', 'feast', 'harvest feast ping', 'feast ping', 'harvest feast role', 'feast role'],
+    showEnd: true,
+    getSchedule: getHarvestFeastSchedule
+  },
+  {
+    key: 'grandFeast',
+    label: 'Grand Feast',
+    emoji: '🍞',
+    color: 0xf1c40f,
+    roleName: 'Grand Feast',
+    roleAliases: ['grand feast', 'grand feast ping', 'grand feast role', 'grand bakery'],
+    showInCalendar: false,
+    showEnd: true,
+    getSchedule: getGrandFeastSchedule,
+    extraLines: (schedule) => schedule.reason ? [schedule.reason] : []
+  },
+  {
     key: 'travelingZoo',
     label: 'Traveling Zoo',
     emoji: '🐘',
@@ -387,22 +489,24 @@ const EVENT_DEFINITIONS = [
 
 const EVENT_DEFINITION_MAP = Object.fromEntries(EVENT_DEFINITIONS.map((definition) => [definition.key, definition]));
 
-function getAllEventSchedules(now = Date.now()) {
+function getAllEventSchedules(now = Date.now(), context = {}) {
   return Object.fromEntries(EVENT_DEFINITIONS.map((definition) => [
     definition.key,
-    definition.getSchedule(now)
+    definition.getSchedule(now, context)
   ]));
 }
 
-function getCalendarEntries(now = Date.now()) {
-  const schedules = getAllEventSchedules(now);
-  return EVENT_DEFINITIONS.map((definition) => ({
-    key: definition.key,
-    label: definition.label,
-    emoji: definition.emoji,
-    color: definition.color,
-    ...schedules[definition.key]
-  }));
+function getCalendarEntries(now = Date.now(), context = {}) {
+  const schedules = getAllEventSchedules(now, context);
+  return EVENT_DEFINITIONS
+    .filter((definition) => definition.showInCalendar !== false)
+    .map((definition) => ({
+      key: definition.key,
+      label: definition.label,
+      emoji: definition.emoji,
+      color: definition.color,
+      ...schedules[definition.key]
+    }));
 }
 
 function getDisplayStartAt(schedule) {
@@ -424,10 +528,15 @@ function getReminderStatusLine(definition) {
 }
 
 function formatCalendarEntry(entry) {
-  const lines = [
-    `${entry.emoji} ${entry.label}:`,
-    `Start: <t:${Math.floor(getDisplayStartAt(entry) / 1000)}:F> (<t:${Math.floor(getDisplayStartAt(entry) / 1000)}:R>)`
-  ];
+  const displayStartAt = getDisplayStartAt(entry);
+  const lines = [`${entry.emoji} ${entry.label}:`];
+
+  if (Number.isFinite(displayStartAt)) {
+    lines.push(`Start: <t:${Math.floor(displayStartAt / 1000)}:F> (<t:${Math.floor(displayStartAt / 1000)}:R>)`);
+  } else {
+    lines.push('Start: depends on mayor election');
+  }
+
   const displayEndAt = getDisplayEndAt(entry);
   if (Number.isFinite(displayEndAt)) {
     lines.push(`End: <t:${Math.floor(displayEndAt / 1000)}:F> (<t:${Math.floor(displayEndAt / 1000)}:R>)`);
