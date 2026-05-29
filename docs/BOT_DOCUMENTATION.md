@@ -32,10 +32,11 @@ Important: most event windows are currently calculated locally from the SkyBlock
 - `/namehistory` for current and previous Minecraft names.
 - `/cata` and `/catacombs` for dungeon overview via the official Hypixel API.
 - `/trophyfishing` for Trophy Fish progress and fish lookup info.
+- `/trophyfrogs` for Trophy Frog progress and frog lookup info.
 - `/itememoji` for posting mapped SkyBlock item emojis.
 - `/gif` for converting an uploaded image into a GIF.
 
-If a Discord user has linked one or more Minecraft accounts, `/uuid`, `/namehistory`, `/cata`, `/catacombs`, `/trophyfishing`, and the name-based `/shitter` subcommands can use the prioritized linked username automatically when the relevant player/name argument is omitted.
+If a Discord user has linked one or more Minecraft accounts, `/uuid`, `/namehistory`, `/cata`, `/catacombs`, `/trophyfishing`, `/trophyfrogs`, and the name-based `/shitter` subcommands can use the prioritized linked username automatically when the relevant player/name argument is omitted.
 
 ### 4. Linking and IRC Bridge
 
@@ -210,6 +211,25 @@ Example:
 /trophyfishing
 /trophyfishing player:Xclipsen
 /trophyfishing player:Xclipsen profile:Cucumber
+```
+
+#### `/trophyfrogs [player:<ign>] [profile:<name>]`
+
+Shows a Trophy Frog overview for a player.
+
+- `player` is optional.
+- If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
+- `profile` is optional.
+- If `profile` is omitted, the bot uses the currently selected Hypixel SkyBlock profile.
+- The response includes a frog selection menu that shows chance, location, requirement, and pity details for each Trophy Frog.
+- The official Hypixel API currently exposes total frog catches plus unlocked tiers, but not full per-frog catch totals.
+
+Example:
+
+```text
+/trophyfrogs
+/trophyfrogs player:Xclipsen
+/trophyfrogs player:Xclipsen profile:Cucumber
 ```
 
 ### Linking Commands

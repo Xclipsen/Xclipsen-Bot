@@ -19,6 +19,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/help` for a grouped command overview with examples.
 - Includes `/cata` and `/catacombs` for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
 - Includes `/trophyfishing` for a Trophy Fish overview with per-fish info about location and catch chance, with linked-account fallback when no player is provided.
+- Includes `/trophyfrogs` for a Trophy Frog overview with unlocked-tier progress and per-frog requirement info, with linked-account fallback when no player is provided.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.

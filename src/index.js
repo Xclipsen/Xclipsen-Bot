@@ -248,6 +248,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
       return;
     }
 
+    if (interaction.isChatInputCommand() && interaction.commandName === commandNames.trophyfrogs) {
+      await trophyFishing.handleTrophyFrogsCommand(interaction);
+      return;
+    }
+
     if (
       interaction.isChatInputCommand() &&
       (interaction.commandName === commandNames.pest || interaction.commandName === commandNames.pests)
@@ -303,6 +308,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isStringSelectMenu()) {
       if (await trophyFishing.handleTrophyFishSelect(interaction)) {
+        return;
+      }
+
+      if (await trophyFishing.handleTrophyFrogSelect(interaction)) {
         return;
       }
 

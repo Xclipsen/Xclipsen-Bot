@@ -118,6 +118,18 @@ const trophyFishingCommand = new SlashCommandBuilder()
     .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
     .setRequired(false));
 
+const trophyFrogsCommand = new SlashCommandBuilder()
+  .setName('trophyfrogs')
+  .setDescription('Show a Trophy Frog overview for a player.')
+  .addStringOption((option) => option
+    .setName('player')
+    .setDescription('Minecraft username, or leave empty to use your linked account')
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('profile')
+    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
+    .setRequired(false));
+
 function addPestOptions(command) {
   return command
     .addIntegerOption((option) => option
@@ -388,6 +400,7 @@ const commands = [
   catacombsCommand,
   itemEmojiCommand,
   trophyFishingCommand,
+  trophyFrogsCommand,
   pestCommand,
   pestsCommand,
   setFarmingStatsCommand,
@@ -413,6 +426,7 @@ module.exports = {
     catacombs: 'catacombs',
     itememoji: 'itememoji',
     trophyfishing: 'trophyfishing',
+    trophyfrogs: 'trophyfrogs',
     pest: 'pest',
     pests: 'pests',
     setfarmingstats: 'setfarmingstats',

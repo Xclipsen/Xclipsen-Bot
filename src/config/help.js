@@ -76,6 +76,11 @@ const helpSections = [
         example: '/trophyfishing'
       },
       {
+        command: '/trophyfrogs [player:<ign>] [profile:<name>]',
+        description: 'Show a Trophy Frog overview with unlocked-tier progress and a frog info selector.',
+        example: '/trophyfrogs'
+      },
+      {
         command: '/pest fortune:<amount> sell_method:NPC Sell',
         description: 'Estimate which Garden pest is worth the most per kill for your Farming Fortune, with Instasell, Sell Order, or NPC Sell.',
         example: '/pest fortune:2500 sell_method:NPC Sell'

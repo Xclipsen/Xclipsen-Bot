@@ -2,6 +2,8 @@ const { ActionRowBuilder, EmbedBuilder, MessageFlags, StringSelectMenuBuilder } 
 const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
 const TROPHY_FISH_SELECT_ID = 'trophy-fish-select';
+const TROPHY_FROG_SELECT_ID = 'trophy-frog-select';
+const TROPHY_TIERS = ['bronze', 'silver', 'gold', 'diamond'];
 const TROPHY_FISH_NAMES = [
   {
     key: 'blobfish',
@@ -131,6 +133,105 @@ const TROPHY_FISH_NAMES = [
   }
 ];
 const TROPHY_FISH_BY_KEY = Object.fromEntries(TROPHY_FISH_NAMES.map((fish) => [fish.key, fish]));
+const TROPHY_FROG_NAMES = [
+  {
+    key: 'common_frog',
+    label: 'Common Frog',
+    chance: '25% (1 in 4 rolls)',
+    foundAt: 'Caught everywhere on Lotus Atoll water.',
+    requirement: 'No special requirement.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'exploding_frog',
+    label: 'Exploding Frog',
+    chance: '100% from a lily explosion.',
+    foundAt: 'Created from exploding lily pads on Lotus Atoll.',
+    requirement: 'Combine lily pads until they reach size 8 and explode.',
+    pity: { gold: 50, diamond: 300 }
+  },
+  {
+    key: 'leap_frog',
+    label: 'Leap Frog',
+    chance: '20% (1 in 5 rolls)',
+    foundAt: 'Caught while fishing on Lotus Atoll.',
+    requirement: 'Be midair when the catch happens.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'wetlands_frog',
+    label: 'Wetlands Frog',
+    chance: '15% (1 in 6.67 rolls)',
+    foundAt: 'Caught on Lotus Atoll during rain.',
+    requirement: 'Fish while it is raining on Lotus Atoll.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'reality_hopper',
+    label: 'Reality Hopper',
+    chance: '10% (1 in 10 rolls)',
+    foundAt: 'Caught in Lotus Atoll wormholes.',
+    requirement: 'Fish inside a visible wormhole while wearing Froggles.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'blessed_frog',
+    label: 'Blessed Frog',
+    chance: '10% (1 in 10 rolls)',
+    foundAt: 'Caught on Lotus Atoll after receiving a blessing.',
+    requirement: 'Throw a Frogcoin into the Lotus Eater\'s Cave water and fish while the blessing is active.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'bullfrog',
+    label: 'Bullfrog',
+    chance: '5% (1 in 20 rolls)',
+    foundAt: 'Caught on Lotus Atoll water.',
+    requirement: 'Wear a Red Sweater while fishing.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'sea_frog',
+    label: 'Sea Frog',
+    chance: '5% (1 in 20 rolls)',
+    foundAt: 'Caught on Lotus Atoll water.',
+    requirement: 'Be underwater when the catch happens.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'cave_frog',
+    label: 'Cave Frog',
+    chance: '2% (1 in 50 rolls)',
+    foundAt: 'Found in Lotus Eater\'s Cave.',
+    requirement: 'Fish inside Lotus Eater\'s Cave.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'highlands_frog',
+    label: 'Highlands Frog',
+    chance: '2% (1 in 50 rolls)',
+    foundAt: 'Found in Lotus Highlands.',
+    requirement: 'Fish in the Lotus Highlands area.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'tree_frog',
+    label: 'Tree Frog',
+    chance: '2% (1 in 50 rolls)',
+    foundAt: 'Caught on Lotus Atoll water.',
+    requirement: 'Stand on leaves when the catch happens.',
+    pity: { gold: 100, diamond: 600 }
+  },
+  {
+    key: 'puddle_jumper',
+    label: 'Puddle Jumper',
+    chance: '100% from a Puddle Jumper catch.',
+    foundAt: 'Drops from the Puddle Jumper sea creature on Lotus Atoll.',
+    requirement: 'Fish while flying around Lotus Atoll and catch a Puddle Jumper.',
+    pity: { gold: 50, diamond: 300 }
+  }
+];
+const TROPHY_FROG_BY_KEY = Object.fromEntries(TROPHY_FROG_NAMES.map((frog) => [frog.key, frog]));
 const TROPHY_FISH_RANKS = [
   { key: 'bronze', label: 'Novice Trophy Fisher', tierLabel: 'Bronze', needed: 15, requirementMode: 'partial' },
   { key: 'silver', label: 'Adept Trophy Fisher', tierLabel: 'Silver', needed: 18, requirementMode: 'all' },
@@ -236,6 +337,46 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return TROPHY_FISH_NAMES.filter((fish) => getTierCount(trophyFish, fish.key, tier) > 0).length;
   }
 
+  function getCompletedTasks(member) {
+    return new Set(Array.isArray(member?.leveling?.completed_tasks) ? member.leveling.completed_tasks : []);
+  }
+
+  function createTrophyFrogProgress(member) {
+    return {
+      completedTasks: getCompletedTasks(member),
+      sacksCounts: member?.inventory?.sacks_counts && typeof member.inventory.sacks_counts === 'object'
+        ? member.inventory.sacks_counts
+        : {},
+      totalCaught: Number(member?.player_stats?.items_fished?.trophy_frog) || 0
+    };
+  }
+
+  function getTrophyTaskName(itemKey, tier) {
+    return `TROPHY_${itemKey.toUpperCase()}_${tier.toUpperCase()}`;
+  }
+
+  function getHighestUnlockedTier(progress, itemKey) {
+    for (let index = TROPHY_TIERS.length - 1; index >= 0; index -= 1) {
+      if (progress.completedTasks.has(getTrophyTaskName(itemKey, TROPHY_TIERS[index]))) {
+        return index;
+      }
+    }
+
+    return -1;
+  }
+
+  function hasUnlockedTier(progress, itemKey, tier) {
+    return getHighestUnlockedTier(progress, itemKey) >= TROPHY_TIERS.indexOf(tier);
+  }
+
+  function getUnlockedTierProgressCount(progress, tier) {
+    return TROPHY_FROG_NAMES.filter((frog) => hasUnlockedTier(progress, frog.key, tier)).length;
+  }
+
+  function getFrogSackCount(progress, frogKey, tier) {
+    return Number(progress?.sacksCounts?.[`${frogKey.toUpperCase()}_${tier.toUpperCase()}`]) || 0;
+  }
+
   function getRewardStatus(trophyFish) {
     const bronzeCount = TROPHY_FISH_NAMES.filter((fish) => getFishTotal(trophyFish, fish.key) > 0).length;
     const silverCount = getTierProgressCount(trophyFish, 'silver');
@@ -298,6 +439,40 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return embed;
   }
 
+  function createFrogOverviewField(progress, frog) {
+    return {
+      name: frog.label,
+      value: [
+        `Bronze: ${hasUnlockedTier(progress, frog.key, 'bronze') ? '✅' : '❌'}`,
+        `Silver: ${hasUnlockedTier(progress, frog.key, 'silver') ? '✅' : '❌'}`,
+        `Gold: ${hasUnlockedTier(progress, frog.key, 'gold') ? '✅' : '❌'}`,
+        `Diamond: ${hasUnlockedTier(progress, frog.key, 'diamond') ? '✅' : '❌'}`
+      ].join('\n'),
+      inline: true
+    };
+  }
+
+  function buildFrogOverviewEmbed(playerName, profileName, progress) {
+    const embed = new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle(`${playerName}'s Trophy Frogs on ${profileName || 'Unknown'}`)
+      .setDescription([
+        `Bronze Progress: ${getUnlockedTierProgressCount(progress, 'bronze')}/${TROPHY_FROG_NAMES.length}`,
+        `Silver Progress: ${getUnlockedTierProgressCount(progress, 'silver')}/${TROPHY_FROG_NAMES.length}`,
+        `Gold Progress: ${getUnlockedTierProgressCount(progress, 'gold')}/${TROPHY_FROG_NAMES.length}`,
+        `Diamond Progress: ${getUnlockedTierProgressCount(progress, 'diamond')}/${TROPHY_FROG_NAMES.length}`,
+        `Total Trophy Frogs Caught: ${formatNumber(progress.totalCaught)}`
+      ].join('\n'))
+      .setFooter({ text: 'Hypixel only exposes total frog catches plus unlocked tiers right now. Requirements from the Hypixel SkyBlock Wiki.' })
+      .setTimestamp();
+
+    for (const frog of TROPHY_FROG_NAMES) {
+      embed.addFields(createFrogOverviewField(progress, frog));
+    }
+
+    return embed;
+  }
+
   function buildFishSelect() {
     return [
       new ActionRowBuilder().addComponents(
@@ -309,6 +484,23 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
               label: fish.label,
               value: fish.key,
               description: fish.foundAt.slice(0, 100)
+            }))
+          )
+      )
+    ];
+  }
+
+  function buildFrogSelect() {
+    return [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(TROPHY_FROG_SELECT_ID)
+          .setPlaceholder('View frog information')
+          .addOptions(
+            TROPHY_FROG_NAMES.map((frog) => ({
+              label: frog.label,
+              value: frog.key,
+              description: frog.foundAt.slice(0, 100)
             }))
           )
       )
@@ -334,6 +526,56 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
           `Gold: ${counts.gold > 0 ? formatNumber(counts.gold) : '❌'}`,
           `Diamond: ${counts.diamond > 0 ? formatNumber(counts.diamond) : '❌'}`,
           `Total: ${formatNumber(counts.total)}`
+        ].join('\n'),
+        inline: false
+      });
+    }
+
+    return embed;
+  }
+
+  function buildFrogInfoEmbed(frog, progress) {
+    const sackCounts = Object.fromEntries(TROPHY_TIERS.map((tier) => [tier, getFrogSackCount(progress, frog.key, tier)]));
+    const hasTrackedSackCounts = Object.values(sackCounts).some((value) => value > 0);
+    const embed = new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle(frog.label)
+      .setDescription([
+        `Chance: ${frog.chance}`,
+        frog.foundAt,
+        `Requirement: ${frog.requirement}`
+      ].join('\n\n'))
+      .setFooter({ text: 'The official Hypixel API does not expose full per-frog catch totals yet.' });
+
+    embed.addFields(
+      {
+        name: 'Your Progress',
+        value: [
+          `Bronze: ${hasUnlockedTier(progress, frog.key, 'bronze') ? '✅' : '❌'}`,
+          `Silver: ${hasUnlockedTier(progress, frog.key, 'silver') ? '✅' : '❌'}`,
+          `Gold: ${hasUnlockedTier(progress, frog.key, 'gold') ? '✅' : '❌'}`,
+          `Diamond: ${hasUnlockedTier(progress, frog.key, 'diamond') ? '✅' : '❌'}`
+        ].join('\n'),
+        inline: true
+      },
+      {
+        name: 'Pity',
+        value: [
+          `Gold guaranteed after ${formatNumber(frog.pity.gold)} catches if still missing.`,
+          `Diamond guaranteed after ${formatNumber(frog.pity.diamond)} catches if still missing.`
+        ].join('\n'),
+        inline: true
+      }
+    );
+
+    if (hasTrackedSackCounts) {
+      embed.addFields({
+        name: 'Currently In Sack',
+        value: [
+          `Bronze: ${formatNumber(sackCounts.bronze)}`,
+          `Silver: ${formatNumber(sackCounts.silver)}`,
+          `Gold: ${formatNumber(sackCounts.gold)}`,
+          `Diamond: ${formatNumber(sackCounts.diamond)}`
         ].join('\n'),
         inline: false
       });
@@ -374,6 +616,38 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     }
   }
 
+  async function handleTrophyFrogsCommand(interaction) {
+    await interaction.deferReply();
+
+    try {
+      const { player, usedLinkedAccount } = resolveRequestedPlayer(interaction);
+      const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
+      const { uuid, name } = await minecraft.resolvePlayerProfile(player);
+      const profiles = await fetchProfiles(uuid);
+      const selectedProfile = selectProfile(profiles, uuid, requestedProfile);
+
+      if (!selectedProfile) {
+        throw new Error('No SkyBlock profile found for that player.');
+      }
+
+      const trophyFrogProgress = createTrophyFrogProgress(selectedProfile.member);
+      await interaction.editReply({
+        content: usedLinkedAccount ? buildLinkedUsernameNotice(name) : undefined,
+        embeds: [buildFrogOverviewEmbed(name, selectedProfile.cuteName, trophyFrogProgress)],
+        components: buildFrogSelect()
+      });
+
+      const message = await interaction.fetchReply();
+      messageContext.set(message.id, {
+        trophyFrogProgress
+      });
+    } catch (error) {
+      await interaction.editReply({
+        content: error.message || 'Failed to fetch trophy frog data.'
+      });
+    }
+  }
+
   async function handleTrophyFishSelect(interaction) {
     if (!interaction.isStringSelectMenu() || interaction.customId !== TROPHY_FISH_SELECT_ID) {
       return false;
@@ -405,9 +679,34 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return true;
   }
 
+  async function handleTrophyFrogSelect(interaction) {
+    if (!interaction.isStringSelectMenu() || interaction.customId !== TROPHY_FROG_SELECT_ID) {
+      return false;
+    }
+
+    const frog = TROPHY_FROG_BY_KEY[interaction.values[0]];
+    if (!frog) {
+      await interaction.reply({
+        content: 'That trophy frog is not available.',
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+
+    const context = messageContext.get(interaction.message.id);
+    const trophyFrogProgress = context?.trophyFrogProgress || createTrophyFrogProgress(null);
+    await interaction.reply({
+      embeds: [buildFrogInfoEmbed(frog, trophyFrogProgress)],
+      flags: MessageFlags.Ephemeral
+    });
+    return true;
+  }
+
   return {
     handleTrophyFishingCommand,
-    handleTrophyFishSelect
+    handleTrophyFrogsCommand,
+    handleTrophyFishSelect,
+    handleTrophyFrogSelect
   };
 }
 
