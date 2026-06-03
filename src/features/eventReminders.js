@@ -6,7 +6,8 @@ const {
   getDisplayEndAt,
   getDisplayStartAt,
   getReminderDeleteAt,
-  getReminderStatusLine
+  getReminderStatusLine,
+  formatScheduleDuration
 } = require('./eventCalendar');
 
 function createEventRemindersService({ client, store, minecraft = null, mayorAlerts = null }) {
@@ -269,6 +270,11 @@ function createEventReminderEmbed(definition, schedule) {
 
   if (Number.isFinite(displayEndAt)) {
     lines.push(`End: <t:${Math.floor(displayEndAt / 1000)}:F>`);
+  }
+
+  const durationLine = formatScheduleDuration(displayStartAt, displayEndAt);
+  if (durationLine) {
+    lines.push(durationLine);
   }
 
   if (typeof definition.extraLines === 'function') {

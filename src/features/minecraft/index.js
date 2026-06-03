@@ -1,8 +1,8 @@
 const { createIrcBridge } = require('./ircBridge');
 
-function createMinecraftFeatures({ client, env, store }) {
+function createMinecraftFeatures({ client, env, store, linkStore = store }) {
   const modules = {
-    ircBridge: createIrcBridge({ client, env, store })
+    ircBridge: createIrcBridge({ client, env, store, linkStore })
   };
 
   async function start() {

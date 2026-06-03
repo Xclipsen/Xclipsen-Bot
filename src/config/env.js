@@ -18,6 +18,8 @@ const env = {
   IRC_BRIDGE_AUTH_TOKEN: process.env.IRC_BRIDGE_AUTH_TOKEN || 'change-me',
   IRC_BRIDGE_CHANNEL_ID: process.env.IRC_BRIDGE_CHANNEL_ID || process.env.DISCORD_CHANNEL_ID || null,
   IRC_BRIDGE_MAX_BUFFERED_MESSAGES: Math.max(10, Number.parseInt(process.env.IRC_BRIDGE_MAX_BUFFERED_MESSAGES || '250', 10)),
+  MOD_BACKEND_URL: (process.env.MOD_BACKEND_URL || 'https://api.xclipsen.de').replace(/\/+$/, ''),
+  MOD_BACKEND_AUTH_TOKEN: process.env.MOD_BACKEND_AUTH_TOKEN || process.env.IRC_BRIDGE_AUTH_TOKEN || 'change-me',
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || null,
   HYPIXEL_API_KEY: process.env.HYPIXEL_API_KEY || null,
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,

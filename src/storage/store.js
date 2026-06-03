@@ -187,7 +187,12 @@ function normalizeBridgeLinksState(state) {
     )
     : {};
 
-  return { users };
+  return {
+    users,
+    hypixelVerificationMigrationVersion: Number.isFinite(state?.hypixelVerificationMigrationVersion)
+      ? Number(state.hypixelVerificationMigrationVersion)
+      : 0
+  };
 }
 
 function normalizeBridgeLinkedUser(entry) {
@@ -196,6 +201,10 @@ function normalizeBridgeLinkedUser(entry) {
     minecraftUsernames,
     entry?.preferredMinecraftUsername
   );
+  const hypixelVerifiedAt = Number.isFinite(entry?.hypixelVerifiedAt) ? Number(entry.hypixelVerifiedAt) : null;
+  const requiresHypixelVerification = Boolean(entry?.requiresHypixelVerification ?? (
+    minecraftUsernames.length > 0 && !hypixelVerifiedAt
+  ));
 
   return {
     discordUsername: typeof entry?.discordUsername === 'string' ? entry.discordUsername.trim() : '',
@@ -206,6 +215,8 @@ function normalizeBridgeLinkedUser(entry) {
     linkCode: typeof entry?.linkCode === 'string' ? entry.linkCode.trim().toUpperCase() : null,
     linkCodeExpiresAt: Number.isFinite(entry?.linkCodeExpiresAt) ? Number(entry.linkCodeExpiresAt) : null,
     linkedAt: Number.isFinite(entry?.linkedAt) ? Number(entry.linkedAt) : null,
+    hypixelVerifiedAt,
+    requiresHypixelVerification,
     eventPreferences: normalizeBridgeEventPreferences(entry?.eventPreferences)
   };
 }
@@ -447,6 +458,7 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
   let guildState = loadState(stateFilePath);
 
   migrateLegacyShitterEntries();
+  migrateLegacyBridgeLinks();
 
   function saveConfig() {
     saveJsonFile(configFilePath, guildConfig);
@@ -488,6 +500,28 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       saveConfig();
       saveShitterData();
     }
+  }
+
+  function migrateLegacyBridgeLinks() {
+    const links = normalizeBridgeLinksState(guildState.links);
+    if (links.hypixelVerificationMigrationVersion >= 1) {
+      return;
+    }
+
+    const hasLegacyLinks = Object.values(links.users)
+      .some((entry) => entry.requiresHypixelVerification && entry.minecraftUsernames.length > 0);
+    if (!hasLegacyLinks) {
+      return;
+    }
+
+    guildState = {
+      ...guildState,
+      links: {
+        ...links,
+        hypixelVerificationMigrationVersion: 1
+      }
+    };
+    saveState();
   }
 
   return {
@@ -599,7 +633,11 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     },
     getPreferredBridgeMinecraftUsername(discordUserId) {
       const account = this.getBridgeLinkedAccount(discordUserId);
-      return account?.preferredMinecraftUsername || account?.minecraftUsernames?.[0] || null;
+      if (account?.requiresHypixelVerification) {
+        return null;
+      }
+
+      return account?.minecraftUsernames?.[0] || null;
     },
     setBridgeLinkedAccount(discordUserId, partialEntry) {
       const key = String(discordUserId || '').trim();
@@ -607,6 +645,7 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       guildState = {
         ...guildState,
         links: {
+          ...links,
           users: {
             ...links.users,
             [key]: normalizeBridgeLinkedUser({
@@ -619,25 +658,6 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       saveState();
       return this.getBridgeLinkedAccount(key);
     },
-    setPreferredBridgeMinecraftUsername(discordUserId, minecraftUsername) {
-      const key = String(discordUserId || '').trim();
-      const account = this.getBridgeLinkedAccount(key);
-      if (!account || account.minecraftUsernames.length === 0) {
-        return { ok: false, error: 'You are not linked yet.' };
-      }
-
-      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
-      const preferredMinecraftUsername = account.minecraftUsernames.find(
-        (username) => username.toLowerCase() === normalizedUsername.toLowerCase()
-      );
-
-      if (!preferredMinecraftUsername) {
-        return { ok: false, error: 'That username is not part of your linked accounts.' };
-      }
-
-      const updated = this.setBridgeLinkedAccount(key, { preferredMinecraftUsername });
-      return { ok: true, account: updated, username: updated.preferredMinecraftUsername };
-    },
     removeBridgeLinkedAccount(discordUserId) {
       const key = String(discordUserId || '').trim();
       const links = normalizeBridgeLinksState(guildState.links);
@@ -646,19 +666,25 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       guildState = {
         ...guildState,
         links: {
+          ...links,
           users: nextUsers
         }
       };
       saveState();
     },
-    findBridgeLinkByMinecraftUsername(username) {
+    findBridgeLinkByMinecraftUsername(username, options = {}) {
       const normalizedUsername = normalizeMinecraftUsername(username).toLowerCase();
       if (!normalizedUsername) {
         return null;
       }
 
+      const includeLegacy = options.includeLegacy === true;
       const links = normalizeBridgeLinksState(guildState.links);
       for (const [discordUserId, entry] of Object.entries(links.users)) {
+        if (!includeLegacy && entry.requiresHypixelVerification) {
+          continue;
+        }
+
         if (entry.minecraftUsernames.some((value) => value.toLowerCase() === normalizedUsername)) {
           return { discordUserId, entry };
         }
@@ -741,27 +767,50 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
 
       return { ok: false, error: 'Link code not found or expired.' };
     },
-    addBridgeMinecraftUsernames(discordUserId, minecraftUsernames) {
+    linkVerifiedBridgeMinecraftUsernames(discordUserId, minecraftUsernames, metadata = {}) {
       const key = String(discordUserId || '').trim();
       const account = this.getBridgeLinkedAccount(key);
-      if (!account || account.minecraftUsernames.length === 0) {
-        return { ok: false, error: 'You are not linked yet.' };
+      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
+      if (usernames.length === 0) {
+        return { ok: false, error: 'Add at least one valid Minecraft username.' };
       }
 
-      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
       const conflicts = usernames.filter((username) => {
-        const existing = this.findBridgeLinkByMinecraftUsername(username);
-        return existing && existing.discordUserId !== key;
+        const existing = this.findBridgeLinkByMinecraftUsername(username, { includeLegacy: true });
+        return existing && existing.discordUserId !== key && !existing.entry.requiresHypixelVerification;
       });
 
       if (conflicts.length > 0) {
         return { ok: false, error: `These usernames are already linked: ${conflicts.join(', ')}` };
       }
 
+      for (const username of usernames) {
+        const existing = this.findBridgeLinkByMinecraftUsername(username, { includeLegacy: true });
+        if (existing && existing.discordUserId !== key && existing.entry.requiresHypixelVerification) {
+          this.removeBridgeMinecraftUsername(existing.discordUserId, username);
+        }
+      }
+
+      const existingUsernames = account?.requiresHypixelVerification
+        ? []
+        : (account?.minecraftUsernames || []);
+      const verifiedAt = Date.now();
       const updated = this.setBridgeLinkedAccount(key, {
-        minecraftUsernames: [...account.minecraftUsernames, ...usernames]
+        ...metadata,
+        minecraftUsernames: normalizeMinecraftUsernameList([
+          ...existingUsernames,
+          ...usernames
+        ]),
+        pendingMinecraftUsernames: [],
+        linkCode: null,
+        linkCodeExpiresAt: null,
+        linkedAt: account?.linkedAt || Date.now(),
+        hypixelVerifiedAt: verifiedAt,
+        requiresHypixelVerification: false,
+        eventPreferences: account?.eventPreferences || normalizeBridgeEventPreferences()
       });
-      return { ok: true, account: updated };
+
+      return { ok: true, account: updated, usernames };
     },
     removeBridgeMinecraftUsername(discordUserId, minecraftUsername) {
       const key = String(discordUserId || '').trim();
@@ -780,6 +829,10 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       const account = this.getBridgeLinkedAccount(key);
       if (!account || account.minecraftUsernames.length === 0) {
         return { ok: false, error: 'You are not linked yet.' };
+      }
+
+      if (account.requiresHypixelVerification) {
+        return { ok: false, error: `Re-verify your Minecraft link with \`/link username:${account.minecraftUsernames[0]}\` first.` };
       }
 
       if (!BRIDGE_EVENT_KEYS.includes(eventKey)) {

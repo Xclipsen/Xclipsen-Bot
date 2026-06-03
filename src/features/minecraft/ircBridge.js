@@ -4,29 +4,7 @@ const { MessageFlags, MessageReferenceType } = require('discord.js');
 const COOP_RELAY_DEDUPE_WINDOW_MS = 2500;
 const MAX_RECENT_COOP_RELAYS = 250;
 
-// ── Hypixel Bazaar price cache ───────────────────────────────────────────────
-// Items tracked in the Shard Profit Tracker.
-// Key = Hypixel Bazaar item ID, value = display name as it appears in the Mod HUD
-// (i.e. the name extracted from the chat drop message after stripping formatting).
-const TRACKED_ITEM_IDS = {
-  SHARD_HIDEONLEAF:  'Hideonleaf Shards',
-  SHARD_HIDEONBOX:   'Hideonbox Shards',
-  SHARD_HIDEONCAVE:  'Hideoncave Shards',
-  SHARD_HIDEONDRA:   'Hideondra Shards',
-  SHARD_HIDEONGEON:  'Hideongeon Shards',
-  SHARD_HIDEONGIFT:  'Hideongift Shards',
-  SHARD_HIDEONRING:  'Hideonring Shards',
-  SHARD_HIDEONSACK:  'Hideonsack Shards',
-};
-
-const BAZAAR_API_URL = 'https://api.hypixel.net/v2/skyblock/bazaar';
-const BAZAAR_CACHE_TTL_MS = 5 * 60 * 1000; // 5 minutes
-
-let bazaarCache = null;      // { prices: { displayName -> { buyPrice, sellPrice, lastUpdated } } }
-let bazaarCacheAt = 0;
-let bazaarFetchInFlight = false;
-
-function createIrcBridge({ client, env, store }) {
+function createIrcBridge({ client, env, store, linkStore = store }) {
   const mentionPattern = /(^|[\s(])@([a-zA-Z0-9._-]{2,32})\b/g;
   const bufferedMessages = [];
   const recentCoopRelayKeys = [];
@@ -47,8 +25,8 @@ function createIrcBridge({ client, env, store }) {
     }
   }
 
-  function getMessagesAfter(afterId, playerName = '') {
-    const linked = store.findBridgeLinkByMinecraftUsername(playerName);
+  async function getMessagesAfter(afterId, playerName = '') {
+    const linked = await findLinkedByMinecraftUsername(playerName);
     if (!linked) {
       return [];
     }
@@ -107,7 +85,7 @@ function createIrcBridge({ client, env, store }) {
         return;
       }
 
-      const linked = store.findBridgeLinkByMinecraftUsername(coopPlayer);
+      const linked = await findLinkedByMinecraftUsername(coopPlayer);
       const playerName = linked
         ? await resolveLinkedDisplayName(channel, linked.discordUserId, coopPlayer)
         : coopPlayer.replace(/@/g, '@\u200b');
@@ -115,7 +93,7 @@ function createIrcBridge({ client, env, store }) {
       content = `[Forwarded Co-op] **${playerName}**: ${resolved.content}`;
       allowedUserMentions = resolved.allowedUserMentions;
     } else {
-      const linked = store.findBridgeLinkByMinecraftUsername(String(payload.playerName || ''));
+      const linked = await findLinkedByMinecraftUsername(String(payload.playerName || ''));
       if (!linked) {
         return;
       }
@@ -224,237 +202,11 @@ function createIrcBridge({ client, env, store }) {
     );
   }
 
-  // ── Bazaar price helpers ───────────────────────────────────────────────────
-
-  async function fetchBazaarPrices() {
-    // Return cached result if still fresh
-    if (bazaarCache && Date.now() - bazaarCacheAt < BAZAAR_CACHE_TTL_MS) {
-      return bazaarCache;
-    }
-
-    // Avoid parallel in-flight fetches
-    if (bazaarFetchInFlight) {
-      return bazaarCache;
-    }
-
-    if (!env.HYPIXEL_API_KEY) {
-      console.warn('[prices] HYPIXEL_API_KEY is not set — cannot fetch Bazaar prices.');
-      return bazaarCache;
-    }
-
-    bazaarFetchInFlight = true;
-    try {
-      const response = await fetch(BAZAAR_API_URL, {
-        headers: { 'API-Key': env.HYPIXEL_API_KEY },
-        signal: AbortSignal.timeout(10_000),
-      });
-
-      if (!response.ok) {
-        console.warn(`[prices] Bazaar API returned HTTP ${response.status}`);
-        return bazaarCache; // serve stale on error
-      }
-
-      const data = await response.json();
-
-      if (!data.success || !data.products) {
-        console.warn('[prices] Bazaar API response missing products field.');
-        return bazaarCache;
-      }
-
-      const prices = {};
-      for (const [itemId, displayName] of Object.entries(TRACKED_ITEM_IDS)) {
-        const product = data.products[itemId];
-        if (!product) {
-          // Item not in Bazaar — leave price at 0 so the Mod falls back to manual value
-          continue;
-        }
-
-        const buySummary = product.buy_summary;
-        const sellSummary = product.sell_summary;
-        prices[displayName] = {
-          buyPrice: buySummary?.[0]?.pricePerUnit ?? 0,
-          sellPrice: sellSummary?.[0]?.pricePerUnit ?? 0,
-          lastUpdated: Date.now(),
-        };
-      }
-
-      bazaarCache = { prices };
-      bazaarCacheAt = Date.now();
-      console.log(`[prices] Bazaar prices refreshed for ${Object.keys(prices).length} item(s).`);
-      return bazaarCache;
-    } catch (error) {
-      console.error('[prices] Failed to fetch Bazaar prices:', error);
-      return bazaarCache; // serve stale on error
-    } finally {
-      bazaarFetchInFlight = false;
-    }
-  }
-
   // ── Request handler ────────────────────────────────────────────────────────
 
   async function handleRequest(request, response) {
     if (request.url === '/health') {
       writeJson(response, 200, { status: 'ok' });
-      return;
-    }
-
-    if (request.url.startsWith('/api/link/status')) {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
-      const playerName = String(url.searchParams.get('playerName') || '');
-      const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-      writeJson(response, 200, buildLinkStatusPayload(playerName, linked));
-      return;
-    }
-
-    if (request.url === '/api/link/complete') {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      if (request.method !== 'POST') {
-        writeJson(response, 405, { error: 'method not allowed' });
-        return;
-      }
-
-      try {
-        const payload = await readJson(request);
-        const result = store.completeBridgeLink(payload?.code, payload?.playerName);
-        writeJson(response, result.ok ? 200 : 400, result.ok
-          ? {
-            linked: true,
-            playerName: String(payload?.playerName || ''),
-            minecraftUsernames: result.account.minecraftUsernames
-          }
-          : { error: result.error });
-      } catch (error) {
-        console.error('IRC link completion failed:', error);
-        writeJson(response, 500, { error: 'internal error' });
-      }
-      return;
-    }
-
-    if (request.url === '/api/skyblock/prices') {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      try {
-        const result = await fetchBazaarPrices();
-        writeJson(response, 200, result ?? { prices: {} });
-      } catch (error) {
-        console.error('[prices] Price endpoint failed:', error);
-        writeJson(response, 500, { error: 'internal error' });
-      }
-      return;
-    }
-
-    if (request.url === '/api/hideonleaf') {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      if (request.method !== 'POST') {
-        writeJson(response, 405, { error: 'method not allowed' });
-        return;
-      }
-
-      try {
-        const payload = await readJson(request);
-        const playerName = normalizeMinecraftUsername(payload?.playerName);
-        const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-        if (!linked) {
-          writeJson(response, 403, { error: 'link required' });
-          return;
-        }
-
-        store.setUserHideonleafStats(playerName, {
-          minecraftUsername: playerName || linked.entry.preferredMinecraftUsername || linked.entry.minecraftUsernames?.[0] || '',
-          kills: Math.max(0, Number(payload?.kills) || 0),
-          totalShards: Math.max(0, Number(payload?.totalShards) || 0),
-          totalProfit: Math.max(0, Number(payload?.totalProfit) || 0),
-          profitPerHour: Math.max(0, Number(payload?.profitPerHour) || 0),
-          totalDurationMs: Math.max(0, Number(payload?.totalDurationMs) || 0),
-          items: payload?.items && typeof payload.items === 'object' ? payload.items : {},
-          updatedAt: Math.max(0, Number(payload?.updatedAt) || 0)
-        });
-
-        writeJson(response, 202, { status: 'accepted' });
-      } catch (error) {
-        console.error('[hideonleaf] Stats upload failed:', error);
-        writeJson(response, 500, { error: 'internal error' });
-      }
-      return;
-    }
-
-    if (request.url === '/api/mob-model') {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      if (request.method !== 'POST') {
-        writeJson(response, 405, { error: 'method not allowed' });
-        return;
-      }
-
-      try {
-        const payload = await readJson(request);
-        const playerName = normalizeMinecraftUsername(payload?.minecraftUsername);
-        const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-        if (!linked) {
-          writeJson(response, 403, { error: 'link required' });
-          return;
-        }
-
-        store.setUserMobModel(playerName, {
-          minecraftUsername: playerName || linked.entry.preferredMinecraftUsername || linked.entry.minecraftUsernames?.[0] || '',
-          enabled: payload?.enabled === true,
-          entityType: payload?.entityType,
-          baby: payload?.baby === true,
-          updatedAt: Math.max(0, Number(payload?.updatedAt) || 0)
-        });
-
-        writeJson(response, 202, { status: 'accepted' });
-      } catch (error) {
-        console.error('[mob-model] State upload failed:', error);
-        writeJson(response, 500, { error: 'internal error' });
-      }
-      return;
-    }
-
-    if (request.url.startsWith('/api/hideonleaf/status')) {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
-      const playerName = String(url.searchParams.get('playerName') || '');
-      const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-      writeJson(response, 200, linked ? (store.getUserHideonleafStats(playerName) || {}) : {});
-      return;
-    }
-
-    if (request.url.startsWith('/api/mob-models')) {
-      if (!isAuthorized(request)) {
-        writeJson(response, 401, { error: 'unauthorized' });
-        return;
-      }
-
-      const url = new URL(request.url, `http://${request.headers.host || '127.0.0.1'}`);
-      const playerName = String(url.searchParams.get('playerName') || '');
-      const linked = store.findBridgeLinkByMinecraftUsername(playerName);
-      writeJson(response, 200, {
-        states: linked ? store.listMobModels() : []
-      });
       return;
     }
 
@@ -473,8 +225,8 @@ function createIrcBridge({ client, env, store }) {
       const after = Number.parseInt(url.searchParams.get('after') || '0', 10);
       const playerName = String(url.searchParams.get('playerName') || '');
       writeJson(response, 200, {
-        linked: Boolean(store.findBridgeLinkByMinecraftUsername(playerName)),
-        messages: getMessagesAfter(Number.isNaN(after) ? 0 : after, playerName)
+        linked: Boolean(await findLinkedByMinecraftUsername(playerName)),
+        messages: await getMessagesAfter(Number.isNaN(after) ? 0 : after, playerName)
       });
       return;
     }
@@ -489,7 +241,7 @@ function createIrcBridge({ client, env, store }) {
         }
 
         if (payload.type === 'irc') {
-          const linked = store.findBridgeLinkByMinecraftUsername(payload.playerName);
+          const linked = await findLinkedByMinecraftUsername(payload.playerName);
           if (!linked) {
             writeJson(response, 403, { error: 'link required' });
             return;
@@ -501,7 +253,7 @@ function createIrcBridge({ client, env, store }) {
             minecraftUsername: String(payload.playerName || '')
           });
         } else if (payload.type === 'coop') {
-          const linked = store.findBridgeLinkByMinecraftUsername(payload.playerName);
+          const linked = await findLinkedByMinecraftUsername(payload.playerName);
           if (!linked) {
             writeJson(response, 403, { error: 'link required' });
             return;
@@ -771,6 +523,10 @@ function createIrcBridge({ client, env, store }) {
     }
 
     return linkedAccount.eventPreferences?.[String(message.eventKey || '').trim()] !== false;
+  }
+
+  async function findLinkedByMinecraftUsername(playerName) {
+    return linkStore.findBridgeLinkByMinecraftUsername(playerName);
   }
 
   function buildLinkStatusPayload(playerName, linked) {

@@ -271,12 +271,12 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return Array.isArray(data.profiles) ? data.profiles : [];
   }
 
-  function resolveRequestedPlayer(interaction) {
-    const { username, usedLinkedAccount } = resolveMinecraftUsernameOption({
+  async function resolveRequestedPlayer(interaction) {
+    const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({
       interaction,
       store,
       optionName: 'player',
-      missingMessage: 'No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.'
+      missingMessage: 'No player provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `player:`.'
     });
 
     return { player: username, usedLinkedAccount };
@@ -588,7 +588,7 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     await interaction.deferReply();
 
     try {
-      const { player, usedLinkedAccount } = resolveRequestedPlayer(interaction);
+      const { player, usedLinkedAccount } = await resolveRequestedPlayer(interaction);
       const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
       const { uuid, name } = await minecraft.resolvePlayerProfile(player);
       const profiles = await fetchProfiles(uuid);
@@ -620,7 +620,7 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     await interaction.deferReply();
 
     try {
-      const { player, usedLinkedAccount } = resolveRequestedPlayer(interaction);
+      const { player, usedLinkedAccount } = await resolveRequestedPlayer(interaction);
       const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
       const { uuid, name } = await minecraft.resolvePlayerProfile(player);
       const profiles = await fetchProfiles(uuid);

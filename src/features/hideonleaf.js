@@ -2,7 +2,7 @@ const { EmbedBuilder } = require('discord.js');
 
 function createHideonleafFeature({ store }) {
   async function handleHideonleafCommand(interaction) {
-    const entries = store.listHideonleafStats()
+    const entries = (await store.listHideonleafStats())
       .filter((entry) => (
         entry.kills > 0 ||
         entry.totalShards > 0 ||
@@ -25,22 +25,22 @@ function createHideonleafFeature({ store }) {
       .addFields(
         {
           name: 'Kills',
-          value: formatLeaderboard(entries, 'kills', (value) => formatInteger(value)),
+          value: await formatLeaderboard(store, entries, 'kills', (value) => formatInteger(value)),
           inline: true
         },
         {
           name: 'Shards',
-          value: formatLeaderboard(entries, 'totalShards', (value) => formatInteger(value)),
+          value: await formatLeaderboard(store, entries, 'totalShards', (value) => formatInteger(value)),
           inline: true
         },
         {
           name: 'Money',
-          value: formatLeaderboard(entries, 'totalProfit', (value) => formatCoins(value)),
+          value: await formatLeaderboard(store, entries, 'totalProfit', (value) => formatCoins(value)),
           inline: true
         },
         {
           name: 'Money/h',
-          value: formatLeaderboard(entries, 'profitPerHour', (value) => `${formatCoins(value)}/h`),
+          value: await formatLeaderboard(store, entries, 'profitPerHour', (value) => `${formatCoins(value)}/h`),
           inline: true
         }
       )
@@ -50,7 +50,7 @@ function createHideonleafFeature({ store }) {
     await interaction.reply({ embeds: [embed] });
   }
 
-  function formatLeaderboard(entries, key, formatter) {
+  async function formatLeaderboard(store, entries, key, formatter) {
     const ranked = [...entries]
       .sort((left, right) => {
         const valueDelta = Number(right[key] || 0) - Number(left[key] || 0);
@@ -66,8 +66,9 @@ function createHideonleafFeature({ store }) {
       return 'Keine Daten';
     }
 
+    const names = await Promise.all(ranked.map((entry) => formatEntryName(store, entry)));
     return ranked
-      .map((entry, index) => `\`${index + 1}.\` ${formatEntryName(store, entry)}: **${formatter(entry[key])}**`)
+      .map((entry, index) => `\`${index + 1}.\` ${names[index]}: **${formatter(entry[key])}**`)
       .join('\n');
   }
 
@@ -76,8 +77,8 @@ function createHideonleafFeature({ store }) {
   };
 }
 
-function formatEntryName(store, entry) {
-  const linked = store.findBridgeLinkByMinecraftUsername(entry.minecraftUsername)?.entry || null;
+async function formatEntryName(store, entry) {
+  const linked = (await store.findBridgeLinkByMinecraftUsername(entry.minecraftUsername))?.entry || null;
   const discordName = String(
     linked?.discordDisplayName ||
     linked?.discordUsername ||

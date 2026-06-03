@@ -23,12 +23,13 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
+- Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link.
 - Includes `/gif` to convert an uploaded image into a GIF.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
 - Persists booth state and the status message ID in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 - Stores shitter list entries in `data/shitter-list.json`.
-- Can optionally expose a built-in HTTP bridge backend for the Fabric IRC client mod.
+- Can optionally expose a built-in HTTP IRC bridge server for the Fabric client mod.
 
 ## Setup
 
@@ -45,11 +46,13 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 ## Configuration
 
 - `DISCORD_TOKEN` - bot token from the Discord Developer Portal
-- `IRC_BRIDGE_ENABLED` - enable the built-in HTTP backend for the Fabric IRC mod
-- `IRC_BRIDGE_HOST` / `IRC_BRIDGE_PORT` - listen address for the built-in backend
+- `IRC_BRIDGE_ENABLED` - enable the built-in HTTP IRC bridge server for the Fabric mod
+- `IRC_BRIDGE_HOST` / `IRC_BRIDGE_PORT` - listen address for the IRC bridge server
 - `IRC_BRIDGE_AUTH_TOKEN` - shared secret used by the Minecraft mod
 - `IRC_BRIDGE_CHANNEL_ID` - Discord channel used for the bridge
 - `IRC_BRIDGE_MAX_BUFFERED_MESSAGES` - how many recent Discord/IRC messages the backend keeps for clients
+- `MOD_BACKEND_URL` - standalone Xclipsen Mod backend URL, defaults to `https://api.xclipsen.de`
+- `MOD_BACKEND_AUTH_TOKEN` - token used by the bot when reading/writing mod backend links
 - `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
 - `HYPIXEL_API_KEY` - required for `/cata` and `/catacombs` using the official Hypixel API
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
@@ -129,6 +132,14 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - When they remove the reaction, the bot removes the role.
 - The bot needs `Manage Roles`, and the target role must be lower than the bot's top role.
 
+## Linked Minecraft Accounts
+
+- Use `/link username:<ign>` to verify and save Minecraft usernames through Hypixel Social Media.
+- The player's Hypixel `Discord` social link must match the Discord username running the command.
+- This feature requires `HYPIXEL_API_KEY`.
+- Links created by the old Minecraft code flow are treated as legacy and must be re-verified with `/link username:<ign>`.
+- If you leave the name field empty on supported commands, the bot uses your linked Minecraft username.
+
 ## Shitter List
 
 - Use `/shitter add [name:<ign>] reason:<text>` to add or update an entry.
@@ -138,7 +149,6 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - The bot automatically stores the current date and time for each entry.
 - Use `/shitter query [name:<ign>]` to check whether an IGN is listed.
 - Use `/shitter remove [name:<ign>]` to mark all active entries for that IGN as removed while keeping history.
-- If you leave the name field empty on supported commands, the bot uses your prioritized linked Minecraft username.
 - Use `/shitter list` to show unique names for the server and select one from a menu.
 - In `/setup -> Discord -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
 

@@ -8,6 +8,7 @@ const { createAccessControl } = require('./features/accessControl');
 const { createSkyblockUtils } = require('./utils/skyblock');
 const { createSkyblockItemEmojiUtils } = require('./utils/skyblockItemEmojis');
 const { createMinecraftUtils } = require('./utils/minecraft');
+const { createModBackendClient } = require('./utils/modBackend');
 const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createModUpdatesService } = require('./features/modUpdates');
 const { createEventRemindersService } = require('./features/eventReminders');
@@ -49,7 +50,8 @@ const accessControl = createAccessControl(env.PRIVILEGED_USER_IDS);
 const skyblock = createSkyblockUtils(env);
 const itemEmojis = createSkyblockItemEmojiUtils(env);
 const minecraft = createMinecraftUtils(env);
-const minecraftFeatures = createMinecraftFeatures({ client, env, store });
+const modBackend = createModBackendClient(env);
+const minecraftFeatures = createMinecraftFeatures({ client, env, store, linkStore: modBackend });
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
 const eventReminders = createEventRemindersService({ client, store, minecraft: minecraftFeatures, mayorAlerts });
@@ -81,8 +83,8 @@ const shitterList = createShitterListFeature({
   ensureSetupAccess: accessControl.ensureSetupAccess
 });
 const simulation = createSimulationFeature({ store });
-const hideonleaf = createHideonleafFeature({ store });
-const linking = createLinkingFeature({ store });
+const hideonleaf = createHideonleafFeature({ store: modBackend });
+const linking = createLinkingFeature({ store: modBackend, env, minecraft });
 
 let isCheckingElectionState = false;
 let isSendingScheduledStatusUpdate = false;

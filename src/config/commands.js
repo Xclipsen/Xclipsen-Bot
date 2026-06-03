@@ -342,53 +342,28 @@ const testCommand = new SlashCommandBuilder()
 
 const linkCommand = new SlashCommandBuilder()
   .setName('link')
-  .setDescription('Link your Discord account to one or more Minecraft usernames for the backend bridge.')
-  .addSubcommand((subcommand) => subcommand
-    .setName('start')
-    .setDescription('Create a Minecraft link code for one or more usernames.')
-    .addStringOption((option) => option
-      .setName('usernames')
-      .setDescription('Comma-separated Minecraft usernames to attach to this Discord account')
-      .setRequired(true)))
-  .addSubcommand((subcommand) => subcommand
-    .setName('status')
-    .setDescription('Show your current backend link status.'))
-  .addSubcommand((subcommand) => subcommand
-    .setName('add')
-    .setDescription('Add more Minecraft usernames after linking.')
-    .addStringOption((option) => option
-      .setName('usernames')
-      .setDescription('Comma-separated Minecraft usernames')
-      .setRequired(true)))
-  .addSubcommand((subcommand) => subcommand
+  .setDescription('Link your Discord account to Minecraft through your Hypixel Discord social link.')
+  .addStringOption((option) => option
+    .setName('username')
+    .setDescription('Minecraft username, or comma-separated usernames, to verify and link')
+    .setRequired(false))
+  .addStringOption((option) => option
     .setName('remove')
-    .setDescription('Remove one Minecraft username from your link.')
-    .addStringOption((option) => option
-      .setName('username')
-      .setDescription('Minecraft username to remove, or leave empty to use your prioritized linked account')
-      .setRequired(false)))
-  .addSubcommand((subcommand) => subcommand
-    .setName('prio')
-    .setDescription('Choose which linked Minecraft username should be used by default.')
-    .addStringOption((option) => option
-      .setName('username')
-      .setDescription('Minecraft username to prioritize, or leave empty to reuse your current prioritized account')
-      .setRequired(false)))
-  .addSubcommand((subcommand) => subcommand
+    .setDescription('Minecraft username to remove from your link')
+    .setRequired(false))
+  .addStringOption((option) => option
     .setName('event')
-    .setDescription('Enable or disable one event ping for your linked backend account.')
-    .addStringOption((option) => option
-      .setName('event')
-      .setDescription('Event to toggle')
-      .setRequired(true)
-      .addChoices(...linkEventChoices))
-    .addBooleanOption((option) => option
-      .setName('enabled')
-      .setDescription('Whether this event should reach your Minecraft client')
-      .setRequired(true)))
-  .addSubcommand((subcommand) => subcommand
+    .setDescription('Event ping to toggle')
+    .setRequired(false)
+    .addChoices(...linkEventChoices))
+  .addBooleanOption((option) => option
+    .setName('enabled')
+    .setDescription('Whether the selected event should reach your Minecraft client')
+    .setRequired(false))
+  .addBooleanOption((option) => option
     .setName('unlink')
-    .setDescription('Remove your backend link and all linked Minecraft usernames.'));
+    .setDescription('Remove your backend link and all linked Minecraft usernames')
+    .setRequired(false));
 
 const commands = [
   helpCommand,

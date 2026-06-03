@@ -5,6 +5,9 @@ const DAY_MS = env.SKYBLOCK_DAY_SECONDS * 1000;
 const MONTH_MS = DAY_MS * 31;
 const EPOCH_MS = env.SKYBLOCK_EPOCH_SECONDS * 1000;
 const SHORT_REMINDER_MS = 60 * 1000;
+const REAL_MINUTE_MS = 60 * 1000;
+const REAL_HOUR_MS = 60 * REAL_MINUTE_MS;
+const REAL_DAY_MS = 24 * REAL_HOUR_MS;
 const WEATHER_ANCHOR_MS = (env.SKYBLOCK_EPOCH_SECONDS + (40 * 60)) * 1000;
 const WEATHER_PERIOD_MS = 60 * 60 * 1000;
 const WEATHER_DURATION_MS = 20 * 60 * 1000;
@@ -638,6 +641,46 @@ function getReminderStatusLine(definition) {
   return `${definition.emoji} ${definition.label} is active now.`;
 }
 
+function formatDurationPart(value, singularUnit) {
+  return `${value} ${singularUnit}${value === 1 ? '' : 's'}`;
+}
+
+function formatEventDurationMs(durationMs) {
+  if (!Number.isFinite(durationMs) || durationMs <= 0) {
+    return null;
+  }
+
+  const totalMinutes = Math.max(1, Math.round(durationMs / REAL_MINUTE_MS));
+  const days = Math.floor(totalMinutes / (REAL_DAY_MS / REAL_MINUTE_MS));
+  const remainingAfterDays = totalMinutes - (days * (REAL_DAY_MS / REAL_MINUTE_MS));
+  const hours = Math.floor(remainingAfterDays / (REAL_HOUR_MS / REAL_MINUTE_MS));
+  const minutes = remainingAfterDays - (hours * (REAL_HOUR_MS / REAL_MINUTE_MS));
+  const parts = [];
+
+  if (days > 0) {
+    parts.push(formatDurationPart(days, 'day'));
+  }
+
+  if (hours > 0) {
+    parts.push(formatDurationPart(hours, 'hour'));
+  }
+
+  if (minutes > 0 || parts.length === 0) {
+    parts.push(formatDurationPart(minutes, 'minute'));
+  }
+
+  return parts.slice(0, 2).join(' ');
+}
+
+function formatScheduleDuration(displayStartAt, displayEndAt) {
+  if (!Number.isFinite(displayStartAt) || !Number.isFinite(displayEndAt)) {
+    return null;
+  }
+
+  const duration = formatEventDurationMs(displayEndAt - displayStartAt);
+  return duration ? `Lasts: ${duration}` : null;
+}
+
 function formatCalendarEntry(entry) {
   const displayStartAt = getDisplayStartAt(entry);
   const lines = [`${entry.emoji} ${entry.label}:`];
@@ -651,6 +694,11 @@ function formatCalendarEntry(entry) {
   const displayEndAt = getDisplayEndAt(entry);
   if (Number.isFinite(displayEndAt)) {
     lines.push(`End: <t:${Math.floor(displayEndAt / 1000)}:F> (<t:${Math.floor(displayEndAt / 1000)}:R>)`);
+  }
+
+  const durationLine = formatScheduleDuration(displayStartAt, displayEndAt);
+  if (durationLine) {
+    lines.push(durationLine);
   }
 
   const extraLines = typeof EVENT_DEFINITION_MAP[entry.key]?.extraLines === 'function'
@@ -669,5 +717,6 @@ module.exports = {
   getDisplayEndAt,
   getReminderDeleteAt,
   getReminderStatusLine,
+  formatScheduleDuration,
   formatCalendarEntry
 };

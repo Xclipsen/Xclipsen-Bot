@@ -98,11 +98,11 @@ function createNameHistoryFeature({ minecraft, store }) {
     await interaction.deferReply();
 
     try {
-      const { username, usedLinkedAccount } = resolveMinecraftUsernameOption({
+      const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({
         interaction,
         store,
         optionName: 'player',
-        missingMessage: 'No player provided and no linked Minecraft username found. Use `/link start` first or pass `player:`.'
+        missingMessage: 'No player provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `player:`.'
       });
 
       const player = username;

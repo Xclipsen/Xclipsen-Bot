@@ -119,12 +119,12 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     return String(value || '').trim().toLowerCase();
   }
 
-  function resolveIgn(interaction) {
+  async function resolveIgn(interaction) {
     return resolveMinecraftUsernameOption({
       interaction,
       store,
       optionName: 'name',
-      missingMessage: 'No username provided and no linked Minecraft username found. Use `/link start` first or pass `name:`.'
+      missingMessage: 'No username provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `name:`.'
     });
   }
 
@@ -322,7 +322,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     let username;
     let usedLinkedAccount;
     try {
-      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
     } catch (error) {
       await interaction.reply({
         content: error.message,
@@ -425,7 +425,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     let username;
     let usedLinkedAccount;
     try {
-      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
     } catch (error) {
       await interaction.reply({
         content: error.message,
@@ -488,7 +488,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     let username;
     let usedLinkedAccount;
     try {
-      ({ username, usedLinkedAccount } = resolveIgn(interaction));
+      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
     } catch (error) {
       await interaction.reply({
         content: error.message,

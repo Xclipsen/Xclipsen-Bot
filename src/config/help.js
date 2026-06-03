@@ -42,12 +42,12 @@ const helpSections = [
     commands: [
       {
         command: '/uuid [player:<ign>]',
-        description: 'Look up a Mojang UUID and percentile-style UUID ranking, or use your linked prioritized IGN.',
+        description: 'Look up a Mojang UUID and percentile-style UUID ranking, or use your linked IGN.',
         example: '/uuid'
       },
       {
         command: '/namehistory [player:<ign>]',
-        description: 'Show the current Minecraft name plus known previous names, or use your linked prioritized IGN.',
+        description: 'Show the current Minecraft name plus known previous names, or use your linked IGN.',
         example: '/namehistory'
       },
       {
@@ -106,19 +106,14 @@ const helpSections = [
         example: '/lastpestfarmingprofits'
       },
       {
-        command: '/link start usernames:<name1,name2>',
-        description: 'Create a backend link code and finish the link in Minecraft with /link CODE.',
-        example: '/link start usernames:Xclipsen,AltName'
+        command: '/link username:<ign>',
+        description: 'Verify usernames through Hypixel Social Media and link them to your Discord account.',
+        example: '/link username:Xclipsen'
       },
       {
-        command: '/link prio [username:<ign>]',
-        description: 'Choose which linked Minecraft username should be used automatically by player lookup commands.',
-        example: '/link prio username:AltName'
-      },
-      {
-        command: '/link event event:<event> enabled:<true|false>',
+        command: '/link event:<event> enabled:<true|false>',
         description: 'Toggle one backend event ping for your linked Minecraft client.',
-        example: '/link event event:darkAuction enabled:false'
+        example: '/link event:darkAuction enabled:false'
       }
     ]
   },
@@ -129,17 +124,17 @@ const helpSections = [
     commands: [
       {
         command: '/shitter add [name:<ign>] reason:<text>',
-        description: 'Add or update a shitter entry with optional screenshots, or use your linked prioritized IGN.',
+        description: 'Add or update a shitter entry with optional screenshots, or use your linked IGN.',
         example: '/shitter add reason:Scam evidence'
       },
       {
         command: '/shitter query [name:<ign>]',
-        description: 'Check whether an IGN is listed in this server, or use your linked prioritized IGN.',
+        description: 'Check whether an IGN is listed in this server, or use your linked IGN.',
         example: '/shitter query'
       },
       {
         command: '/shitter remove [name:<ign>]',
-        description: 'Mark active entries for an IGN as removed while keeping history, or use your linked prioritized IGN.',
+        description: 'Mark active entries for an IGN as removed while keeping history, or use your linked IGN.',
         example: '/shitter remove'
       },
       {
