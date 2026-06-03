@@ -336,7 +336,7 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     return message;
   }
 
-  async function applyEventCalendarConfig(guild, channelId, rolePanelChannelId, eventRoles) {
+  async function applyEventCalendarConfig(guild, channelId, rolePanelChannelId, eventRoles, options = {}) {
     const existingConfig = store.getGuildConfig(guild.id);
     const existingState = store.getGuildRuntimeState(guild.id);
 
@@ -375,7 +375,16 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       }
     });
 
+    if (options.refreshStatus !== false) {
+      await mayorAlerts.refreshStatusForGuild(guild.id);
+    }
+  }
+
+  async function postEventRoleMessageThenStatus(guild, channelId, roles) {
+    await mayorAlerts.deleteTrackedMessagesForGuild?.(guild.id);
+    const message = await postEventRoleMessage(guild, channelId, roles);
     await mayorAlerts.refreshStatusForGuild(guild.id);
+    return message;
   }
 
   async function handleSetupNavigationButton(interaction) {
@@ -474,14 +483,14 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
         }
 
         const quickSetupRoles = await resolveQuickSetupEventRoles(interaction.guild);
-        await applyEventCalendarConfig(interaction.guild, interaction.channelId, interaction.channelId, quickSetupRoles.eventRoles);
-        await postEventRoleMessage(interaction.guild, interaction.channelId, quickSetupRoles.eventRoles);
+        await applyEventCalendarConfig(interaction.guild, interaction.channelId, interaction.channelId, quickSetupRoles.eventRoles, { refreshStatus: false });
+        await postEventRoleMessageThenStatus(interaction.guild, interaction.channelId, quickSetupRoles.eventRoles);
         const configuredEventRoles = Object.values(quickSetupRoles.eventRoles).filter(Boolean).length;
         note = [
           `Event Calendar quick setup complete. Shared channel set to <#${interaction.channelId}>.`,
           `Event roles configured: ${configuredEventRoles}.`,
           `New roles created: ${quickSetupRoles.createdCount}.`,
-          'Reaction-role message was rebuilt in this channel.'
+          'Reaction-role message was rebuilt above the calendar and mayor overview.'
         ].join('\n');
       } catch (error) {
         console.error(`Failed to quick-setup event calendar for guild ${interaction.guildId}:`, error);
@@ -501,8 +510,11 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       let note;
       try {
         const config = store.getGuildConfig(interaction.guildId).eventReminders;
-        await postEventRoleMessage(interaction.guild, config.rolePanelChannelId || config.channelId, config.roles);
-        note = 'Event reaction-role message rebuilt successfully.';
+        const rolePanelChannelId = config.rolePanelChannelId || config.channelId;
+        await postEventRoleMessageThenStatus(interaction.guild, rolePanelChannelId, config.roles);
+        note = rolePanelChannelId === config.channelId
+          ? 'Event reaction-role message rebuilt successfully. Calendar and mayor overview were reposted below it.'
+          : 'Event reaction-role message rebuilt successfully. Calendar and mayor overview were reposted in the shared calendar channel.';
       } catch (error) {
         console.error(`Failed to rebuild event role message for guild ${interaction.guildId}:`, error);
         note = `Could not rebuild the event role message: ${error.message}`;

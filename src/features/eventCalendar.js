@@ -8,6 +8,12 @@ const SHORT_REMINDER_MS = 60 * 1000;
 const WEATHER_ANCHOR_MS = (env.SKYBLOCK_EPOCH_SECONDS + (40 * 60)) * 1000;
 const WEATHER_PERIOD_MS = 60 * 60 * 1000;
 const WEATHER_DURATION_MS = 20 * 60 * 1000;
+const YEAR_OF_THE_CYCLE_YEARS = 12;
+const YEAR_OF_THE_REMAINDERS = {
+  seal: 6,
+  witch: 8,
+  pig: 11
+};
 const LEGENDARY_ZOO_PETS = ['Giraffe', 'Tiger', 'Elephant', 'Monkey'];
 const HARVEST_FEAST_START_OFFSET_MS = getMonthOffsetMs(6, 1);
 const HARVEST_FEAST_DURATION_MS = MONTH_MS * 3;
@@ -24,8 +30,16 @@ function getYearIndexAt(timestamp) {
   return Math.floor((timestamp - EPOCH_MS) / YEAR_MS);
 }
 
+function getSkyBlockYearAt(timestamp) {
+  return getYearIndexAt(timestamp) + 1;
+}
+
 function getYearStartAt(timestamp) {
   return EPOCH_MS + (getYearIndexAt(timestamp) * YEAR_MS);
+}
+
+function getYearStartBySkyBlockYear(year) {
+  return EPOCH_MS + ((year - 1) * YEAR_MS);
 }
 
 function getMonthOffsetMs(monthIndex, day = 1) {
@@ -335,6 +349,44 @@ function getCultOfTheFallenStarSchedule(now) {
   return buildSchedule(EVENT_DEFINITION_MAP.cultOfTheFallenStar, resolvedWindow);
 }
 
+function getYearOfTheSchedule(now, definition, cycleRemainder) {
+  const currentYear = getSkyBlockYearAt(now);
+  const currentRemainder = normalizeModulo(currentYear, YEAR_OF_THE_CYCLE_YEARS);
+  const yearsUntil = currentRemainder === cycleRemainder
+    ? 0
+    : normalizeModulo(cycleRemainder - currentRemainder, YEAR_OF_THE_CYCLE_YEARS);
+  const skyBlockYear = currentYear + yearsUntil;
+  const startAt = getYearStartBySkyBlockYear(skyBlockYear);
+
+  return buildSchedule(
+    definition,
+    {
+      startAt,
+      endAt: startAt + YEAR_MS,
+      isActive: yearsUntil === 0
+    },
+    { skyBlockYear }
+  );
+}
+
+function getYearOfTheSealSchedule(now) {
+  return getYearOfTheSchedule(now, EVENT_DEFINITION_MAP.yearOfTheSeal, YEAR_OF_THE_REMAINDERS.seal);
+}
+
+function getYearOfTheWitchSchedule(now) {
+  return getYearOfTheSchedule(now, EVENT_DEFINITION_MAP.yearOfTheWitch, YEAR_OF_THE_REMAINDERS.witch);
+}
+
+function getYearOfThePigSchedule(now) {
+  return getYearOfTheSchedule(now, EVENT_DEFINITION_MAP.yearOfThePig, YEAR_OF_THE_REMAINDERS.pig);
+}
+
+function getSkyBlockYearExtraLines(schedule) {
+  return Number.isFinite(schedule.skyBlockYear)
+    ? [`SkyBlock Year: ${schedule.skyBlockYear}`]
+    : [];
+}
+
 const EVENT_DEFINITIONS = [
   {
     key: 'spiderRain',
@@ -415,6 +467,65 @@ const EVENT_DEFINITIONS = [
     roleAliases: ["hoppity's hunt", 'hoppitys hunt', 'hoppity', "hoppity's hunt ping", "hoppity's hunt role"],
     showEnd: true,
     getSchedule: getHoppitysHuntSchedule
+  },
+  {
+    key: 'yearOfTheSeal',
+    label: 'Year of the Seal',
+    emoji: '🦭',
+    color: 0x48c9b0,
+    roleName: 'Year of the Seal',
+    roleAliases: [
+      'year of the seal',
+      'year of seal',
+      'seal',
+      'seal event',
+      'seal ping',
+      'year of the seal ping',
+      'year of the seal role'
+    ],
+    showEnd: true,
+    getSchedule: getYearOfTheSealSchedule,
+    extraLines: getSkyBlockYearExtraLines
+  },
+  {
+    key: 'yearOfTheWitch',
+    label: 'Year of the Witch',
+    emoji: '🧙',
+    color: 0x8e44ad,
+    roleName: 'Year of the Witch',
+    roleAliases: [
+      'year of the witch',
+      'year of witch',
+      'witch',
+      'witch event',
+      'witch ping',
+      'year of the witch ping',
+      'year of the witch role'
+    ],
+    showEnd: true,
+    getSchedule: getYearOfTheWitchSchedule,
+    extraLines: getSkyBlockYearExtraLines
+  },
+  {
+    key: 'yearOfThePig',
+    label: 'Year of the Pig',
+    emoji: '🐷',
+    color: 0xf1948a,
+    roleName: 'Year of the Pig',
+    roleAliases: [
+      'year of the pig',
+      'year of pig',
+      'pig',
+      'pig event',
+      'shiny pig',
+      'shiny pigs',
+      'shiny pig ping',
+      'year of the pig ping',
+      'year of the pig role'
+    ],
+    showEnd: true,
+    getSchedule: getYearOfThePigSchedule,
+    extraLines: getSkyBlockYearExtraLines
   },
   {
     key: 'harvestFeast',

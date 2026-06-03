@@ -271,6 +271,10 @@ function createEventReminderEmbed(definition, schedule) {
     lines.push(`End: <t:${Math.floor(displayEndAt / 1000)}:F>`);
   }
 
+  if (typeof definition.extraLines === 'function') {
+    lines.push(...definition.extraLines(schedule));
+  }
+
   if (lines.length === 0) {
     lines.push('Schedule depends on mayor election data.');
   }
