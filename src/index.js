@@ -91,6 +91,55 @@ let isSendingScheduledStatusUpdate = false;
 let isCheckingModUpdates = false;
 let isCheckingEventReminders = false;
 
+const LOGIN_RETRY_BASE_DELAY_MS = 5_000;
+const LOGIN_RETRY_MAX_DELAY_MS = 60_000;
+const RETRIABLE_LOGIN_ERROR_CODES = new Set([
+  'EAI_AGAIN',
+  'ENOTFOUND',
+  'ECONNREFUSED',
+  'ECONNRESET',
+  'EHOSTUNREACH',
+  'ENETUNREACH',
+  'ETIMEDOUT'
+]);
+
+function wait(ms) {
+  return new Promise((resolve) => {
+    setTimeout(resolve, ms);
+  });
+}
+
+function getErrorCode(error) {
+  return error?.code || error?.cause?.code || error?.request?.code;
+}
+
+function isRetriableLoginError(error) {
+  return RETRIABLE_LOGIN_ERROR_CODES.has(getErrorCode(error));
+}
+
+async function loginWithRetry() {
+  let retryDelayMs = LOGIN_RETRY_BASE_DELAY_MS;
+
+  while (!client.isReady()) {
+    try {
+      await client.login(env.DISCORD_TOKEN);
+      return;
+    } catch (error) {
+      if (!isRetriableLoginError(error)) {
+        throw error;
+      }
+
+      const errorCode = getErrorCode(error) || 'unknown';
+      console.error(
+        `Discord login failed with ${errorCode}; retrying in ${Math.round(retryDelayMs / 1000)} seconds.`,
+        error
+      );
+      await wait(retryDelayMs);
+      retryDelayMs = Math.min(retryDelayMs * 2, LOGIN_RETRY_MAX_DELAY_MS);
+    }
+  }
+}
+
 async function runElectionStateCheck() {
   if (isCheckingElectionState) {
     return;
@@ -409,7 +458,10 @@ client.on(Events.InteractionCreate, async (interaction) => {
   }
 });
 
-client.login(env.DISCORD_TOKEN);
+void loginWithRetry().catch((error) => {
+  console.error('Discord login failed permanently:', error);
+  process.exit(1);
+});
 
 process.on('SIGINT', () => {
   void minecraftFeatures.stop().finally(() => process.exit(0));

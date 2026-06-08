@@ -9,4 +9,4 @@ services:
     volumes:
       - ./data:/app/data
     ports:
-      - "8765:8765"
+      - "8767:8765"

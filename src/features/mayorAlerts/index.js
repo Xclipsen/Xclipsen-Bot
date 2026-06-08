@@ -9,9 +9,26 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   let cachedElectionData = null;
   let cachedElectionDataFetchedAt = null;
   const resolvedMayorEmojiCache = new Map();
+  const warnedDisconnectedGuildIds = new Set();
 
   const data = createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache });
   const embeds = createMayorAlertEmbeds({ env, skyblock });
+
+  function getActiveConfiguredGuildIds(context) {
+    return store.getConfiguredGuildIds()
+      .filter((guildId) => {
+        if (client.guilds.cache.has(guildId)) {
+          return true;
+        }
+
+        if (!warnedDisconnectedGuildIds.has(guildId)) {
+          console.warn(`Skipping configured guild ${guildId} during ${context}; bot is not connected to that guild.`);
+          warnedDisconnectedGuildIds.add(guildId);
+        }
+
+        return false;
+      });
+  }
 
   function getMayorAlertConfig(guildId) {
     return store.getGuildConfig(guildId).mayorAlerts;
@@ -146,7 +163,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
         initializedMayorState = true;
         lastMayorKey = currentMayorKey;
 
-        for (const guildId of store.getConfiguredGuildIds()) {
+        for (const guildId of getActiveConfiguredGuildIds('initial mayor state check')) {
           store.setGuildRuntimeState(guildId, {
             ...store.getGuildRuntimeState(guildId),
             boothOpen
@@ -159,29 +176,33 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
       const mayorChanged = currentMayorKey !== lastMayorKey;
 
-      for (const guildId of store.getConfiguredGuildIds()) {
-        const state = store.getGuildRuntimeState(guildId);
-        const boothStateChanged = state.boothOpen !== boothOpen;
+      for (const guildId of getActiveConfiguredGuildIds('election state check')) {
+        try {
+          const state = store.getGuildRuntimeState(guildId);
+          const boothStateChanged = state.boothOpen !== boothOpen;
 
-        if (boothStateChanged) {
-          store.setGuildRuntimeState(guildId, { ...state, boothOpen });
-        }
+          if (boothStateChanged) {
+            store.setGuildRuntimeState(guildId, { ...state, boothOpen });
+          }
 
-        if (boothStateChanged && boothOpen && currentElection) {
-          console.log(`Election booth is now open for guild ${guildId}`);
-          await sendElectionPing(guildId, mayor, currentElection);
-          continue;
-        }
+          if (boothStateChanged && boothOpen && currentElection) {
+            console.log(`Election booth is now open for guild ${guildId}`);
+            await sendElectionPing(guildId, mayor, currentElection);
+            continue;
+          }
 
-        if (boothStateChanged && !boothOpen && mayorChanged) {
-          console.log(`Election booth closed and mayor changed for guild ${guildId}`);
-          await sendMayorChangePing(guildId, mayor, false, null);
-          continue;
-        }
+          if (boothStateChanged && !boothOpen && mayorChanged) {
+            console.log(`Election booth closed and mayor changed for guild ${guildId}`);
+            await sendMayorChangePing(guildId, mayor, false, null);
+            continue;
+          }
 
-        if (mayorChanged) {
-          console.log(`Current mayor changed to ${mayor.name} (${currentMayorKey}) for guild ${guildId}`);
-          await sendMayorChangePing(guildId, mayor, boothOpen, currentElection);
+          if (mayorChanged) {
+            console.log(`Current mayor changed to ${mayor.name} (${currentMayorKey}) for guild ${guildId}`);
+            await sendMayorChangePing(guildId, mayor, boothOpen, currentElection);
+          }
+        } catch (error) {
+          console.error(`Election state update failed for guild ${guildId}:`, error);
         }
       }
 
@@ -201,10 +222,14 @@ function createMayorAlerts({ client, env, store, skyblock }) {
       const currentElection = electionData.current || null;
       const boothOpen = data.getBoothOpen(electionData);
 
-      for (const guildId of store.getConfiguredGuildIds()) {
-        await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection);
-        store.setGuildRuntimeState(guildId, { ...store.getGuildRuntimeState(guildId), boothOpen });
-        console.log(`Status update sent for mayor ${mayor.name} in guild ${guildId}`);
+      for (const guildId of getActiveConfiguredGuildIds('scheduled status update')) {
+        try {
+          await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection);
+          store.setGuildRuntimeState(guildId, { ...store.getGuildRuntimeState(guildId), boothOpen });
+          console.log(`Status update sent for mayor ${mayor.name} in guild ${guildId}`);
+        } catch (error) {
+          console.error(`Status update failed for guild ${guildId}:`, error);
+        }
       }
     } catch (error) {
       console.error('Status update failed:', error);
@@ -238,6 +263,11 @@ function createMayorAlerts({ client, env, store, skyblock }) {
         roleId: existingConfig.roleId || env.DEFAULT_DISCORD_ROLE_ID
       });
     } catch (error) {
+      if (error?.code === 50001 || error?.code === 10003) {
+        console.warn(`Legacy Discord channel ${env.DEFAULT_DISCORD_CHANNEL_ID} is not accessible; skipping env import.`);
+        return;
+      }
+
       console.error('Could not import legacy env configuration:', error);
     }
   }
