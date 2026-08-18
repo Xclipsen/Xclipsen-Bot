@@ -37,7 +37,10 @@ const interactionIds = {
   SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID: 'setup-event-reminders-channel-id',
   SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID: 'setup-event-reminders-role-panel-channel-id',
   SETUP_EVENT_REMINDERS_ROLES_INPUT_ID: 'setup-event-reminders-roles',
-  SETUP_ROLE_INPUT_ID: 'setup-role-id'
+  SETUP_ROLE_INPUT_ID: 'setup-role-id',
+  SETUP_VIEW_MINING_EVENTS_ID: 'setup-view-mining-events',
+  SETUP_MINING_EVENTS_QUICK_SETUP_ID: 'setup-mining-events-quick-setup',
+  SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID: 'setup-mining-events-post-role-message'
 };
 
 module.exports = { interactionIds };

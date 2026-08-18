@@ -3,6 +3,7 @@ const path = require('path');
 const { createNameHistoryApiService, formatUuid: formatHistoryUuid } = require('../namehistory-api/service');
 
 const STUFFY_UUID_POPULATION = 65340095;
+const PROFILE_REQUEST_TIMEOUT_MS = 8_000;
 
 function createMinecraftUtils() {
   const apiHeaders = { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' };
@@ -53,7 +54,10 @@ function createMinecraftUtils() {
   async function resolvePlayerProfile(playerName) {
     const response = await fetch(
       `https://api.mojang.com/users/profiles/minecraft/${encodeURIComponent(playerName)}`,
-      { headers: apiHeaders }
+      {
+        headers: apiHeaders,
+        signal: AbortSignal.timeout(PROFILE_REQUEST_TIMEOUT_MS)
+      }
     );
 
     if (response.status === 204 || response.status === 404) {
@@ -64,8 +68,14 @@ function createMinecraftUtils() {
       throw new Error(`Failed to look up player UUID (${response.status}).`);
     }
 
-    const data = await response.json();
-    return { uuid: data.id, name: data.name };
+    const data = await response.json().catch(() => null);
+    const compactUuid = normalizeUuid(data?.id);
+    const canonicalName = String(data?.name || '').trim();
+    if (!/^[0-9a-f]{32}$/.test(compactUuid) || !/^[A-Za-z0-9_]{3,16}$/.test(canonicalName)) {
+      throw new Error('Player lookup returned an invalid profile.');
+    }
+
+    return { uuid: formatUuid(compactUuid).toLowerCase(), name: canonicalName };
   }
 
   function scoreUuid(uuid) {

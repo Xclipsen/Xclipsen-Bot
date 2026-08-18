@@ -107,7 +107,7 @@ const helpSections = [
       },
       {
         command: '/link username:<ign>',
-        description: 'Verify usernames through Hypixel Social Media and link them to your Discord account.',
+        description: 'Verify an account through Hypixel and receive a short-lived code for `/irc link` in Minecraft.',
         example: '/link username:Xclipsen'
       },
       {

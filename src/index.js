@@ -12,6 +12,7 @@ const { createModBackendClient } = require('./utils/modBackend');
 const { createMayorAlerts } = require('./features/mayorAlerts');
 const { createModUpdatesService } = require('./features/modUpdates');
 const { createEventRemindersService } = require('./features/eventReminders');
+const { createMiningEventsService } = require('./features/miningEvents');
 const { createReactionRoleService } = require('./features/reactionRoles');
 const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
@@ -55,6 +56,7 @@ const minecraftFeatures = createMinecraftFeatures({ client, env, store, linkStor
 const mayorAlerts = createMayorAlerts({ client, env, store, skyblock });
 const modUpdates = createModUpdatesService({ client, store });
 const eventReminders = createEventRemindersService({ client, store, minecraft: minecraftFeatures, mayorAlerts });
+const miningEvents = createMiningEventsService({ client, store });
 const reactionRoles = createReactionRoleService({
   client,
   store,
@@ -90,6 +92,7 @@ let isCheckingElectionState = false;
 let isSendingScheduledStatusUpdate = false;
 let isCheckingModUpdates = false;
 let isCheckingEventReminders = false;
+let isCheckingMiningEvents = false;
 
 const LOGIN_RETRY_BASE_DELAY_MS = 5_000;
 const LOGIN_RETRY_MAX_DELAY_MS = 60_000;
@@ -192,6 +195,19 @@ async function runEventReminderCheck() {
   }
 }
 
+async function runMiningEventsCheck() {
+  if (isCheckingMiningEvents) {
+    return;
+  }
+
+  isCheckingMiningEvents = true;
+  try {
+    await miningEvents.checkForMiningEvents();
+  } finally {
+    isCheckingMiningEvents = false;
+  }
+}
+
 async function registerGuildCommands(guild) {
   console.log(`Registering commands for guild ${guild.id} (${guild.name})`);
   await guild.commands.set(commands.map((command) => command.toJSON()));
@@ -212,11 +228,13 @@ client.once(Events.ClientReady, async (readyClient) => {
   await runScheduledStatusUpdate();
   await runModUpdateCheck();
   await runEventReminderCheck();
+  await runMiningEventsCheck();
   await minecraftFeatures.start();
   setInterval(() => void runElectionStateCheck(), env.CHECK_INTERVAL_MINUTES * 60 * 1000);
   setInterval(() => void runScheduledStatusUpdate(), env.STATUS_UPDATE_MINUTES * 60 * 1000);
   setInterval(() => void runModUpdateCheck(), env.MOD_UPDATE_CHECK_MINUTES * 60 * 1000);
   setInterval(() => void runEventReminderCheck(), 60 * 1000);
+  setInterval(() => void runMiningEventsCheck(), 60 * 1000);
 });
 
 client.on(Events.GuildCreate, async (guild) => {
@@ -272,6 +290,17 @@ client.on(Events.InteractionCreate, async (interaction) => {
         const eventKey = interaction.options.getString('event', true);
         await eventReminders.sendTestReminder(interaction.guildId, eventKey);
         await interaction.reply({ content: `Sent test event reminder for \`${eventKey}\`.`, ephemeral: true });
+        return;
+      }
+
+      if (subcommand === 'miningevent') {
+        const eventKey = interaction.options.getString('event', true);
+        try {
+          await miningEvents.sendTestMiningEventPing(interaction.guildId, eventKey);
+          await interaction.reply({ content: `Sent test mining event ping for \`${eventKey}\`.`, ephemeral: true });
+        } catch (error) {
+          await interaction.reply({ content: `Could not send test mining event ping: ${error.message}`, ephemeral: true });
+        }
         return;
       }
     }
@@ -399,6 +428,8 @@ client.on(Events.InteractionCreate, async (interaction) => {
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_QUICK_SETUP_ID ||
         interaction.customId === interactionIds.SETUP_EVENT_REMINDERS_POST_ROLE_MESSAGE_ID ||
+        interaction.customId === interactionIds.SETUP_MINING_EVENTS_QUICK_SETUP_ID ||
+        interaction.customId === interactionIds.SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_MODAL_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_REFRESH_ID ||
         interaction.customId === interactionIds.SETUP_MOD_UPDATES_TEST_ID ||

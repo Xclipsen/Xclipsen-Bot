@@ -2,6 +2,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const crypto = require('node:crypto');
 const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
+const { MINING_EVENT_DEFINITIONS } = require('../features/miningEvents');
 
 const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
 const BRIDGE_EVENT_KEYS = EVENT_DEFINITIONS.map((definition) => definition.key);
@@ -26,6 +27,7 @@ function normalizeGuildConfig(config) {
     roleId: config?.roleId || null,
     mayorAlerts: normalizeMayorAlertConfig(config?.mayorAlerts),
     eventReminders: normalizeEventReminderConfig(config?.eventReminders),
+    miningEvents: normalizeMiningEventConfig(config?.miningEvents),
     cakeReminder: normalizeCakeReminderConfig(config?.cakeReminder),
     cultReminder: normalizeCultReminderConfig(config?.cultReminder),
     modUpdates: normalizeModUpdateConfig(config?.modUpdates),
@@ -59,6 +61,15 @@ function normalizeEventReminderConfig(config) {
     rolePanelChannelId: config?.rolePanelChannelId || null,
     roles: Object.fromEntries(
       EVENT_DEFINITIONS.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
+    )
+  };
+}
+
+function normalizeMiningEventConfig(config) {
+  return {
+    channelId: config?.channelId || null,
+    roles: Object.fromEntries(
+      MINING_EVENT_DEFINITIONS.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
     )
   };
 }
@@ -104,6 +115,7 @@ function normalizeGuildRuntimeState(state) {
     statusChannelId: state?.statusChannelId ?? null,
     modUpdates: normalizeModUpdateRuntimeState(state?.modUpdates),
     eventReminders: normalizeEventReminderRuntimeState(state?.eventReminders),
+    miningEvents: normalizeMiningEventsRuntimeState(state?.miningEvents),
     cakeReminder: normalizeCakeReminderRuntimeState(state?.cakeReminder),
     cultReminder: normalizeCultReminderRuntimeState(state?.cultReminder)
   };
@@ -159,6 +171,23 @@ function normalizeEventReminderRuntimeState(state) {
     channelId: state?.channelId ?? null,
     rolePanelMessageId: state?.rolePanelMessageId ?? null,
     rolePanelChannelId: state?.rolePanelChannelId ?? null
+  };
+}
+
+function normalizeMiningEventsRuntimeState(state) {
+  const activeEvents = state?.activeEvents && typeof state.activeEvents === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.activeEvents)
+        .map(([eventKey, endsAt]) => [String(eventKey || '').trim(), Number(endsAt)])
+        .filter(([eventKey, endsAt]) => eventKey && Number.isFinite(endsAt))
+    )
+    : {};
+
+  return {
+    activeEvents,
+    rolePanelChannelId: state?.rolePanelChannelId ?? null,
+    dwarvenRolePanelMessageId: state?.dwarvenRolePanelMessageId ?? null,
+    crystalRolePanelMessageId: state?.crystalRolePanelMessageId ?? null
   };
 }
 
@@ -616,6 +645,11 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     getEventReminderConfiguredGuildIds() {
       return Object.entries(guildConfig.guilds)
         .filter(([, config]) => normalizeGuildConfig(config).eventReminders.channelId)
+        .map(([guildId]) => guildId);
+    },
+    getMiningEventConfiguredGuildIds() {
+      return Object.entries(guildConfig.guilds)
+        .filter(([, config]) => normalizeGuildConfig(config).miningEvents.channelId)
         .map(([guildId]) => guildId);
     },
     getCakeReminderConfiguredGuildIds() {

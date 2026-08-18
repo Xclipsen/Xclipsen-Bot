@@ -10,6 +10,7 @@ const {
 
 const { getHelpSectionById } = require('../../config/help');
 const { EVENT_DEFINITIONS } = require('../eventCalendar');
+const { ISLAND_LABELS, getMiningEventDefinitionsForIsland } = require('../miningEvents');
 
 const EVENT_ROLE_INPUT_PLACEHOLDER = 'darkAuction=123456789012345678\ncultOfTheFallenStar=234567890123456789';
 
@@ -53,7 +54,10 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
-    SETUP_ROLE_INPUT_ID
+    SETUP_ROLE_INPUT_ID,
+    SETUP_VIEW_MINING_EVENTS_ID,
+    SETUP_MINING_EVENTS_QUICK_SETUP_ID,
+    SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID
   } = interactionIds;
 
   function getShitterStats(guildId) {
@@ -109,6 +113,7 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       'This section groups the current Discord-side bot configuration.',
       'Open Mayor Alerts to control the shared calendar/status embed and mayor ping role.',
       'Open Event Calendar to use the same calendar channel with event-specific ping roles.',
+      'Open Mining Events to ping Dwarven Mines and Crystal Hollows mining events.',
       'Open Mod Updates to choose a release channel, optional ping role, and tracked GitHub repos.',
       'Open Reaction Roles to manage message-based role toggles.',
       'Open Shitter List to control who can add or remove shitter entries and store evidence screenshots.'
@@ -139,6 +144,11 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
             'Mayor status uses this same channel.',
             buildEventRoleLines(config.eventReminders.roles)
           ].join('\n'),
+          inline: false
+        },
+        {
+          name: 'Mining Events',
+          value: `Channel: ${config.miningEvents.channelId ? `<#${config.miningEvents.channelId}>` : 'Not configured'}\nRoles configured: ${Object.values(config.miningEvents.roles).filter(Boolean).length}`,
           inline: false
         },
         {
@@ -242,6 +252,68 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
         inline: false
       })
       .setFooter({ text: 'Edit Config changes the shared channel and role IDs. Post Role Message rebuilds the reaction-role post.' });
+  }
+
+  function buildMiningEventRoleLines(roles, island) {
+    return getMiningEventDefinitionsForIsland(island)
+      .map((definition) => `${definition.emoji} ${definition.label}: ${roles?.[definition.key] ? `<@&${roles[definition.key]}>` : 'Off'}`)
+      .join('\n');
+  }
+
+  function createMiningEventsSetupEmbed(guild, note = null) {
+    const config = store.getGuildConfig(guild.id).miningEvents;
+    const runtimeState = store.getGuildRuntimeState(guild.id).miningEvents;
+    const description = [
+      'Pings Dwarven Mines and Crystal Hollows mining events (Wind, 2x Powder, Better Together, Goblin Raid, Raffle, Mithril Gourmand) using live data from the Soopy API.',
+      'Quick Setup creates a dedicated #mining-events channel if none exists yet, creates any missing event roles, and posts two reaction-role panels split by island.',
+      'The bot only pings once Soopy confirms an event is actually running, never on its prediction window.'
+    ];
+    if (note) {
+      description.push('', note);
+    }
+
+    return new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle('Setup Hub - Discord - Mining Events')
+      .setDescription(description.join('\n'))
+      .addFields(
+        {
+          name: 'Configuration',
+          value: [
+            `Channel: ${config.channelId ? `<#${config.channelId}>` : 'Not configured yet'}`,
+            `Dwarven Mines role panel: ${runtimeState.dwarvenRolePanelMessageId ? 'Posted' : 'Not posted'}`,
+            `Crystal Hollows role panel: ${runtimeState.crystalRolePanelMessageId ? 'Posted' : 'Not posted'}`
+          ].join('\n'),
+          inline: false
+        },
+        { name: `${ISLAND_LABELS.DWARVEN_MINES} Roles`, value: buildMiningEventRoleLines(config.roles, 'DWARVEN_MINES'), inline: false },
+        { name: `${ISLAND_LABELS.CRYSTAL_HOLLOWS} Roles`, value: buildMiningEventRoleLines(config.roles, 'CRYSTAL_HOLLOWS'), inline: false }
+      )
+      .setFooter({ text: 'Quick Setup handles the channel and roles automatically.' });
+  }
+
+  function createMiningEventsSetupComponents() {
+    return [
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_MINING_EVENTS_QUICK_SETUP_ID).setLabel('Quick Setup').setStyle(ButtonStyle.Success),
+        new ButtonBuilder().setCustomId(SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID).setLabel('Rebuild Role Panels').setStyle(ButtonStyle.Secondary)
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(SETUP_VIEW_DISCORD_ID).setLabel('Back').setStyle(ButtonStyle.Secondary)
+      )
+    ];
+  }
+
+  function createMiningEventsRolePanelEmbed(islandLabel, roleEntries) {
+    return new EmbedBuilder()
+      .setColor(0x2ecc71)
+      .setTitle(`${islandLabel} Mining Event Pings`)
+      .setDescription([
+        `React below to get pinged when a mining event starts in ${islandLabel}.`,
+        '',
+        ...roleEntries.map((entry) => `${entry.emoji} ${entry.roleMention} - ${entry.label}`)
+      ].join('\n'))
+      .setFooter({ text: 'The bot adds or removes the matching role when you react.' });
   }
 
   function createPlayerToolsEmbed(guild, note = null) {
@@ -376,7 +448,8 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_MAYOR_ID).setLabel('Mayor Alerts').setStyle(ButtonStyle.Primary),
         new ButtonBuilder().setCustomId(SETUP_VIEW_EVENT_REMINDERS_ID).setLabel('Event Calendar').setStyle(ButtonStyle.Secondary),
-        new ButtonBuilder().setCustomId(SETUP_VIEW_MOD_UPDATES_ID).setLabel('Mod Updates').setStyle(ButtonStyle.Secondary)
+        new ButtonBuilder().setCustomId(SETUP_VIEW_MOD_UPDATES_ID).setLabel('Mod Updates').setStyle(ButtonStyle.Secondary),
+        new ButtonBuilder().setCustomId(SETUP_VIEW_MINING_EVENTS_ID).setLabel('Mining Events').setStyle(ButtonStyle.Secondary)
       ),
       new ActionRowBuilder().addComponents(
         new ButtonBuilder().setCustomId(SETUP_VIEW_REACTION_ROLES_ID).setLabel('Reaction Roles').setStyle(ButtonStyle.Secondary),
@@ -664,6 +737,9 @@ function createSetupHubRenderers({ store, reactionRoles, interactionIds }) {
     createSetupHubEmbed,
     createDiscordSetupEmbed,
     createEventRemindersSetupEmbed,
+    createMiningEventsSetupEmbed,
+    createMiningEventsSetupComponents,
+    createMiningEventsRolePanelEmbed,
     createPlayerToolsEmbed,
     createModUpdatesSetupEmbed,
     createShitterSetupEmbed,

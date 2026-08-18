@@ -2,6 +2,7 @@ const { EVENT_DEFINITIONS } = require('./eventCalendar');
 
 const HYPIXEL_PLAYER_URL = 'https://api.hypixel.net/v2/player';
 const REQUEST_HEADERS = { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' };
+const HYPIXEL_REQUEST_TIMEOUT_MS = 8_000;
 
 const LINK_EVENT_CHOICES = Object.fromEntries(
   EVENT_DEFINITIONS.map((definition) => [definition.key, definition.label])
@@ -33,28 +34,43 @@ function createLinkingFeature({ store, env, minecraft }) {
     if (usernamesInput) {
       await interaction.deferReply({ ephemeral: true });
 
-      const usernames = parseMinecraftUsernames(usernamesInput);
-      if (usernames.length === 0) {
-        await interaction.editReply({ content: 'Add at least one valid Minecraft username.' });
+      const username = parseMinecraftUsername(usernamesInput);
+      if (!username) {
+        await interaction.editReply({ content: 'Provide one valid Minecraft username.' });
         return;
       }
 
-      const verification = await verifyMinecraftUsernamesForDiscord(interaction, usernames);
+      const verification = await verifyMinecraftAccountForDiscord(interaction, username);
       if (!verification.ok) {
         await interaction.editReply({ content: verification.error });
         return;
       }
 
-      const result = await store.linkVerifiedBridgeMinecraftUsernames(
-        userId,
-        verification.usernames,
-        getDiscordAccountMetadata(interaction)
-      );
+      let result;
+      try {
+        result = await store.linkVerifiedBridgeMinecraftAccount(
+          userId,
+          verification.account,
+          getDiscordAccountMetadata(interaction)
+        );
+      } catch {
+        await interaction.editReply({
+          content: 'The mod backend could not issue a link code. Try again later.'
+        });
+        return;
+      }
+
+      if (!result.ok) {
+        await interaction.editReply({ content: result.error });
+        return;
+      }
 
       await interaction.editReply({
-        content: result.ok
-          ? `Linked usernames: ${result.account.minecraftUsernames.join(', ')}`
-          : result.error
+        content: [
+          `Verified Minecraft account: ${verification.account.name}`,
+          `Mod link code: \`${result.modLink.code}\``,
+          `Run \`/irc link ${result.modLink.code}\` in Minecraft before <t:${Math.floor(result.modLink.expiresAt / 1000)}:R>.`
+        ].join('\n')
       });
       return;
     }
@@ -104,7 +120,7 @@ function createLinkingFeature({ store, env, minecraft }) {
     });
   }
 
-  async function verifyMinecraftUsernamesForDiscord(interaction, usernames) {
+  async function verifyMinecraftAccountForDiscord(interaction, username) {
     if (!env?.HYPIXEL_API_KEY) {
       return {
         ok: false,
@@ -112,43 +128,35 @@ function createLinkingFeature({ store, env, minecraft }) {
       };
     }
 
-    const verifiedUsernames = [];
-    const failures = [];
+    try {
+      const profile = await minecraft.resolvePlayerProfile(username);
+      const hypixelPlayer = await fetchHypixelPlayer(profile.uuid);
+      const linkedDiscord = extractHypixelDiscordUsername(hypixelPlayer);
 
-    for (const username of usernames) {
-      try {
-        const profile = await minecraft.resolvePlayerProfile(username);
-        const hypixelPlayer = await fetchHypixelPlayer(profile.uuid);
-        const linkedDiscord = extractHypixelDiscordUsername(hypixelPlayer);
-
-        if (!linkedDiscord) {
-          failures.push(`${profile.name}: no Discord account is set in Hypixel Social Media.`);
-          continue;
-        }
-
-        if (!doesHypixelDiscordMatchUser(linkedDiscord, interaction.user)) {
-          failures.push(`${profile.name}: Hypixel has \`${linkedDiscord}\`, but your Discord is \`${formatDiscordUserForLink(interaction.user)}\`.`);
-          continue;
-        }
-
-        verifiedUsernames.push(profile.name);
-      } catch (error) {
-        failures.push(`${username}: ${error.message}`);
+      if (!linkedDiscord) {
+        return { ok: false, error: `${profile.name}: no Discord account is set in Hypixel Social Media.` };
       }
-    }
 
-    if (failures.length > 0) {
+      if (!doesHypixelDiscordMatchUser(linkedDiscord, interaction.user)) {
+        return {
+          ok: false,
+          error: `${profile.name}: Hypixel has \`${linkedDiscord}\`, but your Discord is \`${formatDiscordUserForLink(interaction.user)}\`.`
+        };
+      }
+
+      return {
+        ok: true,
+        account: { uuid: profile.uuid, name: profile.name }
+      };
+    } catch (error) {
       return {
         ok: false,
         error: [
-          'Could not verify every Minecraft username through Hypixel.',
-          ...failures,
+          `Could not verify ${username} through Hypixel: ${error.message}`,
           'Set your Discord in Hypixel Social Media to your current Discord username, then try again.'
         ].join('\n')
       };
     }
-
-    return { ok: true, usernames: verifiedUsernames };
   }
 
   async function fetchHypixelPlayer(uuid) {
@@ -159,7 +167,8 @@ function createLinkingFeature({ store, env, minecraft }) {
       headers: {
         ...REQUEST_HEADERS,
         'API-Key': env.HYPIXEL_API_KEY
-      }
+      },
+      signal: AbortSignal.timeout(HYPIXEL_REQUEST_TIMEOUT_MS)
     });
 
     if (response.status === 403) {
@@ -174,8 +183,8 @@ function createLinkingFeature({ store, env, minecraft }) {
       throw new Error(`Hypixel player lookup failed (${response.status}).`);
     }
 
-    const data = await response.json();
-    if (!data.success) {
+    const data = await response.json().catch(() => null);
+    if (!data || typeof data !== 'object' || data.success !== true) {
       throw new Error('Hypixel player lookup did not succeed.');
     }
 
@@ -198,16 +207,16 @@ function getDiscordAccountMetadata(interaction) {
   };
 }
 
-function parseMinecraftUsernames(value) {
-  return [...new Set(String(value || '')
-    .split(/[,\n]/)
-    .map((entry) => String(entry || '').trim())
-    .filter((entry) => /^[A-Za-z0-9_]{3,16}$/.test(entry)))];
+function parseMinecraftUsername(value) {
+  const username = String(value || '').trim();
+  return /^[A-Za-z0-9_]{3,16}$/.test(username) ? username : null;
 }
 
 function extractHypixelDiscordUsername(player) {
   const value = player?.socialMedia?.links?.DISCORD;
-  return typeof value === 'string' ? value.trim() : '';
+  return typeof value === 'string'
+    ? value.replace(/[\u0000-\u001f\u007f]/g, '').trim().slice(0, 100)
+    : '';
 }
 
 function normalizeDiscordUsername(value) {
@@ -257,7 +266,6 @@ function formatLinkStatus(account) {
     `Linked usernames: ${account.minecraftUsernames.join(', ')}`,
     `Linked since: ${account.linkedAt ? `<t:${Math.floor(account.linkedAt / 1000)}:f>` : 'unknown'}`,
     `Enabled event pings: ${enabledEvents.join(', ') || 'none'}`,
-    account.linkCode ? `Pending code: \`${account.linkCode}\`` : null,
     account.pendingMinecraftUsernames?.length ? `Pending usernames: ${account.pendingMinecraftUsernames.join(', ')}` : null
   ].filter(Boolean).join('\n');
 }

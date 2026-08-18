@@ -134,7 +134,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Linked Minecraft Accounts
 
-- Use `/link username:<ign>` to verify and save Minecraft usernames through Hypixel Social Media.
+- Use `/link username:<ign>` to verify a Minecraft account through Hypixel Social Media and receive a short-lived code for `/irc link <code>` in Minecraft.
 - The player's Hypixel `Discord` social link must match the Discord username running the command.
 - This feature requires `HYPIXEL_API_KEY`.
 - Links created by the old Minecraft code flow are treated as legacy and must be re-verified with `/link username:<ign>`.

@@ -2,6 +2,7 @@ const { MessageFlags } = require('discord.js');
 
 const { createSetupHubRenderers } = require('./renderers');
 const { EVENT_DEFINITIONS } = require('../eventCalendar');
+const { MINING_EVENT_DEFINITIONS, getMiningEventDefinitionsForIsland, ISLAND_LABELS } = require('../miningEvents');
 
 function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eventReminders, reactionRoles, interactionIds }) {
   const renderers = createSetupHubRenderers({ store, reactionRoles, interactionIds });
@@ -43,7 +44,10 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     SETUP_EVENT_REMINDERS_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLE_PANEL_CHANNEL_INPUT_ID,
     SETUP_EVENT_REMINDERS_ROLES_INPUT_ID,
-    SETUP_ROLE_INPUT_ID
+    SETUP_ROLE_INPUT_ID,
+    SETUP_VIEW_MINING_EVENTS_ID,
+    SETUP_MINING_EVENTS_QUICK_SETUP_ID,
+    SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID
   } = interactionIds;
 
   function isSnowflake(value) {
@@ -336,6 +340,158 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     return message;
   }
 
+  function createEmptyMiningEventRoles() {
+    return Object.fromEntries(MINING_EVENT_DEFINITIONS.map((definition) => [definition.key, null]));
+  }
+
+  async function resolveMiningEventChannel(guild) {
+    const existingConfig = store.getGuildConfig(guild.id).miningEvents;
+    if (existingConfig.channelId) {
+      const existingChannel = await guild.channels.fetch(existingConfig.channelId).catch(() => null);
+      if (existingChannel && existingChannel.isTextBased()) {
+        return existingChannel;
+      }
+    }
+
+    const fetchedChannels = await guild.channels.fetch();
+    const matchingChannel = [...fetchedChannels.values()]
+      .find((channel) => channel && channel.isTextBased() && channel.name === 'mining-events');
+    if (matchingChannel) {
+      return matchingChannel;
+    }
+
+    return guild.channels.create({
+      name: 'mining-events',
+      topic: 'Hypixel SkyBlock Dwarven Mines & Crystal Hollows mining event pings.',
+      reason: 'Quick setup for the Mining Events feature'
+    });
+  }
+
+  async function resolveQuickSetupMiningEventRoles(guild) {
+    const existingConfig = store.getGuildConfig(guild.id).miningEvents;
+    const fetchedRoles = await guild.roles.fetch();
+    const roles = [...fetchedRoles.values()]
+      .filter((role) => role && role.id !== guild.id && !role.managed);
+    const eventRoles = createEmptyMiningEventRoles();
+    let createdCount = 0;
+
+    for (const definition of MINING_EVENT_DEFINITIONS) {
+      const configuredRoleId = existingConfig.roles[definition.key] || null;
+      if (configuredRoleId) {
+        const configuredRole = await guild.roles.fetch(configuredRoleId).catch(() => null);
+        if (configuredRole) {
+          eventRoles[definition.key] = configuredRole.id;
+          continue;
+        }
+      }
+
+      const aliases = [
+        definition.roleName,
+        `${definition.roleName} Ping`,
+        `${definition.roleName} Role`,
+        ...definition.roleAliases
+      ];
+      const existingRoleId = findMatchingRoleId(roles, aliases);
+      if (existingRoleId) {
+        eventRoles[definition.key] = existingRoleId;
+        continue;
+      }
+
+      const createdRole = await guild.roles.create({
+        name: definition.roleName,
+        mentionable: false,
+        reason: `Quick setup for ${definition.label} mining event ping role`
+      });
+      roles.push(createdRole);
+      eventRoles[definition.key] = createdRole.id;
+      createdCount += 1;
+    }
+
+    return {
+      eventRoles,
+      createdCount
+    };
+  }
+
+  async function deleteExistingMiningEventRoleMessages(guild) {
+    const runtimeState = store.getGuildRuntimeState(guild.id).miningEvents;
+    const channelId = runtimeState.rolePanelChannelId;
+
+    for (const messageId of [runtimeState.dwarvenRolePanelMessageId, runtimeState.crystalRolePanelMessageId]) {
+      if (!messageId || !channelId) {
+        continue;
+      }
+
+      reactionRoles.purgeReactionRoleBindings(guild.id, { channelId, messageId });
+      const channel = await guild.channels.fetch(channelId).catch(() => null);
+      const message = channel && channel.isTextBased()
+        ? await channel.messages.fetch(messageId).catch(() => null)
+        : null;
+      if (message) {
+        await message.delete().catch(() => null);
+      }
+    }
+
+    store.setGuildRuntimeState(guild.id, {
+      ...store.getGuildRuntimeState(guild.id),
+      miningEvents: {
+        ...store.getGuildRuntimeState(guild.id).miningEvents,
+        dwarvenRolePanelMessageId: null,
+        crystalRolePanelMessageId: null
+      }
+    });
+  }
+
+  async function postMiningEventRoleMessages(guild, channel, roles) {
+    await deleteExistingMiningEventRoleMessages(guild);
+
+    const islandPanels = [
+      { island: 'DWARVEN_MINES', label: ISLAND_LABELS.DWARVEN_MINES, stateKey: 'dwarvenRolePanelMessageId' },
+      { island: 'CRYSTAL_HOLLOWS', label: ISLAND_LABELS.CRYSTAL_HOLLOWS, stateKey: 'crystalRolePanelMessageId' }
+    ];
+
+    for (const panel of islandPanels) {
+      const roleEntries = getMiningEventDefinitionsForIsland(panel.island)
+        .map((definition) => {
+          const roleId = roles?.[definition.key] || null;
+          if (!roleId) {
+            return null;
+          }
+
+          return {
+            key: definition.key,
+            label: definition.label,
+            emoji: definition.emoji,
+            roleId,
+            roleMention: `<@&${roleId}>`
+          };
+        })
+        .filter(Boolean);
+
+      if (roleEntries.length === 0) {
+        continue;
+      }
+
+      const message = await channel.send({
+        embeds: [renderers.createMiningEventsRolePanelEmbed(panel.label, roleEntries)],
+        allowedMentions: { parse: [] }
+      });
+
+      for (const roleEntry of roleEntries) {
+        await reactionRoles.addReactionRoleBinding(guild.id, message, roleEntry.roleId, roleEntry.emoji);
+      }
+
+      store.setGuildRuntimeState(guild.id, {
+        ...store.getGuildRuntimeState(guild.id),
+        miningEvents: {
+          ...store.getGuildRuntimeState(guild.id).miningEvents,
+          [panel.stateKey]: message.id,
+          rolePanelChannelId: channel.id
+        }
+      });
+    }
+  }
+
   async function applyEventCalendarConfig(guild, channelId, rolePanelChannelId, eventRoles, options = {}) {
     const existingConfig = store.getGuildConfig(guild.id);
     const existingState = store.getGuildRuntimeState(guild.id);
@@ -420,6 +576,11 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
     if (interaction.customId === SETUP_VIEW_MOD_UPDATES_ID) {
       await interaction.deferUpdate();
       await interaction.editReply(await buildModUpdatesView(interaction.guild));
+      return;
+    }
+
+    if (interaction.customId === SETUP_VIEW_MINING_EVENTS_ID) {
+      await updateSetupView(interaction, renderers.createMiningEventsSetupEmbed(interaction.guild), renderers.createMiningEventsSetupComponents());
       return;
     }
 
@@ -523,6 +684,71 @@ function createSetupHub({ store, ensureSetupAccess, mayorAlerts, modUpdates, eve
       await interaction.editReply({
         embeds: [renderers.createEventRemindersSetupEmbed(interaction.guild, note)],
         components: renderers.createEventRemindersSetupComponents()
+      });
+      return;
+    }
+
+    if (interaction.customId === SETUP_MINING_EVENTS_QUICK_SETUP_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        const channel = await resolveMiningEventChannel(interaction.guild);
+        const quickSetupRoles = await resolveQuickSetupMiningEventRoles(interaction.guild);
+
+        store.setGuildConfig(interaction.guildId, {
+          miningEvents: {
+            channelId: channel.id,
+            roles: quickSetupRoles.eventRoles
+          }
+        });
+
+        await postMiningEventRoleMessages(interaction.guild, channel, quickSetupRoles.eventRoles);
+
+        const configuredRoles = Object.values(quickSetupRoles.eventRoles).filter(Boolean).length;
+        note = [
+          `Mining Events quick setup complete. Channel set to <#${channel.id}>.`,
+          `Event roles configured: ${configuredRoles}.`,
+          `New roles created: ${quickSetupRoles.createdCount}.`,
+          'Reaction-role panels for Dwarven Mines and Crystal Hollows were posted at the top of the channel.'
+        ].join('\n');
+      } catch (error) {
+        console.error(`Failed to quick-setup mining events for guild ${interaction.guildId}:`, error);
+        note = `Mining Events quick setup failed: ${error.message}`;
+      }
+
+      await interaction.editReply({
+        embeds: [renderers.createMiningEventsSetupEmbed(interaction.guild, note)],
+        components: renderers.createMiningEventsSetupComponents()
+      });
+      return;
+    }
+
+    if (interaction.customId === SETUP_MINING_EVENTS_POST_ROLE_MESSAGE_ID) {
+      await interaction.deferUpdate();
+
+      let note;
+      try {
+        const config = store.getGuildConfig(interaction.guildId).miningEvents;
+        if (!config.channelId) {
+          throw new Error('Run Quick Setup first to create the mining events channel.');
+        }
+
+        const channel = await interaction.guild.channels.fetch(config.channelId).catch(() => null);
+        if (!channel || !channel.isTextBased()) {
+          throw new Error('Configured mining events channel is invalid or not text-based.');
+        }
+
+        await postMiningEventRoleMessages(interaction.guild, channel, config.roles);
+        note = 'Mining event reaction-role panels rebuilt successfully.';
+      } catch (error) {
+        console.error(`Failed to rebuild mining event role panels for guild ${interaction.guildId}:`, error);
+        note = `Could not rebuild the mining event role panels: ${error.message}`;
+      }
+
+      await interaction.editReply({
+        embeds: [renderers.createMiningEventsSetupEmbed(interaction.guild, note)],
+        components: renderers.createMiningEventsSetupComponents()
       });
       return;
     }

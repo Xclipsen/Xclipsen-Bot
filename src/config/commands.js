@@ -2,6 +2,7 @@ const { SlashCommandBuilder } = require('discord.js');
 const { getHelpSectionChoices } = require('./help');
 const { simulatedMayors } = require('./simulationData');
 const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
+const { MINING_EVENT_DEFINITIONS } = require('../features/miningEvents');
 const { PESTS, INSTA_SELL, SELL_ORDER, NPC_SELL } = require('../features/bestPest');
 const { BAITS, CROPS, REFORGE_OPTIONS } = require('../features/pestFarmingProfit');
 
@@ -328,6 +329,11 @@ const linkEventChoices = EVENT_DEFINITIONS.map((definition) => ({
   value: definition.key
 }));
 
+const miningEventChoices = MINING_EVENT_DEFINITIONS.map((definition) => ({
+  name: definition.roleName,
+  value: definition.key
+}));
+
 const testCommand = new SlashCommandBuilder()
   .setName('test')
   .setDescription('Send a test notification for one bot feature.')
@@ -338,14 +344,22 @@ const testCommand = new SlashCommandBuilder()
       .setName('event')
       .setDescription('Event reminder to test')
       .setRequired(true)
-      .addChoices(...linkEventChoices)));
+      .addChoices(...linkEventChoices)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('miningevent')
+    .setDescription('Send one mining event ping test to the configured mining events channel.')
+    .addStringOption((option) => option
+      .setName('event')
+      .setDescription('Mining event to test')
+      .setRequired(true)
+      .addChoices(...miningEventChoices)));
 
 const linkCommand = new SlashCommandBuilder()
   .setName('link')
   .setDescription('Link your Discord account to Minecraft through your Hypixel Discord social link.')
   .addStringOption((option) => option
     .setName('username')
-    .setDescription('Minecraft username, or comma-separated usernames, to verify and link')
+    .setDescription('Minecraft username to verify and issue a short-lived mod link code for')
     .setRequired(false))
   .addStringOption((option) => option
     .setName('remove')

@@ -5,7 +5,8 @@
   "main": "src/index.js",
   "type": "commonjs",
   "scripts": {
-    "start": "node src/index.js"
+    "start": "node src/index.js",
+    "check": "node --check src/index.js && node --check src/features/linking.js && node --check src/utils/minecraft.js && node --check src/utils/modBackend.js && node --test"
   },
   "engines": {
     "node": ">=18"
