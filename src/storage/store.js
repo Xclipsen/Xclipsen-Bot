@@ -195,6 +195,7 @@ function normalizeMiningEventsRuntimeState(state) {
     activeEvents,
     pingMessageIds,
     pingChannelId: state?.pingChannelId ?? null,
+    dashboardMessageId: state?.dashboardMessageId ?? null,
     oldPingsSwept: state?.oldPingsSwept === true,
     rolePanelChannelId: state?.rolePanelChannelId ?? null,
     dwarvenRolePanelMessageId: state?.dwarvenRolePanelMessageId ?? null,

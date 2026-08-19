@@ -17,6 +17,13 @@ const ISLAND_KEY_SUFFIXES = {
   CRYSTAL_HOLLOWS: 'Crystal'
 };
 
+const ISLAND_EMOJIS = {
+  DWARVEN_MINES: '⛏️',
+  CRYSTAL_HOLLOWS: '💎'
+};
+
+const DASHBOARD_COLOR = 0x9b59b6;
+
 // Runs in both Dwarven Mines and Crystal Hollows.
 const SHARED_MINING_EVENTS = [
   { key: 'gwtw', label: 'Gone with the Wind', emoji: '💨', color: 0x3498db, soopyKey: 'GONE_WITH_THE_WIND' },
@@ -98,6 +105,14 @@ function findRunningEntry(runningEvents, definition) {
   return islandEvents.find((entry) => entry?.event === definition.soopyKey) || null;
 }
 
+function formatLobbyCount(lobbyCount) {
+  if (!Number.isFinite(lobbyCount)) {
+    return '';
+  }
+
+  return ` in ${lobbyCount} ${lobbyCount === 1 ? 'lobby' : 'lobbies'}`;
+}
+
 function createMiningEventPingEmbed(definition, endsAt, lobbyCount = null) {
   const endsAtSeconds = Math.floor(endsAt / 1000);
 
@@ -107,7 +122,7 @@ function createMiningEventPingEmbed(definition, endsAt, lobbyCount = null) {
   ];
 
   if (Number.isFinite(lobbyCount)) {
-    lines.push(`Servers running it: ${lobbyCount}`);
+    lines.push(`Running${formatLobbyCount(lobbyCount)}`);
   }
 
   return new EmbedBuilder()
@@ -115,6 +130,30 @@ function createMiningEventPingEmbed(definition, endsAt, lobbyCount = null) {
     .setTitle(`${definition.emoji} ${definition.label} is ACTIVE`)
     .setDescription(lines.join('\n'))
     .setTimestamp();
+}
+
+function createMiningEventsDashboardEmbed(activeEntries) {
+  const embed = new EmbedBuilder()
+    .setColor(DASHBOARD_COLOR)
+    .setTitle('⛏️ Active Mining Events')
+    .setTimestamp();
+
+  for (const island of Object.keys(ISLAND_LABELS)) {
+    const islandEntries = activeEntries.filter((entry) => entry.definition.island === island);
+    if (islandEntries.length === 0) {
+      continue;
+    }
+
+    embed.addFields({
+      name: `${ISLAND_EMOJIS[island]} ${ISLAND_LABELS[island]} Events`,
+      value: islandEntries
+        .map(({ definition, endsAt, lobbyCount }) =>
+          `• ${definition.emoji} **${definition.label}**${formatLobbyCount(lobbyCount)}, running until <t:${Math.floor(endsAt / 1000)}:R>`)
+        .join('\n')
+    });
+  }
+
+  return embed;
 }
 
 function createMiningEventsService({ client, store }) {
@@ -156,6 +195,71 @@ function createMiningEventsService({ client, store }) {
           ...runtimeState.pingMessageIds,
           [definition.key]: message.id
         }
+      }
+    });
+  }
+
+  async function deleteTrackedMiningEventPing(guildId, channel, definitionKey) {
+    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+    const messageId = runtimeState.pingMessageIds[definitionKey] || null;
+    if (!messageId) {
+      return;
+    }
+
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    if (message) {
+      await message.delete().catch(() => null);
+    }
+
+    const nextPingMessageIds = { ...runtimeState.pingMessageIds };
+    delete nextPingMessageIds[definitionKey];
+
+    store.setGuildRuntimeState(guildId, {
+      ...store.getGuildRuntimeState(guildId),
+      miningEvents: {
+        ...store.getGuildRuntimeState(guildId).miningEvents,
+        pingMessageIds: nextPingMessageIds
+      }
+    });
+  }
+
+  // The dashboard is a single message kept in sync with whatever is running, so
+  // it lives exactly as long as at least one event does.
+  async function syncMiningEventsDashboard(guildId, channel, activeEntries) {
+    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+    const existingId = runtimeState.dashboardMessageId || null;
+    const existingMessage = existingId
+      ? await channel.messages.fetch(existingId).catch(() => null)
+      : null;
+
+    if (activeEntries.length === 0) {
+      if (existingMessage) {
+        await existingMessage.delete().catch(() => null);
+      }
+      if (existingId) {
+        await setDashboardMessageId(guildId, null, channel.id);
+      }
+      return;
+    }
+
+    const embed = createMiningEventsDashboardEmbed(activeEntries);
+
+    if (existingMessage) {
+      await existingMessage.edit({ embeds: [embed] }).catch(() => null);
+      return;
+    }
+
+    const message = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
+    await setDashboardMessageId(guildId, message.id, channel.id);
+  }
+
+  async function setDashboardMessageId(guildId, messageId, channelId) {
+    store.setGuildRuntimeState(guildId, {
+      ...store.getGuildRuntimeState(guildId),
+      miningEvents: {
+        ...store.getGuildRuntimeState(guildId).miningEvents,
+        dashboardMessageId: messageId,
+        pingChannelId: channelId
       }
     });
   }
@@ -221,6 +325,7 @@ function createMiningEventsService({ client, store }) {
 
         const trackedEvents = { ...store.getGuildRuntimeState(guildId).miningEvents.activeEvents };
         let trackedEventsChanged = false;
+        const activeEntries = [];
 
         for (const definition of MINING_EVENT_DEFINITIONS) {
           const runningEntry = findRunningEntry(runningEvents, definition);
@@ -231,6 +336,7 @@ function createMiningEventsService({ client, store }) {
             if (trackedEndsAt !== null && !isStillTracked) {
               delete trackedEvents[definition.key];
               trackedEventsChanged = true;
+              await deleteTrackedMiningEventPing(guildId, channel, definition.key);
             }
             continue;
           }
@@ -240,6 +346,13 @@ function createMiningEventsService({ client, store }) {
             continue;
           }
 
+          const lobbyCount = Number(runningEntry.lobby_count);
+          activeEntries.push({
+            definition,
+            endsAt,
+            lobbyCount: Number.isFinite(lobbyCount) ? lobbyCount : null
+          });
+
           // Keep the refined end time so the grace window tracks the latest estimate.
           trackedEvents[definition.key] = endsAt;
           trackedEventsChanged = true;
@@ -248,7 +361,6 @@ function createMiningEventsService({ client, store }) {
             continue;
           }
 
-          const lobbyCount = Number(runningEntry.lobby_count);
           await sendMiningEventPing(
             guildId,
             channel,
@@ -268,6 +380,8 @@ function createMiningEventsService({ client, store }) {
             }
           });
         }
+
+        await syncMiningEventsDashboard(guildId, channel, activeEntries);
       } catch (error) {
         console.error(`Mining event check failed for guild ${guildId}:`, error);
       }
