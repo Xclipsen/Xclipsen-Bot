@@ -183,8 +183,19 @@ function normalizeMiningEventsRuntimeState(state) {
     )
     : {};
 
+  const pingMessageIds = state?.pingMessageIds && typeof state.pingMessageIds === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.pingMessageIds)
+        .map(([eventKey, messageId]) => [String(eventKey || '').trim(), messageId ? String(messageId) : null])
+        .filter(([eventKey, messageId]) => eventKey && messageId)
+    )
+    : {};
+
   return {
     activeEvents,
+    pingMessageIds,
+    pingChannelId: state?.pingChannelId ?? null,
+    oldPingsSwept: state?.oldPingsSwept === true,
     rolePanelChannelId: state?.rolePanelChannelId ?? null,
     dwarvenRolePanelMessageId: state?.dwarvenRolePanelMessageId ?? null,
     crystalRolePanelMessageId: state?.crystalRolePanelMessageId ?? null

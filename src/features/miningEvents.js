@@ -98,26 +98,95 @@ function findRunningEntry(runningEvents, definition) {
   return islandEvents.find((entry) => entry?.event === definition.soopyKey) || null;
 }
 
-function createMiningEventPingEmbed(definition, endsAt) {
+function createMiningEventPingEmbed(definition, endsAt, lobbyCount = null) {
   const endsAtSeconds = Math.floor(endsAt / 1000);
+
+  const lines = [
+    `Island: ${ISLAND_LABELS[definition.island]}`,
+    `Ends: <t:${endsAtSeconds}:R> (<t:${endsAtSeconds}:F>)`
+  ];
+
+  if (Number.isFinite(lobbyCount)) {
+    lines.push(`Servers running it: ${lobbyCount}`);
+  }
 
   return new EmbedBuilder()
     .setColor(definition.color)
     .setTitle(`${definition.emoji} ${definition.label} is ACTIVE`)
-    .setDescription([
-      `Island: ${ISLAND_LABELS[definition.island]}`,
-      `Ends: <t:${endsAtSeconds}:R> (<t:${endsAtSeconds}:F>)`
-    ].join('\n'))
+    .setDescription(lines.join('\n'))
     .setTimestamp();
 }
 
 function createMiningEventsService({ client, store }) {
-  async function sendMiningEventPing(channel, definition, endsAt, roleId = null) {
-    await channel.send({
+  async function deletePreviousMiningEventPing(guildId, channel, definition) {
+    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+    const previousMessageId = runtimeState.pingMessageIds[definition.key] || null;
+    if (!previousMessageId) {
+      return;
+    }
+
+    const previousChannel = runtimeState.pingChannelId && runtimeState.pingChannelId !== channel.id
+      ? await client.channels.fetch(runtimeState.pingChannelId).catch(() => null)
+      : channel;
+
+    if (previousChannel && previousChannel.isTextBased()) {
+      const previousMessage = await previousChannel.messages.fetch(previousMessageId).catch(() => null);
+      if (previousMessage) {
+        await previousMessage.delete().catch(() => null);
+      }
+    }
+  }
+
+  async function sendMiningEventPing(guildId, channel, definition, endsAt, roleId = null, lobbyCount = null) {
+    await deletePreviousMiningEventPing(guildId, channel, definition);
+
+    const message = await channel.send({
       content: roleId ? `<@&${roleId}>` : null,
-      embeds: [createMiningEventPingEmbed(definition, endsAt)],
+      embeds: [createMiningEventPingEmbed(definition, endsAt, lobbyCount)],
       allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
     });
+
+    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+    store.setGuildRuntimeState(guildId, {
+      ...store.getGuildRuntimeState(guildId),
+      miningEvents: {
+        ...runtimeState,
+        pingChannelId: channel.id,
+        pingMessageIds: {
+          ...runtimeState.pingMessageIds,
+          [definition.key]: message.id
+        }
+      }
+    });
+  }
+
+  // One-off cleanup for pings sent before message-tracking existed. Walks the
+  // channel history once per guild and removes any leftover mining event ping,
+  // then never scans again (ongoing pings are deleted via pingMessageIds).
+  async function sweepOldMiningEventPings(channel) {
+    const expectedTitles = new Set(
+      MINING_EVENT_DEFINITIONS.map((definition) => `${definition.emoji} ${definition.label} is ACTIVE`)
+    );
+
+    let before;
+    for (let page = 0; page < 10; page += 1) {
+      const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
+      if (!batch || batch.size === 0) {
+        break;
+      }
+
+      const stale = batch.filter((message) =>
+        message.author?.id === client.user?.id &&
+        message.embeds.some((embed) => expectedTitles.has(embed.title))
+      );
+
+      await Promise.all(stale.map((message) => message.delete().catch(() => null)));
+
+      before = batch.last()?.id;
+      if (batch.size < 100) {
+        break;
+      }
+    }
   }
 
   async function checkForMiningEvents() {
@@ -137,6 +206,17 @@ function createMiningEventsService({ client, store }) {
         const channel = await client.channels.fetch(config.channelId).catch(() => null);
         if (!channel || !channel.isTextBased()) {
           continue;
+        }
+
+        if (!store.getGuildRuntimeState(guildId).miningEvents.oldPingsSwept) {
+          await sweepOldMiningEventPings(channel);
+          store.setGuildRuntimeState(guildId, {
+            ...store.getGuildRuntimeState(guildId),
+            miningEvents: {
+              ...store.getGuildRuntimeState(guildId).miningEvents,
+              oldPingsSwept: true
+            }
+          });
         }
 
         const trackedEvents = { ...store.getGuildRuntimeState(guildId).miningEvents.activeEvents };
@@ -168,7 +248,15 @@ function createMiningEventsService({ client, store }) {
             continue;
           }
 
-          await sendMiningEventPing(channel, definition, endsAt, config.roles[definition.key]);
+          const lobbyCount = Number(runningEntry.lobby_count);
+          await sendMiningEventPing(
+            guildId,
+            channel,
+            definition,
+            endsAt,
+            config.roles[definition.key],
+            Number.isFinite(lobbyCount) ? lobbyCount : null
+          );
         }
 
         if (trackedEventsChanged) {
@@ -202,7 +290,14 @@ function createMiningEventsService({ client, store }) {
       throw new Error('Configured mining events channel is not a text channel.');
     }
 
-    await sendMiningEventPing(channel, definition, Date.now() + (10 * 60 * 1000), config.roles[definitionKey]);
+    await sendMiningEventPing(
+      guildId,
+      channel,
+      definition,
+      Date.now() + (10 * 60 * 1000),
+      config.roles[definitionKey],
+      1
+    );
   }
 
   return {
