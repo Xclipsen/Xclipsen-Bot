@@ -2,10 +2,11 @@ const { EmbedBuilder } = require('discord.js');
 
 const SOOPY_CHEVENTS_URL = 'https://api.soopy.dev/skyblock/chevents/get';
 
-// Soopy keeps refining `ends_at` between polls, so an occurrence is tracked by
-// its rising edge instead. The grace window keeps a tracked occurrence alive
-// when the API briefly drops it, which would otherwise look like a new start.
+// An occurrence is tracked by its last sighting in the feed. The grace window
+// keeps it alive when the API briefly drops it, which would otherwise look like
+// a new start.
 const ACTIVE_EVENT_GRACE_MS = 3 * 60 * 1000;
+const DOUBLE_EVENT_REPEAT_DELAY_MS = 15 * 60 * 1000;
 
 const ISLAND_LABELS = {
   DWARVEN_MINES: 'Dwarven Mines',
@@ -106,28 +107,22 @@ function findRunningEntry(runningEvents, definition) {
 }
 
 function formatLobbyCount(lobbyCount) {
-  if (!Number.isFinite(lobbyCount)) {
-    return '';
+  if (!Number.isInteger(lobbyCount) || lobbyCount < 0) {
+    return 'an unknown number of lobbies';
   }
 
-  return ` in ${lobbyCount} ${lobbyCount === 1 ? 'lobby' : 'lobbies'}`;
+  return `${lobbyCount} ${lobbyCount === 1 ? 'lobby' : 'lobbies'}`;
 }
 
-function createMiningEventPingEmbed(definition, endsAt, lobbyCount = null) {
-  const endsAtSeconds = Math.floor(endsAt / 1000);
-
+function createMiningEventPingEmbed(definition, lobbyCount = null, { isRepeat = false } = {}) {
   const lines = [
     `Island: ${ISLAND_LABELS[definition.island]}`,
-    `Ends: <t:${endsAtSeconds}:R> (<t:${endsAtSeconds}:F>)`
+    `Running in ${formatLobbyCount(lobbyCount)}`
   ];
-
-  if (Number.isFinite(lobbyCount)) {
-    lines.push(`Running${formatLobbyCount(lobbyCount)}`);
-  }
 
   return new EmbedBuilder()
     .setColor(definition.color)
-    .setTitle(`${definition.emoji} ${definition.label} is ACTIVE`)
+    .setTitle(`${definition.emoji} ${definition.label} is ACTIVE${isRepeat ? ' AGAIN' : ''}`)
     .setDescription(lines.join('\n'))
     .setTimestamp();
 }
@@ -147,8 +142,8 @@ function createMiningEventsDashboardEmbed(activeEntries) {
     embed.addFields({
       name: `${ISLAND_EMOJIS[island]} ${ISLAND_LABELS[island]} Events`,
       value: islandEntries
-        .map(({ definition, endsAt, lobbyCount }) =>
-          `• ${definition.emoji} **${definition.label}**${formatLobbyCount(lobbyCount)}, running until <t:${Math.floor(endsAt / 1000)}:R>`)
+        .map(({ definition, lobbyCount, isDouble }) =>
+          `• ${definition.emoji} **${definition.label}** — Running in ${formatLobbyCount(lobbyCount)}${isDouble ? ' · **Double event**' : ''}`)
         .join('\n')
     });
   }
@@ -176,12 +171,19 @@ function createMiningEventsService({ client, store }) {
     }
   }
 
-  async function sendMiningEventPing(guildId, channel, definition, endsAt, roleId = null, lobbyCount = null) {
+  async function sendMiningEventPing(
+    guildId,
+    channel,
+    definition,
+    roleId = null,
+    lobbyCount = null,
+    { isRepeat = false } = {}
+  ) {
     await deletePreviousMiningEventPing(guildId, channel, definition);
 
     const message = await channel.send({
       content: roleId ? `<@&${roleId}>` : null,
-      embeds: [createMiningEventPingEmbed(definition, endsAt, lobbyCount)],
+      embeds: [createMiningEventPingEmbed(definition, lobbyCount, { isRepeat })],
       allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
     });
 
@@ -269,7 +271,10 @@ function createMiningEventsService({ client, store }) {
   // then never scans again (ongoing pings are deleted via pingMessageIds).
   async function sweepOldMiningEventPings(channel) {
     const expectedTitles = new Set(
-      MINING_EVENT_DEFINITIONS.map((definition) => `${definition.emoji} ${definition.label} is ACTIVE`)
+      MINING_EVENT_DEFINITIONS.flatMap((definition) => [
+        `${definition.emoji} ${definition.label} is ACTIVE`,
+        `${definition.emoji} ${definition.label} is ACTIVE AGAIN`
+      ])
     );
 
     let before;
@@ -323,60 +328,125 @@ function createMiningEventsService({ client, store }) {
           });
         }
 
-        const trackedEvents = { ...store.getGuildRuntimeState(guildId).miningEvents.activeEvents };
-        let trackedEventsChanged = false;
+        const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+        const trackedEvents = { ...runtimeState.activeEvents };
+        const doublePingStates = { ...runtimeState.doublePingStates };
+        let runtimeStateChanged = false;
         const activeEntries = [];
 
         for (const definition of MINING_EVENT_DEFINITIONS) {
           const runningEntry = findRunningEntry(runningEvents, definition);
-          const trackedEndsAt = trackedEvents[definition.key] ?? null;
-          const isStillTracked = Number.isFinite(trackedEndsAt) && now < (trackedEndsAt + ACTIVE_EVENT_GRACE_MS);
+          const storedLastSeenAt = trackedEvents[definition.key] ?? null;
+          // Older state files stored Soopy's future `ends_at` value here. Capping
+          // it at now migrates that state without causing an immediate re-ping.
+          const trackedLastSeenAt = Number.isFinite(storedLastSeenAt)
+            ? Math.min(storedLastSeenAt, now)
+            : null;
+          const existingDoublePingState = doublePingStates[definition.key] || null;
+          const hasPendingDoublePing = Boolean(
+            runningEntry?.is_double === true &&
+            existingDoublePingState &&
+            !existingDoublePingState.handled &&
+            now < (existingDoublePingState.dueAt + ACTIVE_EVENT_GRACE_MS)
+          );
+          const isStillTracked = (
+            Number.isFinite(trackedLastSeenAt) && now < (trackedLastSeenAt + ACTIVE_EVENT_GRACE_MS)
+          ) || hasPendingDoublePing;
+
+          if (trackedLastSeenAt !== storedLastSeenAt) {
+            trackedEvents[definition.key] = trackedLastSeenAt;
+            runtimeStateChanged = true;
+          }
 
           if (!runningEntry) {
-            if (trackedEndsAt !== null && !isStillTracked) {
+            const doublePingState = existingDoublePingState;
+            if (doublePingState && !doublePingState.handled && now >= doublePingState.dueAt) {
+              doublePingStates[definition.key] = { ...doublePingState, handled: true };
+              runtimeStateChanged = true;
+            }
+
+            if (trackedLastSeenAt !== null && !isStillTracked) {
               delete trackedEvents[definition.key];
-              trackedEventsChanged = true;
+              delete doublePingStates[definition.key];
+              runtimeStateChanged = true;
               await deleteTrackedMiningEventPing(guildId, channel, definition.key);
             }
             continue;
           }
 
-          const endsAt = Number(runningEntry.ends_at);
-          if (!Number.isFinite(endsAt)) {
-            continue;
-          }
-
           const lobbyCount = Number(runningEntry.lobby_count);
+          const normalizedLobbyCount = runningEntry.lobby_count !== null &&
+            Number.isInteger(lobbyCount) && lobbyCount >= 0
+            ? lobbyCount
+            : null;
+          const isDouble = runningEntry.is_double === true;
+
           activeEntries.push({
             definition,
-            endsAt,
-            lobbyCount: Number.isFinite(lobbyCount) ? lobbyCount : null
+            lobbyCount: normalizedLobbyCount,
+            isDouble
           });
 
-          // Keep the refined end time so the grace window tracks the latest estimate.
-          trackedEvents[definition.key] = endsAt;
-          trackedEventsChanged = true;
+          trackedEvents[definition.key] = now;
+          runtimeStateChanged = true;
 
-          if (isStillTracked) {
+          if (!isStillTracked) {
+            delete doublePingStates[definition.key];
+
+            await sendMiningEventPing(
+              guildId,
+              channel,
+              definition,
+              config.roles[definition.key],
+              normalizedLobbyCount
+            );
+
+            if (isDouble) {
+              doublePingStates[definition.key] = {
+                dueAt: now + DOUBLE_EVENT_REPEAT_DELAY_MS,
+                handled: false
+              };
+            }
             continue;
           }
 
-          await sendMiningEventPing(
-            guildId,
-            channel,
-            definition,
-            endsAt,
-            config.roles[definition.key],
-            Number.isFinite(lobbyCount) ? lobbyCount : null
-          );
+          let doublePingState = doublePingStates[definition.key] || null;
+          if (!doublePingState && isDouble) {
+            doublePingState = {
+              dueAt: now + DOUBLE_EVENT_REPEAT_DELAY_MS,
+              handled: false
+            };
+            doublePingStates[definition.key] = doublePingState;
+            runtimeStateChanged = true;
+          }
+
+          if (doublePingState && !doublePingState.handled && !isDouble) {
+            doublePingState = { ...doublePingState, handled: true };
+            doublePingStates[definition.key] = doublePingState;
+            runtimeStateChanged = true;
+          }
+
+          if (doublePingState && !doublePingState.handled && now >= doublePingState.dueAt && isDouble) {
+            await sendMiningEventPing(
+              guildId,
+              channel,
+              definition,
+              config.roles[definition.key],
+              normalizedLobbyCount,
+              { isRepeat: true }
+            );
+            doublePingStates[definition.key] = { ...doublePingState, handled: true };
+            runtimeStateChanged = true;
+          }
         }
 
-        if (trackedEventsChanged) {
+        if (runtimeStateChanged) {
           store.setGuildRuntimeState(guildId, {
             ...store.getGuildRuntimeState(guildId),
             miningEvents: {
               ...store.getGuildRuntimeState(guildId).miningEvents,
-              activeEvents: trackedEvents
+              activeEvents: trackedEvents,
+              doublePingStates
             }
           });
         }
@@ -408,7 +478,6 @@ function createMiningEventsService({ client, store }) {
       guildId,
       channel,
       definition,
-      Date.now() + (10 * 60 * 1000),
       config.roles[definitionKey],
       1
     );
@@ -425,5 +494,7 @@ module.exports = {
   MINING_EVENT_DEFINITIONS,
   MINING_EVENT_DEFINITION_MAP,
   getMiningEventDefinitionsForIsland,
+  createMiningEventPingEmbed,
+  createMiningEventsDashboardEmbed,
   createMiningEventsService
 };

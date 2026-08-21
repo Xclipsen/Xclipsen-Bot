@@ -178,8 +178,8 @@ function normalizeMiningEventsRuntimeState(state) {
   const activeEvents = state?.activeEvents && typeof state.activeEvents === 'object'
     ? Object.fromEntries(
       Object.entries(state.activeEvents)
-        .map(([eventKey, endsAt]) => [String(eventKey || '').trim(), Number(endsAt)])
-        .filter(([eventKey, endsAt]) => eventKey && Number.isFinite(endsAt))
+        .map(([eventKey, lastSeenAt]) => [String(eventKey || '').trim(), Number(lastSeenAt)])
+        .filter(([eventKey, lastSeenAt]) => eventKey && Number.isFinite(lastSeenAt))
     )
     : {};
 
@@ -191,8 +191,20 @@ function normalizeMiningEventsRuntimeState(state) {
     )
     : {};
 
+  const doublePingStates = state?.doublePingStates && typeof state.doublePingStates === 'object'
+    ? Object.fromEntries(
+      Object.entries(state.doublePingStates)
+        .map(([eventKey, doublePingState]) => [String(eventKey || '').trim(), {
+          dueAt: Number(doublePingState?.dueAt),
+          handled: doublePingState?.handled === true
+        }])
+        .filter(([eventKey, doublePingState]) => eventKey && Number.isFinite(doublePingState.dueAt))
+    )
+    : {};
+
   return {
     activeEvents,
+    doublePingStates,
     pingMessageIds,
     pingChannelId: state?.pingChannelId ?? null,
     dashboardMessageId: state?.dashboardMessageId ?? null,
