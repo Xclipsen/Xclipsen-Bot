@@ -114,16 +114,18 @@ function formatLobbyCount(lobbyCount) {
   return `${lobbyCount} ${lobbyCount === 1 ? 'lobby' : 'lobbies'}`;
 }
 
-function createMiningEventPingEmbed(definition, lobbyCount = null, { isRepeat = false } = {}) {
-  const lines = [
+function createMiningEventPingDescription(definition, lobbyCount) {
+  return [
     `Island: ${ISLAND_LABELS[definition.island]}`,
-    `Running in ${formatLobbyCount(lobbyCount)}`
-  ];
+    `Observed in ${formatLobbyCount(lobbyCount)} so far`
+  ].join('\n');
+}
 
+function createMiningEventPingEmbed(definition, lobbyCount = null, { isRepeat = false } = {}) {
   return new EmbedBuilder()
     .setColor(definition.color)
     .setTitle(`${definition.emoji} ${definition.label} is ACTIVE${isRepeat ? ' AGAIN' : ''}`)
-    .setDescription(lines.join('\n'))
+    .setDescription(createMiningEventPingDescription(definition, lobbyCount))
     .setTimestamp();
 }
 
@@ -143,7 +145,7 @@ function createMiningEventsDashboardEmbed(activeEntries) {
       name: `${ISLAND_EMOJIS[island]} ${ISLAND_LABELS[island]} Events`,
       value: islandEntries
         .map(({ definition, lobbyCount, isDouble }) =>
-          `• ${definition.emoji} **${definition.label}** — Running in ${formatLobbyCount(lobbyCount)}${isDouble ? ' · **Double event**' : ''}`)
+          `• ${definition.emoji} **${definition.label}** — Observed in ${formatLobbyCount(lobbyCount)} so far${isDouble ? ' · **Double event**' : ''}`)
         .join('\n')
     });
   }
@@ -199,6 +201,33 @@ function createMiningEventsService({ client, store }) {
         }
       }
     });
+  }
+
+  async function updateTrackedMiningEventPing(guildId, channel, definition, lobbyCount) {
+    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
+    const messageId = runtimeState.pingMessageIds[definition.key] || null;
+    if (!messageId) {
+      return;
+    }
+
+    const message = await channel.messages.fetch(messageId).catch(() => null);
+    const existingEmbed = message?.embeds?.[0];
+    if (!message || !existingEmbed) {
+      return;
+    }
+
+    const embedData = typeof existingEmbed.toJSON === 'function'
+      ? existingEmbed.toJSON()
+      : existingEmbed;
+    const description = createMiningEventPingDescription(definition, lobbyCount);
+    if (embedData.description === description) {
+      return;
+    }
+
+    // Reuse the existing embed data so the original alert timestamp stays put.
+    await message.edit({
+      embeds: [{ ...embedData, description }]
+    }).catch(() => null);
   }
 
   async function deleteTrackedMiningEventPing(guildId, channel, definitionKey) {
@@ -426,6 +455,7 @@ function createMiningEventsService({ client, store }) {
             runtimeStateChanged = true;
           }
 
+          let sentRepeatPing = false;
           if (doublePingState && !doublePingState.handled && now >= doublePingState.dueAt && isDouble) {
             await sendMiningEventPing(
               guildId,
@@ -437,6 +467,16 @@ function createMiningEventsService({ client, store }) {
             );
             doublePingStates[definition.key] = { ...doublePingState, handled: true };
             runtimeStateChanged = true;
+            sentRepeatPing = true;
+          }
+
+          if (!sentRepeatPing) {
+            await updateTrackedMiningEventPing(
+              guildId,
+              channel,
+              definition,
+              normalizedLobbyCount
+            );
           }
         }
 

@@ -45,11 +45,22 @@ function createMiningEventHarness() {
         id: String(nextMessageId++),
         payload,
         deleted: false,
+        edits: [],
+        get embeds() {
+          return (this.payload.embeds || []).map((embed) => {
+            const data = typeof embed.toJSON === 'function' ? embed.toJSON() : embed;
+            return {
+              ...data,
+              toJSON: () => ({ ...data })
+            };
+          });
+        },
         async delete() {
           this.deleted = true;
           messages.delete(this.id);
         },
         async edit(update) {
+          this.edits.push(update);
           this.payload = { ...this.payload, ...update };
           return this;
         }
@@ -79,6 +90,7 @@ function createMiningEventHarness() {
     client: { channels: { fetch: async () => channel } },
     store,
     sentPayloads,
+    messages,
     getRuntimeState: () => runtimeState
   };
 }
@@ -98,9 +110,9 @@ test('mining event embeds show lobby counts without an end time', () => {
   }]).toJSON();
 
   assert.equal(ping.title, '⚡ 2x Powder is ACTIVE');
-  assert.match(ping.description, /Running in 38 lobbies/);
+  assert.match(ping.description, /Observed in 38 lobbies so far/);
   assert.equal(repeat.title, '⚡ 2x Powder is ACTIVE AGAIN');
-  assert.match(dashboard.fields[0].value, /Running in 38 lobbies/);
+  assert.match(dashboard.fields[0].value, /Observed in 38 lobbies so far/);
   assert.match(dashboard.fields[0].value, /Double event/);
   assert.doesNotMatch(JSON.stringify({ ping, repeat, dashboard }), /ends|running until/i);
 });
@@ -154,7 +166,7 @@ test('a double event sends one persistent repeat ping after 15 minutes', async (
   const rolePings = getRolePingPayloads(harness.sentPayloads);
   assert.equal(rolePings.length, 2);
   assert.equal(rolePings[1].embeds[0].toJSON().title, '⚡ 2x Powder is ACTIVE AGAIN');
-  assert.match(rolePings[1].embeds[0].toJSON().description, /Running in 5 lobbies/);
+  assert.match(rolePings[1].embeds[0].toJSON().description, /Observed in 5 lobbies so far/);
   assert.equal(harness.getRuntimeState().miningEvents.doublePingStates[EVENT_KEY].handled, true);
 
   for (let minute = 0; minute < 15; minute += 1) {
@@ -162,6 +174,57 @@ test('a double event sends one persistent repeat ping after 15 minutes', async (
     await restartedService.checkForMiningEvents();
   }
   assert.equal(getRolePingPayloads(harness.sentPayloads).length, 2);
+});
+
+test('an active event refreshes the tracked ping count without changing its timestamp', async (t) => {
+  const originalFetch = global.fetch;
+  const originalDateNow = Date.now;
+  t.after(() => {
+    global.fetch = originalFetch;
+    Date.now = originalDateNow;
+  });
+
+  let now = 1_800_000_000_000;
+  let lobbyCount = 1;
+  Date.now = () => now;
+  global.fetch = async () => ({
+    ok: true,
+    async json() {
+      return {
+        success: true,
+        data: {
+          running_events: {
+            CRYSTAL_HOLLOWS: [{
+              event: 'DOUBLE_POWDER',
+              lobby_count: lobbyCount,
+              is_double: false
+            }]
+          }
+        }
+      };
+    }
+  });
+
+  const harness = createMiningEventHarness();
+  const service = createMiningEventsService(harness);
+  await service.checkForMiningEvents();
+
+  const pingMessageId = harness.getRuntimeState().miningEvents.pingMessageIds[EVENT_KEY];
+  const pingMessage = harness.messages.get(pingMessageId);
+  const originalTimestamp = pingMessage.embeds[0].timestamp;
+  assert.match(pingMessage.embeds[0].description, /Observed in 1 lobby so far/);
+
+  now += 60 * 1000;
+  lobbyCount = 24;
+  await service.checkForMiningEvents();
+
+  assert.equal(pingMessage.edits.length, 1);
+  assert.match(pingMessage.embeds[0].description, /Observed in 24 lobbies so far/);
+  assert.equal(pingMessage.embeds[0].timestamp, originalTimestamp);
+
+  now += 60 * 1000;
+  await service.checkForMiningEvents();
+  assert.equal(pingMessage.edits.length, 1);
 });
 
 test('a pending repeat ping is cancelled when the event is no longer double', async (t) => {
