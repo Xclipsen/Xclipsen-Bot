@@ -128,7 +128,12 @@ Shows the current Minecraft name and known historical names.
 
 - `player` is optional.
 - If `player` is omitted, the bot uses the caller's prioritized linked Minecraft username when available.
-- Uses Mojang for the current account and NameMC scraping for history.
+- Provide the player's current username. Mojang resolves the account before any cached history is used.
+- Uses Laby.net for history, with Crafty.gg as a fallback when the lookup fails. Provider UUIDs must match Mojang.
+- History is cached for 24 hours after a successful fetch. Failures preserve existing history and show a cache notice; no cached history produces an explicit unavailable message.
+- `approx.` marks uncertain change dates. Hidden entries are omitted, and long histories are shortened with an omitted-name count.
+- A valid empty or hidden response does not trigger a fallback or restore names from an older cache.
+- Optional `CRAFTY_API_KEY` configures Crafty's Bearer token. Rate-limited providers are paused according to `Retry-After` (60 seconds when absent or invalid).
 
 Example:
 
@@ -617,7 +622,7 @@ The bot persists data in the local `data/` directory:
 - Hypixel API for mayor data and catacombs profile lookups
 - Mojang API for UUID/profile lookup
 - GitHub releases API for mod update tracking
-- NameMC scraping for name history
+- Laby.net name history with Crafty.gg API fallback
 - Altpapier SkyBlock Item Emojis dataset for item emoji lookup
 
 ## Permissions and Intents
