@@ -19,7 +19,7 @@ function createMinecraftUtils() {
     rateLimitWindowMs: 60_000,
     requestTimeoutMs: 8_000,
     userAgent: 'hypixel-mayor-discord-bot/1.0.0',
-    enableLabyFallback: true
+    craftyApiKey: process.env.CRAFTY_API_KEY || ''
   });
 
   function normalizeUuid(value) {
@@ -39,10 +39,14 @@ function createMinecraftUtils() {
         name: entry.name,
         changedAt: entry.changed_at,
         observedAt: entry.observed_at,
-        censored: entry.censored
+        censored: entry.censored,
+        accurate: entry.accurate
       })),
-      historySource: 'laby',
-      historySourceLabel: 'Laby.net'
+      historySource: profile.history_source,
+      historySourceLabel: { laby: 'Laby.net', crafty: 'Crafty.gg' }[profile.history_source] || 'Unavailable',
+      historyStatus: profile.history_status,
+      fetchedAt: profile.fetched_at,
+      profileStale: profile.profile_stale
     };
   }
 

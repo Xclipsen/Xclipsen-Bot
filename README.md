@@ -171,7 +171,11 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 - Use `/namehistory [player:<ign>]` to show a player's known username history.
 - The bot shows the current name, UUID, and each known previous name.
-- This command uses Mojang for the current profile and scrapes the name history directly from NameMC over HTTPS.
+- Mojang resolves the current username and UUID. History comes from Laby.net, with the [Crafty.gg API](https://crafty.gg/public-api) as a fallback on lookup failure; each history response must match the Mojang UUID.
+- History is cached for 24 hours from the successful fetch. Provider failures preserve cached names and display a stale-data notice; without cached history, the command reports that history is unavailable.
+- Dates marked `approx.` are not confirmed change times. Hidden names are omitted, and long lists show an omitted-name count.
+- A valid empty or hidden response does not trigger a fallback or restore names from an older cache.
+- `CRAFTY_API_KEY` optionally supplies a Bearer token for Crafty. Public requests worked without a token during testing; the API documentation lists Bearer authentication. The bot honors `Retry-After` on rate limits.
 
 ## Media Tools
 

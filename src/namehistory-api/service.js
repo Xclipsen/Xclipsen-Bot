@@ -51,17 +51,22 @@ function writeJsonFile(filePath, value) {
 }
 
 function createStorage(cacheFilePath) {
-  const state = readJsonFile(cacheFilePath, {
+  const loaded = readJsonFile(cacheFilePath, {
     profiles: {},
     nameIndex: {}
   });
+  const state = loaded && typeof loaded === 'object' && !Array.isArray(loaded) ? loaded : {};
 
-  if (!state.profiles || typeof state.profiles !== 'object') {
+  if (!state.profiles || typeof state.profiles !== 'object' || Array.isArray(state.profiles)) {
     state.profiles = {};
   }
 
-  if (!state.nameIndex || typeof state.nameIndex !== 'object') {
-    state.nameIndex = {};
+  // Older caches indexed historical names too. Rebuild only current-name mappings.
+  state.nameIndex = Object.create(null);
+  for (const [uuid, profile] of Object.entries(state.profiles)) {
+    if (isValidUuid(uuid) && isValidUsername(profile?.current_name)) {
+      state.nameIndex[normalizeName(profile.current_name)] = uuid;
+    }
   }
 
   function save() {
@@ -81,23 +86,16 @@ function createStorage(cacheFilePath) {
     state.profiles[uuid] = profile;
     removeNameMappingsForUuid(uuid);
 
-    const names = new Set([
-      normalizeName(profile.query),
-      normalizeName(profile.current_name),
-      ...profile.history.map((entry) => normalizeName(entry.name))
-    ]);
-
-    for (const name of names) {
-      if (name) {
-        state.nameIndex[name] = uuid;
-      }
-    }
+    state.nameIndex[normalizeName(profile.current_name)] = uuid;
 
     save();
   }
 
   function getProfileByUuid(uuid) {
-    return state.profiles[formatUuid(uuid)] || null;
+    const profile = state.profiles[formatUuid(uuid)];
+    return profile && normalizeUuid(profile.uuid) === normalizeUuid(uuid)
+      && isValidUsername(profile.current_name) && Array.isArray(profile.history)
+      ? profile : null;
   }
 
   function getProfileByName(name) {
@@ -156,20 +154,11 @@ async function fetchJson(url, options = {}) {
   };
 }
 
-async function fetchText(url, options = {}) {
-  const response = await fetch(url, options);
-  const text = await response.text();
-
-  return {
-    ok: response.ok,
-    status: response.status,
-    text,
-    headers: response.headers
-  };
-}
-
 function createNameHistoryApiService(config) {
   const storage = createStorage(config.cacheFilePath);
+  const providerRetryAt = new Map();
+  const historyRetryAt = new Map();
+  const pendingRefreshes = new Map();
   const defaultHeaders = {
     'User-Agent': config.userAgent
   };
@@ -197,6 +186,8 @@ function createNameHistoryApiService(config) {
         return 'Method Not Allowed';
       case 429:
         return 'Too Many Requests';
+      case 503:
+        return 'Service Unavailable';
       case 500:
       default:
         return 'Internal Server Error';
@@ -214,276 +205,280 @@ function createNameHistoryApiService(config) {
     };
   }
 
-  async function resolveCurrentProfileByUsername(username) {
-    const encodedName = encodeURIComponent(username);
-    const candidates = [
-      `https://api.minecraftservices.com/minecraft/profile/lookup/name/${encodedName}`,
-      `https://api.mojang.com/users/profiles/minecraft/${encodedName}`
-    ];
-
-    for (const url of candidates) {
-      const timeout = createAbortSignal();
-      try {
-        const response = await fetchJson(url, {
-          headers: defaultHeaders,
-          signal: timeout.signal
-        });
-
-        if (!response.ok) {
-          if (response.status === 404 || response.status === 204) {
-            continue;
-          }
-
-          throw new Error(`Profile lookup failed with status ${response.status}.`);
-        }
-
-        if (response.data?.id && response.data?.name) {
-          return {
-            uuid: formatUuid(response.data.id),
-            name: String(response.data.name)
-          };
-        }
-      } finally {
-        timeout.dispose();
-      }
+  async function requestJson(url, headers = defaultHeaders) {
+    const host = new URL(url).host;
+    if (Date.now() < (providerRetryAt.get(host) || 0)) {
+      throw new Error('Provider is rate limited.');
     }
 
+    const timeout = createAbortSignal();
+    try {
+      const response = await fetchJson(url, { headers, signal: timeout.signal });
+      const retryAfter = response.headers.get('retry-after');
+      if (response.status === 429 || (response.status === 503 && retryAfter)) {
+        const seconds = retryAfter === null ? NaN : Number(retryAfter);
+        const retryAt = Number.isFinite(seconds)
+          ? Date.now() + Math.max(0, seconds) * 1000
+          : Date.parse(retryAfter);
+        providerRetryAt.set(host, Number.isFinite(retryAt) && retryAt > Date.now()
+          ? retryAt : Date.now() + 60_000);
+      }
+      return response;
+    } finally {
+      timeout.dispose();
+    }
+  }
+
+  async function resolveCurrentProfile(candidates, matches) {
+    let unavailable = false;
+    for (const url of candidates) {
+      try {
+        const response = await requestJson(url);
+        if (response.status === 404 || response.status === 204) {
+          continue;
+        }
+        if (!response.ok || !isValidUuid(response.data?.id)
+          || !isValidUsername(response.data?.name) || !matches(response.data)) {
+          throw new Error('Invalid profile response.');
+        }
+        return { uuid: formatUuid(response.data.id), name: response.data.name.trim() };
+      } catch {
+        // A failed primary endpoint must not prevent the secondary lookup.
+        unavailable = true;
+      }
+    }
+    if (unavailable) {
+      throw createError(503, 'Minecraft profile lookup is temporarily unavailable. Please try again later.');
+    }
     return null;
+  }
+
+  async function resolveCurrentProfileByUsername(username) {
+    const encodedName = encodeURIComponent(username);
+    return resolveCurrentProfile([
+      `https://api.minecraftservices.com/minecraft/profile/lookup/name/${encodedName}`,
+      `https://api.mojang.com/users/profiles/minecraft/${encodedName}`
+    ], (profile) => normalizeName(profile.name) === normalizeName(username));
   }
 
   async function resolveCurrentProfileByUuid(uuid) {
     const compactUuid = normalizeUuid(uuid);
-    const candidates = [
+    return resolveCurrentProfile([
       `https://sessionserver.mojang.com/session/minecraft/profile/${compactUuid}`,
-      `https://api.mojang.com/user/profile/${compactUuid}`
-    ];
-
-    for (const url of candidates) {
-      const timeout = createAbortSignal();
-      try {
-        const response = await fetchJson(url, {
-          headers: defaultHeaders,
-          signal: timeout.signal
-        });
-
-        if (!response.ok) {
-          if (response.status === 404 || response.status === 204) {
-            continue;
-          }
-
-          throw new Error(`UUID lookup failed with status ${response.status}.`);
-        }
-
-        if (response.data?.id && response.data?.name) {
-          return {
-            uuid: formatUuid(response.data.id),
-            name: String(response.data.name)
-          };
-        }
-      } finally {
-        timeout.dispose();
-      }
-    }
-
-    return null;
-  }
-
-  function parseLabyProfilePage(html) {
-    const uuidMatch = String(html).match(/window\.uuid = '([0-9a-fA-F-]{32,36})';/);
-    const usernameMatch = String(html).match(/window\.username = '([^']+)';/);
-
-    if (!uuidMatch || !usernameMatch) {
-      return null;
-    }
-
-    return {
-      uuid: formatUuid(uuidMatch[1]),
-      name: usernameMatch[1]
-    };
-  }
-
-  async function resolveProfileViaLabyPage(username) {
-    if (!config.enableLabyFallback) {
-      return null;
-    }
-
-    const timeout = createAbortSignal();
-    try {
-      const response = await fetchText(`https://laby.net/@${encodeURIComponent(username)}`, {
-        headers: defaultHeaders,
-        signal: timeout.signal
-      });
-
-      if (!response.ok) {
-        return null;
-      }
-
-      return parseLabyProfilePage(response.text);
-    } finally {
-      timeout.dispose();
-    }
-  }
-
-  async function fetchLabySnippet(uuid) {
-    const timeout = createAbortSignal();
-    try {
-      const response = await fetchJson(`https://laby.net/api/v3/user/${formatUuid(uuid)}/snippet`, {
-        headers: defaultHeaders,
-        signal: timeout.signal
-      });
-
-      if (!response.ok || !response.data?.user?.uuid) {
-        return null;
-      }
-
-      return response.data;
-    } finally {
-      timeout.dispose();
-    }
+      `https://api.minecraftservices.com/minecraft/profile/lookup/${compactUuid}`
+    ], (profile) => normalizeUuid(profile.id) === compactUuid);
   }
 
   function normalizeTimestamp(value, fallback = null) {
     if (!value) {
       return fallback;
     }
-
     const date = new Date(value);
-    if (Number.isNaN(date.getTime())) {
-      return fallback;
-    }
-
-    return date.toISOString();
+    return Number.isNaN(date.getTime()) ? fallback : date.toISOString();
   }
 
-  function buildProfileHistory({ query, currentProfile, snippet }) {
-    const nowIso = new Date().toISOString();
-    const rawHistory = Array.isArray(snippet?.name_history) ? snippet.name_history : [];
-    const seen = new Set();
-    const history = [];
-
-    for (const entry of rawHistory) {
-      const name = String(entry?.name || '').trim();
-      if (!name) {
-        continue;
+  function normalizeHistory(entries, source) {
+    return entries.map((entry) => {
+      const rawName = source === 'crafty' ? entry?.username : entry?.name;
+      const censored = entry?.hidden === true || rawName === '-';
+      if (!censored && !isValidUsername(rawName)) {
+        throw new Error('Invalid history entry.');
       }
-
-      const normalized = normalizeName(name);
-      if (seen.has(normalized)) {
-        continue;
-      }
-
-      seen.add(normalized);
-      history.push({
-        name,
+      return {
+        name: censored ? '-' : rawName.trim(),
         changed_at: normalizeTimestamp(entry?.changed_at),
-        observed_at: normalizeTimestamp(entry?.last_seen_at, nowIso),
-        censored: name === '-' || entry?.accurate === false
-      });
-    }
+        observed_at: normalizeTimestamp(entry?.last_seen_at),
+        censored,
+        accurate: source === 'laby' && entry?.accurate === true && !censored
+      };
+    });
+  }
 
-    if (history.length === 0 && currentProfile?.name) {
+  async function fetchLabyHistory(currentProfile) {
+    const response = await requestJson(
+      `https://laby.net/api/v3/user/${currentProfile.uuid}/snippet`
+    );
+    if (!response.ok || normalizeUuid(response.data?.user?.uuid) !== normalizeUuid(currentProfile.uuid)
+      || !Array.isArray(response.data?.name_history)) {
+      throw new Error('Laby history is unavailable or belongs to a different account.');
+    }
+    return { source: 'laby', history: normalizeHistory(response.data.name_history, 'laby') };
+  }
+
+  async function fetchCraftyHistory(currentProfile) {
+    const headers = { ...defaultHeaders };
+    if (config.craftyApiKey) {
+      headers.Authorization = `Bearer ${config.craftyApiKey}`;
+    }
+    const response = await requestJson(
+      `https://api.crafty.gg/api/v2/players/${currentProfile.uuid}`, headers
+    );
+    if (!response.ok || response.data?.success !== true
+      || normalizeUuid(response.data?.data?.uuid) !== normalizeUuid(currentProfile.uuid)
+      || !Array.isArray(response.data?.data?.usernames)) {
+      throw new Error('Crafty history is unavailable or belongs to a different account.');
+    }
+    return { source: 'crafty', history: normalizeHistory(response.data.data.usernames, 'crafty') };
+  }
+
+  function buildProfileHistory({ query, currentProfile, result }) {
+    const nowIso = new Date().toISOString();
+    const history = [...result.history];
+    history.sort((left, right) => (Date.parse(left.changed_at) || 0) - (Date.parse(right.changed_at) || 0));
+    if (!history.some((entry) => normalizeName(entry.name) === normalizeName(currentProfile.name))) {
       history.push({
         name: currentProfile.name,
         changed_at: null,
         observed_at: nowIso,
-        censored: false
+        censored: false,
+        accurate: false
       });
     }
-
-    history.sort((left, right) => {
-      const leftScore = left.changed_at ? new Date(left.changed_at).getTime() : Number.NEGATIVE_INFINITY;
-      const rightScore = right.changed_at ? new Date(right.changed_at).getTime() : Number.NEGATIVE_INFINITY;
-      return leftScore - rightScore;
-    });
-
-    const withIds = history.map((entry, index) => ({
-      id: index + 1,
-      ...entry
-    }));
-
-    const lastSeenAt = withIds.reduce((latest, entry) => {
-      const currentValue = new Date(entry.observed_at).getTime();
-      return currentValue > latest ? currentValue : latest;
-    }, 0);
-
+    const lastSeenAt = history.reduce((latest, entry) => Math.max(latest, Date.parse(entry.observed_at) || 0), 0);
     return {
+      schema_version: 2,
       query,
-      uuid: formatUuid(currentProfile.uuid),
+      uuid: currentProfile.uuid,
       current_name: currentProfile.name,
-      last_seen_at: lastSeenAt > 0 ? new Date(lastSeenAt).toISOString() : nowIso,
-      history: withIds
+      last_seen_at: lastSeenAt > 0 ? new Date(lastSeenAt).toISOString() : null,
+      fetched_at: nowIso,
+      history_source: result.source,
+      history_empty: result.history.length === 0,
+      history: history.map((entry, index) => ({ id: index + 1, ...entry }))
     };
   }
 
   function isStale(profile) {
-    if (!profile?.last_seen_at) {
-      return true;
-    }
-
-    const ageMs = Date.now() - new Date(profile.last_seen_at).getTime();
-    return ageMs > config.staleMinutes * 60_000;
+    const fetchedAt = Date.parse(profile?.fetched_at);
+    return profile?.schema_version !== 2 || !Number.isFinite(fetchedAt)
+      || fetchedAt > Date.now() || Date.now() - fetchedAt > config.staleMinutes * 60_000;
   }
 
-  function cloneProfileWithQuery(profile, query) {
+  function cloneProfileWithQuery(profile, query, overrides = {}) {
+    const legacy = profile.schema_version !== 2;
     return {
       query,
       uuid: profile.uuid,
       current_name: profile.current_name,
       last_seen_at: profile.last_seen_at,
-      history: profile.history.map((entry) => ({ ...entry }))
+      fetched_at: profile.fetched_at || null,
+      history_source: profile.history_source || (legacy ? 'laby' : null),
+      history_status: 'fresh',
+      profile_stale: false,
+      // The legacy cache conflated uncertain dates with hidden names. Its dates
+      // cannot be recovered as exact, but valid visible names remain usable.
+      history: profile.history.filter((entry) => isValidUsername(entry?.name) || entry?.name === '-')
+        .map((entry) => ({
+          ...entry,
+          censored: entry.name === '-' || (!legacy && entry.censored === true),
+          accurate: !legacy && entry.accurate === true
+        })),
+      ...overrides
     };
   }
 
-  async function refreshByResolvedProfile(query, currentProfile) {
-    const snippet = await fetchLabySnippet(currentProfile.uuid);
-    const profile = buildProfileHistory({ query, currentProfile, snippet });
-    storage.indexProfile(profile);
-    return cloneProfileWithQuery(profile, query);
+  function unavailableHistory(query, currentProfile, cached) {
+    if (cached) {
+      return cloneProfileWithQuery(cached, query, {
+        current_name: currentProfile.name,
+        history_status: 'stale'
+      });
+    }
+    return {
+      query,
+      uuid: currentProfile.uuid,
+      current_name: currentProfile.name,
+      last_seen_at: null,
+      fetched_at: null,
+      history_source: null,
+      history_status: 'unavailable',
+      profile_stale: false,
+      history: []
+    };
+  }
+
+  async function refreshByResolvedProfile(query, currentProfile, forceRefresh) {
+    const uuid = currentProfile.uuid;
+    const cached = storage.getProfileByUuid(uuid);
+    if (cached && !forceRefresh && !isStale(cached)) {
+      return cloneProfileWithQuery(cached, query, { current_name: currentProfile.name });
+    }
+    if (!forceRefresh && Date.now() < (historyRetryAt.get(uuid) || 0)) {
+      return unavailableHistory(query, currentProfile, cached);
+    }
+
+    // Share provider work when multiple commands request the same account.
+    if (!pendingRefreshes.has(uuid)) {
+      const refresh = (async () => {
+        let result;
+        try {
+          result = await fetchLabyHistory(currentProfile);
+        } catch {
+          const mayHaveHiddenHistory = cached?.history_empty === true
+            || cached?.history.some((entry) => entry?.name === '-'
+              || (cached.schema_version === 2 && entry?.censored === true));
+          if (mayHaveHiddenHistory) {
+            historyRetryAt.set(uuid, Date.now() + 60_000);
+            return null;
+          }
+          try {
+            result = await fetchCraftyHistory(currentProfile);
+          } catch {
+            historyRetryAt.set(uuid, Date.now() + 60_000);
+            return null;
+          }
+        }
+        const profile = buildProfileHistory({ query, currentProfile, result });
+        // Replace only after a valid response. Never merge cached hidden names
+        // into a provider's freshly returned (possibly deliberately empty) list.
+        storage.indexProfile(profile);
+        historyRetryAt.delete(uuid);
+        return profile;
+      })();
+      pendingRefreshes.set(uuid, refresh);
+      refresh.finally(() => pendingRefreshes.delete(uuid)).catch(() => {});
+    }
+    const refreshed = await pendingRefreshes.get(uuid);
+    return refreshed ? cloneProfileWithQuery(refreshed, query, { current_name: currentProfile.name })
+      : unavailableHistory(query, currentProfile, cached);
   }
 
   async function getByUsername(username, { forceRefresh = false } = {}) {
     if (!isValidUsername(username)) {
-      throw createError(400, 'username required');
+      throw createError(400, 'Enter a Minecraft username using 1–16 letters, numbers or underscores.');
     }
-
-    const normalizedQuery = normalizeName(username);
-    const cached = storage.getProfileByName(normalizedQuery);
-    if (cached && !forceRefresh && !isStale(cached)) {
-      return cloneProfileWithQuery(cached, username);
-    }
-
-    const currentProfile =
-      (await resolveCurrentProfileByUsername(username))
-      || (await resolveProfileViaLabyPage(username))
-      || (cached ? { uuid: cached.uuid, name: cached.current_name } : null);
-
+    const query = username.trim();
+    // Names can be reassigned. Only Mojang determines the UUID for a name;
+    // the persistent cache is used for history after this resolution succeeds.
+    const currentProfile = await resolveCurrentProfileByUsername(query);
     if (!currentProfile) {
-      throw createError(404, 'Username not found');
+      throw createError(404, 'Player not found.');
     }
-
-    return refreshByResolvedProfile(username, currentProfile);
+    return refreshByResolvedProfile(query, currentProfile, forceRefresh);
   }
 
   async function getByUuid(uuid, { forceRefresh = false, query = null } = {}) {
     if (!isValidUuid(uuid)) {
-      throw createError(400, 'uuid required');
+      throw createError(400, 'Enter a valid Minecraft UUID.');
     }
-
     const formattedUuid = formatUuid(uuid);
     const cached = storage.getProfileByUuid(formattedUuid);
-    if (cached && !forceRefresh && !isStale(cached)) {
-      return cloneProfileWithQuery(cached, query || cached.query || cached.current_name);
+    let currentProfile;
+    try {
+      currentProfile = await resolveCurrentProfileByUuid(formattedUuid);
+    } catch (error) {
+      // An explicit UUID remains unambiguous even while Mojang is unavailable.
+      if (cached) {
+        return cloneProfileWithQuery(cached, query || cached.current_name, {
+          history_status: 'stale', profile_stale: true
+        });
+      }
+      throw error;
     }
-
-    const currentProfile =
-      (await resolveCurrentProfileByUuid(formattedUuid))
-      || (cached ? { uuid: cached.uuid, name: cached.current_name } : null);
-
     if (!currentProfile) {
-      throw createError(404, 'UUID not found');
+      throw createError(404, 'Player not found.');
     }
-
-    return refreshByResolvedProfile(query || currentProfile.name, currentProfile);
+    return refreshByResolvedProfile(query || currentProfile.name, currentProfile, forceRefresh);
   }
 
   async function updateProfiles(payload) {
