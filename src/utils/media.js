@@ -133,6 +133,12 @@ async function runCommand(command, args, options = {}) {
     });
   } catch (error) {
     const stderr = String(error?.stderr || error?.message || '').trim();
+
+    // A missing coder or delegate shows up as "no decode delegate" or as an unreadable magick-* temp file.
+    if (/no decode delegate|unable to open file '[^']*magick-/i.test(stderr)) {
+      throw new Error('This image format is not supported. Please try a PNG, JPG, WebP or GIF.');
+    }
+
     const details = stderr.split('\n').filter(Boolean).slice(-1)[0] || 'unknown media processing failure';
     throw new Error(`Media processing failed: ${details}`);
   }
