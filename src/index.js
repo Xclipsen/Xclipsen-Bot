@@ -24,6 +24,7 @@ const { createCatacombsFeature } = require('./features/catacombs');
 const { createItemEmojiFeature } = require('./features/itemEmoji');
 const { createGifFeature } = require('./features/gif');
 const { createTtsFeature } = require('./features/tts');
+const { createVoiceSessions } = require('./features/voice/sessions');
 const { createHelpFeature } = require('./features/help');
 const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
@@ -104,7 +105,8 @@ const trophyFishing = createTrophyFishingFeature({ minecraft, linkStore: modBack
 const bestPest = createBestPestFeature({ store, hypixelApi });
 const pestFarmingProfit = createPestFarmingProfitFeature({ store, hypixelApi });
 const gif = createGifFeature();
-const tts = createTtsFeature({ client, env, store });
+const voiceSessions = createVoiceSessions({ client });
+const tts = createTtsFeature({ client, env, store, voiceSessions });
 const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft, linkStore: modBackend });
 const playerUuid = createPlayerUuidFeature({ minecraft, linkStore: modBackend });
@@ -260,7 +262,7 @@ client.on(Events.MessageCreate, async (message) => {
 });
 
 client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
-  await tts.handleVoiceStateUpdate(oldState, newState).catch((error) => console.error('TTS voice state handling failed:', error));
+  await voiceSessions.handleVoiceStateUpdate(oldState, newState).catch((error) => console.error('Voice state handling failed:', error));
 });
 
 async function handleSimulateCommand(interaction) {
@@ -417,11 +419,11 @@ void loginWithRetry().catch((error) => {
 });
 
 process.on('SIGINT', () => {
-  tts.destroyAll();
+  voiceSessions.destroyAll();
   void ircBridge.stop().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
-  tts.destroyAll();
+  voiceSessions.destroyAll();
   void ircBridge.stop().finally(() => process.exit(0));
 });

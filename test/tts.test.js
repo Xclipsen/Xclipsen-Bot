@@ -6,6 +6,7 @@ process.env.DISCORD_TOKEN ||= 'test-token';
 
 const { MessageFlags, PermissionsBitField } = require('discord.js');
 const { createTtsFeature } = require('../src/features/tts');
+const { createVoiceSessions } = require('../src/features/voice/sessions');
 const { toSpeakerName, toSpeechText } = require('../src/features/tts/speechText');
 
 test('speech text removes Discord markup and resolves mentions', () => {
@@ -35,13 +36,14 @@ function createFakeVoice() {
   const played = [];
   const voice = {
     VoiceConnectionStatus: { Ready: 'ready', Disconnected: 'disconnected', Destroyed: 'destroyed', Signalling: 'signalling', Connecting: 'connecting' },
-    AudioPlayerStatus: { Idle: 'idle' },
+    AudioPlayerStatus: { Idle: 'idle', Playing: 'playing' },
+    NoSubscriberBehavior: { Pause: 'pause', Play: 'play' },
     StreamType: { Arbitrary: 'arbitrary' },
     joinVoiceChannel(options) {
       const connection = new EventEmitter();
       connection.options = options;
       connection.state = { status: 'ready' };
-      connection.subscribe = () => {};
+      connection.subscribe = (player) => { connection.subscribed = player; };
       connection.destroy = () => {
         connection.state = { status: 'destroyed' };
         connection.emit('destroyed');
@@ -51,7 +53,7 @@ function createFakeVoice() {
     },
     createAudioPlayer() {
       const player = new EventEmitter();
-      player.play = (resource) => played.push(resource);
+      player.play = (resource) => { played.push(resource); player.emit('playing'); };
       player.stop = () => {};
       voice.lastPlayer = player;
       return player;
@@ -133,8 +135,10 @@ function createFeature({ store = createFakeStore(), voice = createFakeVoice(), s
     },
     listVoices: async () => [{ id: 'thorsten', label: 'Thorsten' }]
   };
-  const feature = createTtsFeature({ client, env, store, voice, ttsClient });
-  return { feature, voice, store, synthesized, sent };
+  const voiceSessions = createVoiceSessions({ client, voice });
+  const feature = createTtsFeature({ client, env, store, voiceSessions, voice, ttsClient });
+  feature.getSession = (guildId) => voiceSessions.get(guildId);
+  return { feature, voiceSessions, voice, store, synthesized, sent };
 }
 
 const accessControl = { ensureSetupAccess: async () => true };
@@ -205,14 +209,14 @@ test('/tts say is refused when the member is not in the bot voice channel', asyn
 });
 
 test('the bot leaves when the member who ran /tts join leaves the channel', async () => {
-  const { feature, voice, sent } = createFeature();
+  const { feature, voiceSessions, voice, sent } = createFeature();
   await feature.handleTtsCommand(createInteraction(createMember('owner', { roles: ['tts-role'] }), 'join'), accessControl);
 
   // Someone else leaving does not matter.
-  await feature.handleVoiceStateUpdate({ id: 'guest', channelId: 'vc1', guild: { id: 'g1' } }, { id: 'guest', channelId: null });
+  await voiceSessions.handleVoiceStateUpdate({ id: 'guest', channelId: 'vc1', guild: { id: 'g1' } }, { id: 'guest', channelId: null });
   assert.notEqual(feature.getSession('g1'), null);
 
-  await feature.handleVoiceStateUpdate({ id: 'owner', channelId: 'vc1', guild: { id: 'g1' } }, { id: 'owner', channelId: 'vc2' });
+  await voiceSessions.handleVoiceStateUpdate({ id: 'owner', channelId: 'vc1', guild: { id: 'g1' } }, { id: 'owner', channelId: 'vc2' });
   assert.equal(feature.getSession('g1'), null);
   assert.equal(voice.lastConnection.state.status, 'destroyed');
   assert.match(sent[0].content, /left the voice channel/);
@@ -347,4 +351,19 @@ test('admins without the TTS role are not read, and own voices are used', async 
 
   await feature.handleTtsCommand(createInteraction(owner, 'uservoice', { user: { id: 'owner' } }), accessControl);
   assert.deepEqual(store.guilds.g1.tts.userVoices, {});
+});
+
+test('speech takes over the connection and hands it back to music', async () => {
+  const { feature, voice } = createFeature();
+  const owner = createMember('owner', { roles: ['tts-role'] });
+  await feature.handleTtsCommand(createInteraction(owner, 'join'), accessControl);
+  const session = feature.getSession('g1');
+  assert.equal(voice.lastConnection.subscribed, session.musicPlayer);
+
+  await feature.handleTtsCommand(createInteraction(owner, 'say', { text: 'Hallo' }), accessControl);
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(voice.lastConnection.subscribed, session.speechPlayer);
+
+  session.speechPlayer.emit('idle');
+  assert.equal(voice.lastConnection.subscribed, session.musicPlayer);
 });

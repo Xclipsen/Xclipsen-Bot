@@ -4,7 +4,6 @@ const { MessageFlags, PermissionsBitField } = require('discord.js');
 const { createTtsClient } = require('./ttsClient');
 const { toSpeakerName, toSpeechText } = require('./speechText');
 
-const CONNECT_TIMEOUT_MS = 20_000;
 // Mood subcommands: one Thorsten speaker each, announced with a matching verb.
 const MOOD_SUBCOMMANDS = {
   whisper: { voice: 'thorsten_whisper', verb: 'flüstert' },
@@ -12,23 +11,42 @@ const MOOD_SUBCOMMANDS = {
   drunk: { voice: 'thorsten_drunk', verb: 'lallt' },
   angry: { voice: 'thorsten_angry', verb: 'schreit' }
 };
-const RECONNECT_TIMEOUT_MS = 5_000;
 
 function normalizeName(value) {
   return String(value || '').trim().toLowerCase();
 }
 
-// One voice session per guild: the bot sits in the voice channel of the member who ran /tts join
-// and leaves when that member leaves. Only members of the TTS role (or server managers) that are
-// in the same voice channel are read aloud.
+// TTS on top of the shared voice session (src/features/voice/sessions.js): the bot sits in the
+// voice channel of the member who brought it there and leaves when that member leaves. Only TTS
+// role members in the same voice channel, and users on the follow list, are read aloud.
 function createTtsFeature({
   client,
   env,
   store,
+  voiceSessions,
   voice = require('@discordjs/voice'),
   ttsClient = env.TTS_URL ? createTtsClient({ baseUrl: env.TTS_URL }) : null
 }) {
-  const sessions = new Map();
+  // guildId -> { queue, playing, lastSpeakerId, textChannelId }; textChannelId is set by /tts join.
+  const states = new Map();
+  voiceSessions.onEnd((session) => states.delete(session.guildId));
+
+  function getState(session) {
+    let state = states.get(session.guildId);
+    if (!state) {
+      state = { queue: [], playing: false, lastSpeakerId: null, textChannelId: null, session };
+      states.set(session.guildId, state);
+      session.speechPlayer.on(voice.AudioPlayerStatus.Idle, () => {
+        state.playing = false;
+        playNext(state);
+      });
+    }
+    return state;
+  }
+
+  function isActive(state) {
+    return states.get(state.session.guildId) === state && voiceSessions.get(state.session.guildId) === state.session;
+  }
 
   function getTtsConfig(guildId) {
     return store.getGuildConfig(guildId).tts;
@@ -89,105 +107,42 @@ function createTtsFeature({
     }
   }
 
-  function destroySession(session, reason) {
-    if (sessions.get(session.guildId) !== session) return;
-    sessions.delete(session.guildId);
-    session.queue.length = 0;
-    session.player.stop(true);
-    if (session.connection.state.status !== voice.VoiceConnectionStatus.Destroyed) {
-      session.connection.destroy();
-    }
-    console.log(`TTS session in guild ${session.guildId} ended: ${reason}`);
-  }
-
-  async function notify(session, content) {
-    const channel = client.channels.cache.get(session.textChannelId);
-    await channel?.send?.({ content, allowedMentions: { parse: [] } }).catch(() => {});
-  }
-
-  function playNext(session) {
-    if (session.playing || sessions.get(session.guildId) !== session) return;
-    const item = session.queue.shift();
+  function playNext(state) {
+    if (state.playing || !isActive(state)) return;
+    const item = state.queue.shift();
     if (!item) return;
 
-    session.playing = true;
+    state.playing = true;
     item.audio
       .then((audio) => {
-        if (sessions.get(session.guildId) !== session) return;
+        if (!isActive(state)) return;
         const resource = voice.createAudioResource(Readable.from(audio), { inputType: voice.StreamType.Arbitrary });
-        session.player.play(resource);
+        state.session.speechPlayer.play(resource);
       })
       .catch((error) => {
-        console.error(`TTS synthesis failed in guild ${session.guildId}:`, error.message);
-        session.playing = false;
-        playNext(session);
+        console.error(`TTS synthesis failed in guild ${state.session.guildId}:`, error.message);
+        state.playing = false;
+        playNext(state);
       });
   }
 
   // Synthesis starts right away so the next line is ready when the current one ends.
   // A mood verb is always announced; plain text only when the speaker changes.
-  function enqueue(session, member, text, { voice: voiceId = null, verb = null } = {}) {
-    if (session.queue.length >= env.TTS_MAX_QUEUE) {
+  function enqueue(state, member, text, { voice: voiceId = null, verb = null } = {}) {
+    if (state.queue.length >= env.TTS_MAX_QUEUE) {
       return false;
     }
 
     const speakerName = toSpeakerName(member.displayName) || 'Jemand';
-    const spoken = verb || session.lastSpeakerId !== member.id ? `${speakerName} ${verb || 'sagt'}: ${text}` : text;
-    session.lastSpeakerId = member.id;
+    const spoken = verb || state.lastSpeakerId !== member.id ? `${speakerName} ${verb || 'sagt'}: ${text}` : text;
+    state.lastSpeakerId = member.id;
 
-    const config = getTtsConfig(session.guildId);
+    const config = getTtsConfig(state.session.guildId);
     const audio = ttsClient.synthesize(spoken, voiceId || config.userVoices[member.id] || config.voice);
     audio.catch(() => {});
-    session.queue.push({ audio });
-    playNext(session);
+    state.queue.push({ audio });
+    playNext(state);
     return true;
-  }
-
-  function createSession({ guild, channel, textChannelId, ownerId }) {
-    const connection = voice.joinVoiceChannel({
-      channelId: channel.id,
-      guildId: guild.id,
-      adapterCreator: guild.voiceAdapterCreator,
-      selfDeaf: true
-    });
-    const player = voice.createAudioPlayer();
-    connection.subscribe(player);
-
-    const session = {
-      guildId: guild.id,
-      channelId: channel.id,
-      textChannelId,
-      ownerId,
-      connection,
-      player,
-      queue: [],
-      playing: false,
-      lastSpeakerId: null
-    };
-
-    player.on(voice.AudioPlayerStatus.Idle, () => {
-      session.playing = false;
-      playNext(session);
-    });
-    player.on('error', (error) => {
-      console.error(`TTS playback failed in guild ${session.guildId}:`, error.message);
-    });
-
-    // Recommended @discordjs/voice handling: a disconnect that does not turn into a reconnect is final.
-    connection.on(voice.VoiceConnectionStatus.Disconnected, async () => {
-      try {
-        await Promise.race([
-          voice.entersState(connection, voice.VoiceConnectionStatus.Signalling, RECONNECT_TIMEOUT_MS),
-          voice.entersState(connection, voice.VoiceConnectionStatus.Connecting, RECONNECT_TIMEOUT_MS)
-        ]);
-      } catch {
-        destroySession(session, 'disconnected');
-      }
-    });
-    connection.on(voice.VoiceConnectionStatus.Destroyed, () => destroySession(session, 'connection destroyed'));
-
-    sessions.set(guild.id, session);
-    return session;
   }
 
   async function handleJoin(interaction, member) {
@@ -197,34 +152,31 @@ function createTtsFeature({
       return;
     }
 
-    const existing = sessions.get(interaction.guildId);
+    const existing = voiceSessions.get(interaction.guildId);
     if (existing) {
       if (existing.channelId === channel.id) {
-        existing.textChannelId = interaction.channelId;
-        await replyEphemeral(interaction, `I'm already in <#${channel.id}>. Messages from <#${interaction.channelId}> are read aloud now.`);
+        getState(existing).textChannelId = interaction.channelId;
+        await replyEphemeral(interaction, `I'm in <#${channel.id}>. Messages from <#${interaction.channelId}> are read aloud now.`);
       } else {
-        await replyEphemeral(interaction, `I'm already reading in <#${existing.channelId}>.`);
+        await replyEphemeral(interaction, `I'm already in <#${existing.channelId}>.`);
       }
       return;
     }
 
-    const permissions = channel.permissionsFor(interaction.guild.members.me);
-    if (!permissions?.has([PermissionsBitField.Flags.Connect, PermissionsBitField.Flags.Speak])) {
-      await replyEphemeral(interaction, `I need the Connect and Speak permissions in <#${channel.id}>.`);
-      return;
-    }
-
     await interaction.deferReply();
-    const session = createSession({ guild: interaction.guild, channel, textChannelId: interaction.channelId, ownerId: member.id });
-
+    let session;
     try {
-      await voice.entersState(session.connection, voice.VoiceConnectionStatus.Ready, CONNECT_TIMEOUT_MS);
+      ({ session } = await voiceSessions.join({
+        guild: interaction.guild,
+        channel,
+        ownerId: member.id,
+        notifyChannelId: interaction.channelId
+      }));
     } catch (error) {
-      destroySession(session, 'could not connect');
-      console.error(`TTS could not join ${channel.id} in guild ${interaction.guildId}:`, error.message);
-      await interaction.editReply('Could not join the voice channel. Please try again.');
+      await interaction.editReply(error.message);
       return;
     }
+    getState(session).textChannelId = interaction.channelId;
 
     await interaction.editReply(
       `🔊 Joined <#${channel.id}>. I read messages from <#${interaction.channelId}> and the voice chat `
@@ -233,7 +185,7 @@ function createTtsFeature({
   }
 
   async function handleLeave(interaction, member) {
-    const session = sessions.get(interaction.guildId);
+    const session = voiceSessions.get(interaction.guildId);
     if (!session) {
       await replyEphemeral(interaction, "I'm not in a voice channel.");
       return;
@@ -245,12 +197,12 @@ function createTtsFeature({
       return;
     }
 
-    destroySession(session, `/tts leave by ${member.id}`);
+    voiceSessions.leave(session.guildId, `/tts leave by ${member.id}`);
     await interaction.reply({ content: '👋 Left the voice channel.', allowedMentions: { parse: [] } });
   }
 
   async function handleSay(interaction, member, { voice: voiceId = null, verb = null } = {}) {
-    const session = sessions.get(interaction.guildId);
+    const session = voiceSessions.get(interaction.guildId);
     if (!session) {
       await replyEphemeral(interaction, 'Use `/tts join` first.');
       return;
@@ -267,7 +219,7 @@ function createTtsFeature({
       return;
     }
 
-    if (!enqueue(session, member, text, { voice: voiceId || interaction.options.getString('voice'), verb })) {
+    if (!enqueue(getState(session), member, text, { voice: voiceId || interaction.options.getString('voice'), verb })) {
       await replyEphemeral(interaction, 'The queue is full, please wait a moment.');
       return;
     }
@@ -338,7 +290,8 @@ function createTtsFeature({
 
   async function handleList(interaction) {
     const config = getTtsConfig(interaction.guildId);
-    const session = sessions.get(interaction.guildId);
+    const session = voiceSessions.get(interaction.guildId);
+    const state = states.get(interaction.guildId);
     const role = config.roleId ? interaction.guild.roles.cache.get(config.roleId) : null;
     // Role members are only complete once all members are fetched; small servers, so fetch them.
     await interaction.guild.members.fetch().catch(() => null);
@@ -348,7 +301,7 @@ function createTtsFeature({
 
     const lines = [
       session
-        ? `🔊 In <#${session.channelId}>, reading <#${session.textChannelId}> and the voice chat; leaves with <@${session.ownerId}>.`
+        ? `🔊 In <#${session.channelId}>${state?.textChannelId ? `, reading <#${state.textChannelId}> and the voice chat` : ''}; leaves with <@${session.ownerId}>.`
         : '🔇 Not in a voice channel.',
       `**Read when in the voice channel** (${role ? `<@&${role.id}>` : 'no TTS role'}): ${roleMembers.join(', ') || 'nobody'}`,
       `**Followed, read from every channel:** ${followed.join(', ') || 'nobody'}`,
@@ -426,48 +379,26 @@ function createTtsFeature({
   // Followed users (/tts follow) are read from every channel, wherever they are.
   async function handleMessage(message) {
     if (!message.inGuild() || message.author.bot || message.system) return;
-    const session = sessions.get(message.guildId);
+    const session = voiceSessions.get(message.guildId);
     if (!session) return;
 
     const member = message.member;
     if (!member) return;
 
+    // Without /tts join (e.g. the bot only plays music) just followed users are read.
+    const state = states.get(message.guildId);
     const followed = getTtsConfig(message.guildId).followUserIds.includes(member.id);
     if (!followed) {
-      if (message.channelId !== session.textChannelId && message.channelId !== session.channelId) return;
+      if (!state?.textChannelId) return;
+      if (message.channelId !== state.textChannelId && message.channelId !== session.channelId) return;
       if (member.voice?.channelId !== session.channelId || !hasTtsRole(member)) return;
     }
 
     const text = toSpeechText(message.content, createResolvers(message.guild));
     if (!text) return;
 
-    if (!enqueue(session, member, text)) {
+    if (!enqueue(state || getState(session), member, text)) {
       await message.react('⏳').catch(() => {});
-    }
-  }
-
-  async function handleVoiceStateUpdate(oldState, newState) {
-    const session = sessions.get(oldState.guild.id);
-    if (!session) return;
-
-    if (newState.id === client.user?.id) {
-      if (!newState.channelId) {
-        destroySession(session, 'bot was disconnected');
-      } else {
-        session.channelId = newState.channelId;
-      }
-      return;
-    }
-
-    if (oldState.id === session.ownerId && oldState.channelId === session.channelId && newState.channelId !== session.channelId) {
-      destroySession(session, 'owner left the voice channel');
-      await notify(session, `👋 <@${session.ownerId}> left the voice channel, so I left too.`);
-    }
-  }
-
-  function destroyAll() {
-    for (const session of [...sessions.values()]) {
-      destroySession(session, 'shutdown');
     }
   }
 
@@ -475,10 +406,7 @@ function createTtsFeature({
     ensureRole,
     handleTtsCommand,
     handleVoiceAutocomplete,
-    handleMessage,
-    handleVoiceStateUpdate,
-    destroyAll,
-    getSession: (guildId) => sessions.get(guildId) || null
+    handleMessage
   };
 }
 
