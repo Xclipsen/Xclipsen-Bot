@@ -1,5 +1,11 @@
 node_modules/
 npm-debug.log*
-.git/
+.git
 .env
+.env.example
 data/
+# Built as its own image (the tts service in docker-compose.yml).
+tts-service/
+docs/
+# Root documentation only; assets/fonts/README.md (font credits) stays with the fonts.
+*.md

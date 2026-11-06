@@ -4,7 +4,18 @@ const { MessageFlags, MessageReferenceType } = require('discord.js');
 const COOP_RELAY_DEDUPE_WINDOW_MS = 2500;
 const MAX_RECENT_COOP_RELAYS = 250;
 
-function createIrcBridge({ client, env, store, linkStore = store }) {
+const PLACEHOLDER_AUTH_TOKEN = 'change-me';
+
+function hasUsableAuthToken(token) {
+  return Boolean(token) && token !== PLACEHOLDER_AUTH_TOKEN;
+}
+
+function getAuthorName(message) {
+  return String(message?.member?.displayName || message?.author?.globalName || message?.author?.username || '').trim();
+}
+
+function createIrcBridge({ client, env, linkStore }) {
+  const enabled = env.IRC_BRIDGE_ENABLED && hasUsableAuthToken(env.IRC_BRIDGE_AUTH_TOKEN);
   const mentionPattern = /(^|[\s(])@([a-zA-Z0-9._-]{2,32})\b/g;
   const bufferedMessages = [];
   const recentCoopRelayKeys = [];
@@ -79,7 +90,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
     if (payload.type === 'status') {
       content = String(payload.message || '');
     } else if (payload.type === 'coop') {
-      const coopPlayer = normalizeMinecraftUsername(payload.forwardedPlayerName) || 'Unknown';
+      const coopPlayer = normalizeMinecraftUsername(payload.forwardedPlayerName);
       const sanitizedMessage = sanitizeExternalMessage(String(payload.message || ''));
       if (!coopPlayer || !sanitizedMessage) {
         return;
@@ -298,6 +309,11 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
       return;
     }
 
+    if (!enabled) {
+      console.error('IRC bridge is enabled but IRC_BRIDGE_AUTH_TOKEN is missing or a placeholder; the bridge stays disabled.');
+      return;
+    }
+
     server = http.createServer((request, response) => {
       void handleRequest(request, response);
     });
@@ -320,7 +336,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
   }
 
   async function handleDiscordMessage(message) {
-    if (!env.IRC_BRIDGE_ENABLED) {
+    if (!enabled) {
       return;
     }
 
@@ -369,12 +385,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
           if (!snapshotAuthor) {
             const original = await message.fetchReference().catch(() => null);
             if (original) {
-              snapshotAuthor = String(
-                original.member?.displayName ||
-                original.author?.globalName ||
-                original.author?.username ||
-                ''
-              ).replace(/@/g, '@​').trim();
+              snapshotAuthor = getAuthorName(original).replace(/@/g, '@\u200b');
             }
           }
 
@@ -413,14 +424,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
   }
 
   function buildForwardedSnapshotAuthor(snapshot) {
-    return String(
-      snapshot?.member?.displayName ||
-      snapshot?.author?.globalName ||
-      snapshot?.author?.username ||
-      ''
-    )
-      .replace(/@/g, '@\u200b')
-      .trim();
+    return getAuthorName(snapshot).replace(/@/g, '@\u200b');
   }
 
   async function buildReplyPrefix(message) {
@@ -433,14 +437,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
       return '';
     }
 
-    const replyTargetName = String(
-      referencedMessage.member?.displayName ||
-      referencedMessage.author?.globalName ||
-      referencedMessage.author?.username ||
-      'unknown'
-    ).trim();
-
-    return replyTargetName ? `↳ ${replyTargetName}: ` : '';
+    return `↳ ${getAuthorName(referencedMessage) || 'unknown'}: `;
   }
 
   function isImageAttachment(attachment) {
@@ -490,7 +487,7 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
   }
 
   function sendEventMessage(eventKey, eventName, content, options = {}) {
-    if (!env.IRC_BRIDGE_ENABLED) {
+    if (!enabled) {
       return;
     }
 
@@ -510,10 +507,6 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
   }
 
   function shouldDeliverMessageToLinkedUser(message, linkedAccount) {
-    if (message.source === 'coop') {
-      return false;
-    }
-
     if (message.source !== 'event') {
       return true;
     }
@@ -527,24 +520,6 @@ function createIrcBridge({ client, env, store, linkStore = store }) {
 
   async function findLinkedByMinecraftUsername(playerName) {
     return linkStore.findBridgeLinkByMinecraftUsername(playerName);
-  }
-
-  function buildLinkStatusPayload(playerName, linked) {
-    if (!linked) {
-      return {
-        linked: false,
-        playerName: String(playerName || ''),
-        minecraftUsernames: []
-      };
-    }
-
-    return {
-      linked: true,
-      discordUserId: linked.discordUserId,
-      discordDisplayName: getLinkedDisplayName(linked.entry, playerName),
-      playerName: String(playerName || ''),
-      minecraftUsernames: linked.entry.minecraftUsernames
-    };
   }
 
   function getLinkedDisplayName(linkedEntry, fallbackPlayerName) {

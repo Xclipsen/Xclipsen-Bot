@@ -1,10 +1,61 @@
 const { ActionRowBuilder, EmbedBuilder, StringSelectMenuBuilder } = require('discord.js');
-const { EVENT_DEFINITIONS, getCalendarEntries, formatCalendarEntry } = require('../eventCalendar');
+const { getCalendarEntries, formatCalendarDescription } = require('../eventCalendar');
+const { formatPerkpocalypseField, getPerkpocalypseStateWith } = require('../jerryRotation');
+const { NO_APP_EMOJIS } = require('../../utils/appEmojis');
 
 const MAYOR_CANDIDATE_SELECT_ID = 'mayor-candidate-select';
 const MINISTER_PERK_MARKER = '✯';
+// ./data.js also recognises status posts by this title.
+const STATUS_UPDATE_TITLE = 'SkyBlock Status Update';
+const DEFAULT_MAYOR_EMOJI = '👤';
 
-function createMayorAlertEmbeds({ env, skyblock }) {
+const CUSTOM_EMOJI_PATTERN = /^<(a?):([^:>]+):(\d+)>$/;
+
+function isCustomEmojiToken(value) {
+  return CUSTOM_EMOJI_PATTERN.test(String(value || ''));
+}
+
+// Component emoji object ({ id, name, animated }) of a custom emoji token, or null.
+function toComponentEmoji(value) {
+  const match = String(value || '').match(CUSTOM_EMOJI_PATTERN);
+  return match ? { id: match[3], name: match[2], animated: match[1] === 'a' } : null;
+}
+
+// The API key is the mayor's role (e.g. 'slayer' for Aatrox), so names come first.
+function getMayorLookupKeys(mayor) {
+  return [...new Set([mayor?.name, mayor?.key]
+    .map((value) => String(value || '').trim().toLowerCase())
+    .filter(Boolean))];
+}
+
+// Application emoji of the mayor's head (assets/app-emojis, `mayor_<name>`), or null.
+function getMayorAppEmoji(appEmojis, mayor) {
+  const emojiName = getMayorLookupKeys(mayor)
+    .map((key) => `mayor_${key.replace(/[^a-z0-9_]/g, '')}`)
+    .find((name) => appEmojis.has(name));
+  return emojiName ? appEmojis.get(emojiName) : null;
+}
+
+// Unicode emoji of a mayor for places that do not render custom emojis (embed titles).
+function getMayorUnicodeEmoji(env, mayor) {
+  const configured = getMayorLookupKeys(mayor).map((key) => env.MAYOR_EMOJIS[key]).find(Boolean);
+  return configured && !isCustomEmojiToken(configured) ? configured : DEFAULT_MAYOR_EMOJI;
+}
+
+// getMayorFetchedAt: when the shown election data was fetched, so a cached mayor from the
+// previous term does not show term-bound events.
+// appEmojis: item icons for the calendar and mayor heads (src/utils/appEmojis.js); Unicode fallbacks without it.
+function createMayorAlertEmbeds({ env, skyblock, jerryRotation = null, now = Date.now, getMayorFetchedAt = () => null, appEmojis = NO_APP_EMOJIS }) {
+  // Head emoji shown in front of mayor names in field values; '' keeps the plain name.
+  function getDefaultMayorIcon(mayor) {
+    return getMayorAppEmoji(appEmojis, mayor) || '';
+  }
+
+  function withMayorIcon(mayorIcon, mayor, text) {
+    const icon = mayorIcon(mayor);
+    return icon ? `${icon} ${text}` : text;
+  }
+
   function normalizeCandidateProfile(candidate) {
     const perks = Array.isArray(candidate?.perks) && candidate.perks.length > 0
       ? candidate.perks.map((perk) => ({
@@ -90,7 +141,7 @@ function createMayorAlertEmbeds({ env, skyblock }) {
     return `${filledEmoji.repeat(Math.min(length, filled))}${emptyEmoji.repeat(Math.max(0, length - filled))}`;
   }
 
-  function addCandidateFields(embed, currentElection, selectedMayorName, minister = null) {
+  function addCandidateFields(embed, currentElection, minister = null, mayorIcon = getDefaultMayorIcon) {
     const candidates = Array.isArray(currentElection?.candidates) ? currentElection.candidates : [];
     if (candidates.length === 0) {
       return;
@@ -98,6 +149,7 @@ function createMayorAlertEmbeds({ env, skyblock }) {
 
     const sortedCandidates = candidates
       .map((candidate) => ({
+        key: candidate.key,
         name: candidate.name || 'Unknown',
         votes: getCandidateVoteCount(candidate)
       }))
@@ -135,12 +187,13 @@ function createMayorAlertEmbeds({ env, skyblock }) {
         ...sortedCandidates
         .slice(0, 5)
         .map((candidate) => {
+          const name = withMayorIcon(mayorIcon, candidate, candidate.name);
           if (candidate.votes === null) {
-            return `${candidate.name}\nNo vote data`;
+            return `${name}\nNo vote data`;
           }
 
           const voteShare = formatVoteShare(candidate.votes, totalVotes);
-          return `${candidate.name}\n${buildVoteBar(candidate.votes, maxVotes)} ${formatCompactVoteCount(candidate.votes)}${voteShare ? ` | ${voteShare}` : ''}`;
+          return `${name}\n${buildVoteBar(candidate.votes, maxVotes)} ${formatCompactVoteCount(candidate.votes)}${voteShare ? ` | ${voteShare}` : ''}`;
         })
       ].join('\n'),
       inline: false
@@ -152,7 +205,6 @@ function createMayorAlertEmbeds({ env, skyblock }) {
 
     return candidates
       .map((candidate) => normalizeCandidateProfile(candidate))
-      .filter(Boolean)
       .sort((left, right) => {
         if (right.votes !== null && left.votes !== null && right.votes !== left.votes) {
           return right.votes - left.votes;
@@ -161,7 +213,8 @@ function createMayorAlertEmbeds({ env, skyblock }) {
       });
   }
 
-  function createCandidateSelectComponents(currentElection) {
+  // Select options take the head as their own emoji (labels do not render custom emojis).
+  function createCandidateSelectComponents(currentElection, mayorIcon = getDefaultMayorIcon) {
     const candidateProfiles = getCandidateProfiles(currentElection);
     if (candidateProfiles.length === 0) {
       return [];
@@ -173,22 +226,27 @@ function createMayorAlertEmbeds({ env, skyblock }) {
           .setCustomId(MAYOR_CANDIDATE_SELECT_ID)
           .setPlaceholder('View candidate perks')
           .addOptions(
-            candidateProfiles.slice(0, 25).map((profile) => ({
-              label: profile.name,
-              value: profile.key,
-              description: `Show ${profile.name}'s perk list`
-            }))
+            candidateProfiles.slice(0, 25).map((profile) => {
+              const emoji = toComponentEmoji(mayorIcon(profile));
+              return {
+                label: profile.name,
+                value: profile.key,
+                description: `Show ${profile.name}'s perk list`,
+                ...(emoji ? { emoji } : {})
+              };
+            })
           )
       )
     ];
   }
 
-  function createCandidatePerkEmbed(candidateProfile, emoji = '👤') {
+  function createCandidatePerkEmbed(candidateProfile, emoji = DEFAULT_MAYOR_EMOJI) {
     const perks = Array.isArray(candidateProfile?.perks) ? candidateProfile.perks : [];
+    const titleEmoji = isCustomEmojiToken(emoji) ? getMayorUnicodeEmoji(env, candidateProfile) : emoji;
 
     return new EmbedBuilder()
       .setColor(0x3498db)
-      .setTitle(`${emoji} ${candidateProfile?.name || 'Candidate'} Perks`)
+      .setTitle(`${titleEmoji} ${candidateProfile?.name || 'Candidate'} Perks`)
       .setDescription(
         `If elected mayor, all listed perks become active. If elected minister, only the marked minister perk becomes active.\n\n${
         perks.length > 0
@@ -201,39 +259,43 @@ function createMayorAlertEmbeds({ env, skyblock }) {
   }
 
   function getMayorHeadUrl(mayor) {
-    return env.MAYOR_HEADS[String(mayor.key || '').toLowerCase()] || null;
-  }
-
-  function getMayorSkinLink(mayor) {
-    return env.MAYOR_SKIN_LINKS[String(mayor.key || '').toLowerCase()] || null;
+    return getMayorLookupKeys(mayor).map((key) => env.MAYOR_HEADS[key]).find(Boolean) || null;
   }
 
   function createEventCalendarEmbed(mayor = null) {
-    const calendarEntries = getCalendarEntries(Date.now(), { mayor })
-      .sort((left, right) => (
-        EVENT_DEFINITIONS.findIndex((definition) => definition.key === left.key) -
-        EVENT_DEFINITIONS.findIndex((definition) => definition.key === right.key)
-      ));
+    const calendarEntries = getCalendarEntries(now(), { mayor, mayorFetchedAt: getMayorFetchedAt(), jerryRotation });
 
     return new EmbedBuilder()
       .setColor(0x1abc9c)
       .setTitle('Event Calendar')
-      .setDescription(calendarEntries.map((entry) => formatCalendarEntry(entry)).join('\n\n') || 'No event data found.')
+      .setDescription(formatCalendarDescription(calendarEntries, { getIcon: (entry) => appEmojis.get(entry.icon, entry.emoji) }))
       .setFooter({ text: 'Shows the current or next window for each tracked event.' })
       .setTimestamp();
   }
 
-  function createMayorEmbed(title, emoji, mayor, boothOpen, currentElection = null) {
-    const skyBlockDate = skyblock.formatSkyBlockDate(title === 'SkyBlock Status Update' ? env.STATUS_UPDATE_MINUTES : env.CHECK_INTERVAL_MINUTES);
+  function getPerkpocalypseField(mayor, mayorIcon) {
+    return formatPerkpocalypseField(
+      getPerkpocalypseStateWith(jerryRotation, now(), mayor, { mayorFetchedAt: getMayorFetchedAt() }),
+      { mayorIcon: (name) => mayorIcon({ name }) }
+    );
+  }
+
+  // emoji: the mayor's emoji. A custom one (guild or head emoji) goes in front of the name in the
+  // Mayor field, a Unicode one into the title, which does not render custom emojis.
+  // options.mayorIcon(mayor) gives the custom head emoji for mayor names ('' for none).
+  function createMayorEmbed(emoji, mayor, boothOpen, currentElection = null, { mayorIcon = getDefaultMayorIcon } = {}) {
+    const skyBlockDate = skyblock.formatSkyBlockDate(env.STATUS_UPDATE_MINUTES);
+    const titleEmoji = isCustomEmojiToken(emoji) ? getMayorUnicodeEmoji(env, mayor) : emoji;
+    const mayorFieldIcon = isCustomEmojiToken(emoji) ? emoji : mayorIcon(mayor);
     const embed = new EmbedBuilder()
       .setColor(0x3498db)
-      .setTitle(`${emoji} ${title}`)
+      .setTitle(`${titleEmoji} ${STATUS_UPDATE_TITLE}`)
       .addFields(
-        { name: 'Mayor', value: `${mayor.name} (${mayor.key})`, inline: true },
+        { name: 'Mayor', value: withMayorIcon(() => mayorFieldIcon, mayor, `${mayor.name} (${mayor.key})`), inline: true },
         {
           name: 'Minister',
           value: mayor.minister
-            ? `${mayor.minister.name} - ${skyblock.stripMinecraftFormatting(mayor.minister.perk.name)}`
+            ? `${withMayorIcon(mayorIcon, mayor.minister, mayor.minister.name)} - ${skyblock.stripMinecraftFormatting(mayor.minister.perk.name)}`
             : 'None',
           inline: true
         },
@@ -244,7 +306,12 @@ function createMayorAlertEmbeds({ env, skyblock }) {
       .setFooter({ text: `SkyBlock Date: ${skyBlockDate}` })
       .setTimestamp();
 
-    addCandidateFields(embed, currentElection, mayor.name, mayor.minister);
+    const perkpocalypseField = getPerkpocalypseField(mayor, mayorIcon);
+    if (perkpocalypseField) {
+      embed.addFields(perkpocalypseField);
+    }
+
+    addCandidateFields(embed, currentElection, mayor.minister, mayorIcon);
 
     const headUrl = getMayorHeadUrl(mayor);
     if (headUrl) {
@@ -264,4 +331,12 @@ function createMayorAlertEmbeds({ env, skyblock }) {
   };
 }
 
-module.exports = { createMayorAlertEmbeds };
+module.exports = {
+  createMayorAlertEmbeds,
+  getMayorAppEmoji,
+  getMayorLookupKeys,
+  getMayorUnicodeEmoji,
+  isCustomEmojiToken,
+  DEFAULT_MAYOR_EMOJI,
+  STATUS_UPDATE_TITLE
+};

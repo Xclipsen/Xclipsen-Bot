@@ -1,25 +1,16 @@
-const path = require('path');
-
 const { createNameHistoryApiService, formatUuid: formatHistoryUuid } = require('../namehistory-api/service');
 
 const STUFFY_UUID_POPULATION = 65340095;
 const PROFILE_REQUEST_TIMEOUT_MS = 8_000;
 
-function createMinecraftUtils() {
-  const apiHeaders = { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' };
+function createMinecraftUtils(env) {
+  const apiHeaders = { 'User-Agent': env.USER_AGENT };
   const nameHistoryService = createNameHistoryApiService({
-    host: '127.0.0.1',
-    port: 0,
-    cacheFilePath: path.join(process.cwd(), 'data', 'namehistory-cache.json'),
+    cacheFilePath: env.NAMEHISTORY_CACHE_FILE_PATH,
     staleMinutes: 60 * 24,
-    apiKey: '',
-    apiKeyHeader: 'X-API-Key',
-    requireAuth: false,
-    rateLimitMax: 60,
-    rateLimitWindowMs: 60_000,
     requestTimeoutMs: 8_000,
-    userAgent: 'hypixel-mayor-discord-bot/1.0.0',
-    craftyApiKey: process.env.CRAFTY_API_KEY || ''
+    userAgent: env.USER_AGENT,
+    craftyApiKey: env.CRAFTY_API_KEY
   });
 
   function normalizeUuid(value) {
@@ -34,11 +25,9 @@ function createMinecraftUtils() {
     return {
       uuid: profile.uuid,
       name: profile.current_name,
-      createdAt: null,
       history: profile.history.map((entry) => ({
         name: entry.name,
         changedAt: entry.changed_at,
-        observedAt: entry.observed_at,
         censored: entry.censored,
         accurate: entry.accurate
       })),
@@ -50,9 +39,62 @@ function createMinecraftUtils() {
     };
   }
 
+  function mapNameOwners(result) {
+    return {
+      name: result.name,
+      status: result.status,
+      owners: result.owners.map((owner) => ({
+        uuid: owner.uuid,
+        name: owner.current_name,
+        changedAt: owner.changed_at,
+        periods: owner.periods || null,
+        profile: owner.profile ? mapHistoryProfile(owner.profile) : null
+      }))
+    };
+  }
+
+  async function fetchNameOwners(name, excludeUuid) {
+    try {
+      return mapNameOwners(await nameHistoryService.getNameOwners(name, { excludeUuid, withHistory: true }));
+    } catch {
+      return { name, status: 'unavailable', owners: [] };
+    }
+  }
+
   async function fetchNameHistory(playerName) {
-    const profile = await nameHistoryService.getByUsername(playerName);
-    return mapHistoryProfile(profile);
+    let profile;
+    try {
+      profile = await nameHistoryService.getByUsername(playerName);
+    } catch (error) {
+      // A name nobody owns right now may be an old name of a renamed account.
+      if (error?.status !== 404) {
+        throw error;
+      }
+      const query = String(playerName).trim();
+      const nameOwners = await fetchNameOwners(query, null);
+      if (nameOwners.owners.length === 0) {
+        throw error;
+      }
+      // Owners are sorted by most recent use; show that account's full history.
+      const latest = nameOwners.owners.find((owner) => owner.profile);
+      if (!latest) {
+        return { unclaimed: true, query: nameOwners.name, nameOwners };
+      }
+      return {
+        ...latest.profile,
+        formerName: nameOwners.name,
+        formerNamePeriods: latest.periods,
+        nameOwners: {
+          ...nameOwners,
+          former: true,
+          owners: nameOwners.owners.filter((owner) => owner !== latest)
+        }
+      };
+    }
+    return {
+      ...mapHistoryProfile(profile),
+      nameOwners: await fetchNameOwners(profile.query, profile.uuid)
+    };
   }
 
   async function resolvePlayerProfile(playerName) {
@@ -138,7 +180,6 @@ function createMinecraftUtils() {
     fetchNameHistory,
     formatUuid,
     getUuidData,
-    scoreUuid,
     resolvePlayerProfile
   };
 }

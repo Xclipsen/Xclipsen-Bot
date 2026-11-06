@@ -1,7 +1,7 @@
 const { EmbedBuilder } = require('discord.js');
 const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
-function createPlayerUuidFeature({ minecraft, store }) {
+function createPlayerUuidFeature({ minecraft, linkStore }) {
   function buildPlayerUuidEmbed(player) {
     const uuidData = minecraft.getUuidData(player.uuid);
     const formattedUuid = minecraft.formatUuid(player.uuid);
@@ -26,9 +26,8 @@ function createPlayerUuidFeature({ minecraft, store }) {
     try {
       const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({
         interaction,
-        store,
-        optionName: 'player',
-        missingMessage: 'No player provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `player:`.'
+        linkStore,
+        optionName: 'player'
       });
 
       const player = username;

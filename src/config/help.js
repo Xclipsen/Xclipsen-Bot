@@ -11,7 +11,7 @@ const helpSections = [
       },
       {
         command: '/setup',
-        description: 'Open the setup hub for mayor alerts, mod update tracking, reaction roles, and shitter permissions.',
+        description: 'Open the setup hub for mayor alerts, event calendar, mining events, SkyBlock weather, mod update tracking, reaction roles, and shitter permissions.',
         example: '/setup',
         adminOnly: true
       },
@@ -41,6 +41,16 @@ const helpSections = [
     summary: 'Minecraft lookups and quick media utilities anyone can use.',
     commands: [
       {
+        command: '/season',
+        description: 'Show the four current in-season crops and their remaining time.',
+        example: '/season'
+      },
+      {
+        command: '/harvestfeast',
+        description: 'Show current Feast crops and upcoming rotations from EliteSkyBlock.',
+        example: '/harvestfeast'
+      },
+      {
         command: '/uuid [player:<ign>]',
         description: 'Look up a Mojang UUID and percentile-style UUID ranking, or use your linked IGN.',
         example: '/uuid'
@@ -56,14 +66,51 @@ const helpSections = [
         example: '/gif media:<upload>'
       },
       {
-        command: '/cata [player:<ign>] [profile:<name>]',
-        description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections.',
-        example: '/cata'
+        command: '/tts join | leave | say text:<text>',
+        description: 'Read messages aloud in your voice channel. Only TTS role members in the voice channel (and followed users) are read, and the bot leaves when whoever ran /tts join leaves.',
+        example: '/tts join'
       },
       {
-        command: '/catacombs [player:<ign>] [profile:<name>]',
-        description: 'Alias of /cata for the same catacombs lookup, including linked-account, selected-profile, and view selection support.',
-        example: '/catacombs'
+        command: '/tts whisper | sleepy | drunk | angry text:<text>',
+        description: 'Read one text aloud in a Thorsten mood voice; `/tts say` also takes an optional voice.',
+        example: '/tts whisper text:Psst, ich bin hier'
+      },
+      {
+        command: '/tts list',
+        description: 'Show who is read aloud (TTS role and followed users) and the voices per user.',
+        example: '/tts list'
+      },
+      {
+        command: '/tts uservoice user:<user> [voice:<name>]',
+        description: 'Give yourself, or as an admin anyone, an own voice; without voice it resets to the server voice.',
+        example: '/tts uservoice user:@someone voice:alan'
+      },
+      {
+        command: '/tts voice voice:<name>',
+        description: 'Choose the TTS voice for this server.',
+        example: '/tts voice voice:thorsten',
+        adminOnly: true
+      },
+      {
+        command: '/tts follow user:<user> [enabled:<true|false>]',
+        description: 'Bot owners only: while the bot is in a voice channel, read every message of that user from every public channel (never from private ones).',
+        example: '/tts follow user:@someone',
+        adminOnly: true
+      },
+      {
+        command: '/music play query:<link or search> | radio station:<name>',
+        description: 'Play (or queue) a YouTube video or a lofi / chill radio station in your voice channel. Music commands only work in the #voice channel, which also has a control panel with buttons and a station picker.',
+        example: '/music radio station:Lofi (laut.fm)'
+      },
+      {
+        command: '/music skip | stop | pause | resume | queue | nowplaying | volume level:<0-100>',
+        description: 'Control playback; members in the bot voice channel and server managers can use the controls.',
+        example: '/music volume level:40'
+      },
+      {
+        command: '/cata [player:<ign>] [profile:<name>]',
+        description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections. Also available as /catacombs.',
+        example: '/cata'
       },
       {
         command: '/itememoji item:<skyblock_id>',
@@ -81,19 +128,14 @@ const helpSections = [
         example: '/trophyfrogs'
       },
       {
-        command: '/pest fortune:<amount> sell_method:NPC Sell',
-        description: 'Estimate which Garden pest is worth the most per kill for your Farming Fortune, with Instasell, Sell Order, or NPC Sell.',
+        command: '/pest fortune:<amount> sell_method:<method>',
+        description: 'Estimate which Garden pest is worth the most per kill for your Farming Fortune, with Instasell, Sell Order, or NPC Sell. Also available as /pests.',
         example: '/pest fortune:2500 sell_method:NPC Sell'
       },
       {
-        command: '/pests fortune:<amount> sell_method:Instasell',
-        description: 'Alias of /pest for the same pest profit estimate.',
-        example: '/pests fortune:2500 sell_method:Instasell'
-      },
-      {
-        command: '/setfarmingstats bonus_pest_chance:<value> pest_shard_level:<value> cropeetle_level:<value> rarefinder_level:<value> reforge:<name>',
-        description: 'Save your pest farming stats for the profit calculator.',
-        example: '/setfarmingstats bonus_pest_chance:497 pest_shard_level:10 cropeetle_level:10 rarefinder_level:10 reforge:Bountiful'
+        command: '/setfarmingstats bonus_pest_chance:<value> pest_shard_level:<value> reforge:<name> [cropeetle_level:<value>] [rarefinder_level:<value>]',
+        description: 'Save your pest farming stats for the profit calculator. Cropeetle and Rarefinder levels are optional and only shown back.',
+        example: '/setfarmingstats bonus_pest_chance:497 pest_shard_level:10 reforge:Bountiful'
       },
       {
         command: '/pestfarmingprofits bait:<name> vinyl:<pest> crop:<crop> fortune:<amount> [pest_fortune:<amount>] plots:<count> sell_method:<method>',
@@ -114,6 +156,16 @@ const helpSections = [
         command: '/link event:<event> enabled:<true|false>',
         description: 'Toggle one backend event ping for your linked Minecraft client.',
         example: '/link event:darkAuction enabled:false'
+      },
+      {
+        command: '/link [remove:<ign>] [unlink:true]',
+        description: 'Show your link status, remove one linked username, or delete the whole link.',
+        example: '/link remove:AltName'
+      },
+      {
+        command: '/hideonleaf',
+        description: 'Show the Hideonleaf leaderboard for kills, shards, coins, and coins per hour.',
+        example: '/hideonleaf'
       }
     ]
   },
@@ -165,6 +217,18 @@ const helpSections = [
         command: '/test event event:<name>',
         description: 'Send one event reminder test through Discord and the IRC bridge.',
         example: '/test event event:darkAuction',
+        adminOnly: true
+      },
+      {
+        command: '/test miningevent event:<name>',
+        description: 'Send one mining event test ping to the configured mining events channel.',
+        example: '/test miningevent event:raffle',
+        adminOnly: true
+      },
+      {
+        command: '/test weather tier:<Mild|EXTREME>',
+        description: 'Send one SkyBlock weather test ping. Set up the channel, roles, pinned role panel and live dashboard (with its island menu) under /setup → Weather.',
+        example: '/test weather tier:EXTREME',
         adminOnly: true
       }
     ]

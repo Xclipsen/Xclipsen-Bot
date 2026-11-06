@@ -3,7 +3,7 @@ const { getHelpSectionChoices } = require('./help');
 const { simulatedMayors } = require('./simulationData');
 const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
 const { MINING_EVENT_DEFINITIONS } = require('../features/miningEvents');
-const { PESTS, INSTA_SELL, SELL_ORDER, NPC_SELL } = require('../features/bestPest');
+const { PESTS, SELL_METHOD_LABELS } = require('../features/bestPest');
 const { BAITS, CROPS, REFORGE_OPTIONS } = require('../features/pestFarmingProfit');
 
 const helpCommand = new SlashCommandBuilder()
@@ -70,29 +70,22 @@ const reactionRoleCommand = new SlashCommandBuilder()
     .addChannelOption((option) => option.setName('channel').setDescription('Optional channel scope').setRequired(false))
     .addStringOption((option) => option.setName('message_id').setDescription('Optional message ID scope').setRequired(false)));
 
-const cataCommand = new SlashCommandBuilder()
-  .setName('cata')
-  .setDescription('Show a catacombs overview for a player.')
-  .addStringOption((option) => option
-    .setName('player')
-    .setDescription('Minecraft username, or leave empty to use your linked account')
-    .setRequired(false))
-  .addStringOption((option) => option
-    .setName('profile')
-    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
-    .setRequired(false));
+function addPlayerProfileOptions(command) {
+  return command
+    .addStringOption((option) => option
+      .setName('player')
+      .setDescription('Minecraft username, or leave empty to use your linked account')
+      .setRequired(false))
+    .addStringOption((option) => option
+      .setName('profile')
+      .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
+      .setRequired(false));
+}
 
-const catacombsCommand = new SlashCommandBuilder()
-  .setName('catacombs')
-  .setDescription('Show a catacombs overview for a player.')
-  .addStringOption((option) => option
-    .setName('player')
-    .setDescription('Minecraft username, or leave empty to use your linked account')
-    .setRequired(false))
-  .addStringOption((option) => option
-    .setName('profile')
-    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
-    .setRequired(false));
+// /cata and /catacombs are the same command under two names.
+const [cataCommand, catacombsCommand] = ['cata', 'catacombs'].map((name) => addPlayerProfileOptions(new SlashCommandBuilder()
+  .setName(name)
+  .setDescription('Show a catacombs overview for a player.')));
 
 const itemEmojiCommand = new SlashCommandBuilder()
   .setName('itememoji')
@@ -107,63 +100,30 @@ const itemEmojiCommand = new SlashCommandBuilder()
     .setDescription('Use the enchanted emoji variant if available')
     .setRequired(false));
 
-const trophyFishingCommand = new SlashCommandBuilder()
+const trophyFishingCommand = addPlayerProfileOptions(new SlashCommandBuilder()
   .setName('trophyfishing')
-  .setDescription('Show a Trophy Fish overview for a player.')
-  .addStringOption((option) => option
-    .setName('player')
-    .setDescription('Minecraft username, or leave empty to use your linked account')
-    .setRequired(false))
-  .addStringOption((option) => option
-    .setName('profile')
-    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
-    .setRequired(false));
+  .setDescription('Show a Trophy Fish overview for a player.'));
 
-const trophyFrogsCommand = new SlashCommandBuilder()
+const trophyFrogsCommand = addPlayerProfileOptions(new SlashCommandBuilder()
   .setName('trophyfrogs')
-  .setDescription('Show a Trophy Frog overview for a player.')
+  .setDescription('Show a Trophy Frog overview for a player.'));
+
+const sellMethodChoices = Object.entries(SELL_METHOD_LABELS).map(([value, name]) => ({ name, value }));
+
+// /pest and /pests are the same command under two names.
+const [pestCommand, pestsCommand] = ['pest', 'pests'].map((name) => new SlashCommandBuilder()
+  .setName(name)
+  .setDescription('Show the best pest to farm for a given Farming Fortune.')
+  .addIntegerOption((option) => option
+    .setName('fortune')
+    .setDescription('Farming Fortune used for the pest profit estimate')
+    .setRequired(true)
+    .setMinValue(0))
   .addStringOption((option) => option
-    .setName('player')
-    .setDescription('Minecraft username, or leave empty to use your linked account')
-    .setRequired(false))
-  .addStringOption((option) => option
-    .setName('profile')
-    .setDescription('SkyBlock profile name, or leave empty to use the selected profile')
-    .setRequired(false));
-
-function addPestOptions(command) {
-  return command
-    .addIntegerOption((option) => option
-      .setName('fortune')
-      .setDescription('Farming Fortune used for the pest profit estimate')
-      .setRequired(true)
-      .setMinValue(0))
-    .addStringOption((option) => option
-      .setName('sell_method')
-      .setDescription('How to value pest drops')
-      .setRequired(true)
-      .addChoices(
-        { name: 'Instasell', value: INSTA_SELL },
-        { name: 'Sell Order', value: SELL_ORDER },
-        { name: 'NPC Sell', value: NPC_SELL }
-      ));
-}
-
-function addSellMethodOptions(option) {
-  return option.addChoices(
-    { name: 'Instasell', value: INSTA_SELL },
-    { name: 'Sell Order', value: SELL_ORDER },
-    { name: 'NPC Sell', value: NPC_SELL }
-  );
-}
-
-const pestCommand = addPestOptions(new SlashCommandBuilder()
-  .setName('pest')
-  .setDescription('Show the best pest to farm for a given Farming Fortune.'));
-
-const pestsCommand = addPestOptions(new SlashCommandBuilder()
-  .setName('pests')
-  .setDescription('Alias of /pest for the same pest profit estimate.'));
+    .setName('sell_method')
+    .setDescription('How to value pest drops')
+    .setRequired(true)
+    .addChoices(...sellMethodChoices)));
 
 const setFarmingStatsCommand = new SlashCommandBuilder()
   .setName('setfarmingstats')
@@ -180,26 +140,24 @@ const setFarmingStatsCommand = new SlashCommandBuilder()
     .setRequired(true)
     .setMinValue(0)
     .setMaxValue(10))
-  .addIntegerOption((option) => option
-    .setName('cropeetle_level')
-    .setDescription('Your Cropeetle level')
-    .setRequired(true)
-    .setMinValue(0)
-    .setMaxValue(10))
-  .addIntegerOption((option) => option
-    .setName('rarefinder_level')
-    .setDescription('Your Rarefinder level')
-    .setRequired(true)
-    .setMinValue(0)
-    .setMaxValue(20))
   .addStringOption((option) => option
     .setName('reforge')
     .setDescription('Your farming tool reforge')
     .setRequired(true)
-    .addChoices(
-      { name: REFORGE_OPTIONS.blessed.label, value: 'blessed' },
-      { name: REFORGE_OPTIONS.bountiful.label, value: 'bountiful' }
-    ));
+    .addChoices(...Object.entries(REFORGE_OPTIONS).map(([value, reforge]) => ({ name: reforge.label, value }))))
+  // Optional and only shown back; omitted levels keep the saved value.
+  .addIntegerOption((option) => option
+    .setName('cropeetle_level')
+    .setDescription('Your Cropeetle level (shown only, not used in the calculation)')
+    .setRequired(false)
+    .setMinValue(0)
+    .setMaxValue(10))
+  .addIntegerOption((option) => option
+    .setName('rarefinder_level')
+    .setDescription('Your Rarefinder level (shown only, not used in the calculation)')
+    .setRequired(false)
+    .setMinValue(0)
+    .setMaxValue(20));
 
 const pestFarmingProfitsCommand = new SlashCommandBuilder()
   .setName('pestfarmingprofits')
@@ -230,10 +188,11 @@ const pestFarmingProfitsCommand = new SlashCommandBuilder()
     .setRequired(true)
     .setMinValue(1)
     .setMaxValue(25))
-  .addStringOption((option) => addSellMethodOptions(option
+  .addStringOption((option) => option
     .setName('sell_method')
     .setDescription('How to value crop and pest drops')
-    .setRequired(true)))
+    .setRequired(true)
+    .addChoices(...sellMethodChoices))
   .addIntegerOption((option) => option
     .setName('pest_fortune')
     .setDescription('Your Farming Fortune when vacuuming pests; leave empty to use `fortune - 300`')
@@ -267,6 +226,142 @@ const gifCommand = new SlashCommandBuilder()
     .setName('media')
     .setDescription('Image to convert')
     .setRequired(true));
+
+const ttsCommand = new SlashCommandBuilder()
+  .setName('tts')
+  .setDescription('Read messages aloud in your voice channel.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('join')
+    .setDescription('Join your voice channel and read this channel aloud.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('leave')
+    .setDescription('Leave the voice channel.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('say')
+    .setDescription('Read a text aloud.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500))
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice for this text only')
+      .setRequired(false)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('whisper')
+    .setDescription('Whisper a text.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('sleepy')
+    .setDescription('Read a text sleepily.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('drunk')
+    .setDescription('Read a text like a drunk.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('angry')
+    .setDescription('Shout a text angrily.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('follow')
+    .setDescription('Bot owners only: read every message of a user aloud.')
+    .addUserOption((option) => option
+      .setName('user')
+      .setDescription('User whose messages are read')
+      .setRequired(true))
+    .addBooleanOption((option) => option
+      .setName('enabled')
+      .setDescription('On or off; toggles when left empty')
+      .setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('list')
+    .setDescription('Show who is read aloud, followed users and voices.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('uservoice')
+    .setDescription('Give a user their own TTS voice; leave voice empty to reset.')
+    .addUserOption((option) => option
+      .setName('user')
+      .setDescription('User to give a voice (others need bot access)')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice for this user; empty resets to the server voice')
+      .setRequired(false)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('voice')
+    .setDescription('Choose the TTS voice for this server.')
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice to use')
+      .setRequired(true)
+      .setAutocomplete(true)));
+
+const musicCommand = new SlashCommandBuilder()
+  .setName('music')
+  .setDescription('Play music and radio in your voice channel (only in the music channel).')
+  .addSubcommand((subcommand) => subcommand
+    .setName('play')
+    .setDescription('Play or queue a YouTube video.')
+    .addStringOption((option) => option
+      .setName('query')
+      .setDescription('YouTube link or search text')
+      .setRequired(true)
+      .setMaxLength(300)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('radio')
+    .setDescription('Play a lofi / chill radio station.')
+    .addStringOption((option) => option
+      .setName('station')
+      .setDescription('Radio station')
+      .setRequired(true)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('skip')
+    .setDescription('Skip the current track.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('stop')
+    .setDescription('Stop playback and clear the queue.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('pause')
+    .setDescription('Pause playback.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('resume')
+    .setDescription('Resume playback.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('queue')
+    .setDescription('Show the queue.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('nowplaying')
+    .setDescription('Show what is playing.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('volume')
+    .setDescription('Set the playback volume.')
+    .addIntegerOption((option) => option
+      .setName('level')
+      .setDescription('Volume in percent')
+      .setRequired(true)
+      .setMinValue(0)
+      .setMaxValue(100)));
 
 const hideonleafCommand = new SlashCommandBuilder()
   .setName('hideonleaf')
@@ -352,7 +447,15 @@ const testCommand = new SlashCommandBuilder()
       .setName('event')
       .setDescription('Mining event to test')
       .setRequired(true)
-      .addChoices(...miningEventChoices)));
+      .addChoices(...miningEventChoices)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('weather')
+    .setDescription('Send one SkyBlock weather ping test to the configured weather channel.')
+    .addStringOption((option) => option
+      .setName('tier')
+      .setDescription('Weather tier to test')
+      .setRequired(true)
+      .addChoices({ name: 'Mild', value: 'mild' }, { name: 'EXTREME', value: 'extreme' })));
 
 const linkCommand = new SlashCommandBuilder()
   .setName('link')
@@ -379,7 +482,12 @@ const linkCommand = new SlashCommandBuilder()
     .setDescription('Remove your backend link and all linked Minecraft usernames')
     .setRequired(false));
 
+const seasonCommand = new SlashCommandBuilder().setName('season').setDescription('Show current Harvest Feast in-season crops and their remaining time');
+const harvestFeastCommand = new SlashCommandBuilder().setName('harvestfeast').setDescription('Show Harvest Feast crops and upcoming rotations');
+
 const commands = [
+  seasonCommand,
+  harvestFeastCommand,
   helpCommand,
   setupCommand,
   simulateCommand,
@@ -398,6 +506,8 @@ const commands = [
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
+  ttsCommand,
+  musicCommand,
   hideonleafCommand,
   shitterCommand,
   linkCommand
@@ -406,6 +516,8 @@ const commands = [
 module.exports = {
   commands,
   commandNames: {
+    season: 'season',
+    harvestfeast: 'harvestfeast',
     help: 'help',
     setup: 'setup',
     simulate: 'simulate',
@@ -424,6 +536,8 @@ module.exports = {
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',
+    tts: 'tts',
+    music: 'music',
     hideonleaf: 'hideonleaf',
     shitter: 'shitter',
     link: 'link'

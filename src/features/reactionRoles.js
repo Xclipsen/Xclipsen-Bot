@@ -1,6 +1,12 @@
 const { MessageFlags } = require('discord.js');
+const { getPanelRoleProblem } = require('./setupHub/rolePanels');
 
-function createReactionRoleService({ client, store, ensureSetupAccess }) {
+function isSameBinding(entry, channelId, messageId, emoji) {
+  return entry.channelId === channelId && entry.messageId === messageId && entry.emoji === emoji;
+}
+
+// Reaction roles change who gets which role, so every entry point is limited to server administrators.
+function createReactionRoleService({ client, store, ensureServerAccess, pagedLists }) {
   function isSnowflake(value) {
     return /^\d{16,20}$/.test(String(value || '').trim());
   }
@@ -51,17 +57,13 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
   async function addReactionRoleBinding(guildId, message, roleId, emojiInput, requiredRoleId = null) {
     const emoji = normalizeEmojiIdentifier(emojiInput);
     const existingEntries = store.getReactionRoleEntries(guildId);
-    const duplicate = existingEntries.find((entry) => (
-      entry.channelId === message.channelId &&
-      entry.messageId === message.id &&
-      entry.emoji === emoji
-    ));
+    const duplicate = existingEntries.find((entry) => isSameBinding(entry, message.channelId, message.id, emoji));
 
     if (duplicate) {
       throw new Error('That reaction role binding already exists for this message and emoji.');
     }
 
-    await message.react(emojiInput).catch(() => null);
+    await message.react(emojiInput);
     store.setReactionRoleEntries(guildId, [
       ...existingEntries,
       {
@@ -74,21 +76,30 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
     ]);
   }
 
-  async function removeReactionRoleBinding(guildId, message, emojiInput) {
-    const emoji = normalizeEmojiIdentifier(emojiInput);
+  // Drops the binding and its reaction from the message; returns false when no binding matched.
+  async function deleteBinding(guildId, channelId, messageId, emoji, message = null) {
     const existingEntries = store.getReactionRoleEntries(guildId);
-    const nextEntries = existingEntries.filter((entry) => !(
-      entry.channelId === message.channelId &&
-      entry.messageId === message.id &&
-      entry.emoji === emoji
-    ));
-
+    const nextEntries = existingEntries.filter((entry) => !isSameBinding(entry, channelId, messageId, emoji));
     if (nextEntries.length === existingEntries.length) {
-      throw new Error('No matching reaction role binding was found to remove.');
+      return false;
     }
 
     store.setReactionRoleEntries(guildId, nextEntries);
-    await message.reactions.resolve(emoji)?.remove().catch(() => null);
+    await message?.reactions.resolve(emoji)?.remove().catch(() => null);
+    return true;
+  }
+
+  async function removeReactionRoleBinding(guildId, message, emojiInput) {
+    if (!(await deleteBinding(guildId, message.channelId, message.id, normalizeEmojiIdentifier(emojiInput), message))) {
+      throw new Error('No matching reaction role binding was found to remove.');
+    }
+  }
+
+  // Same as `/reactionrole remove`, for a stored entry whose message may no longer exist.
+  async function removeReactionRoleEntry(guild, entry) {
+    const channel = await guild.channels.fetch(entry.channelId).catch(() => null);
+    const message = channel?.isTextBased() ? await channel.messages.fetch(entry.messageId).catch(() => null) : null;
+    return deleteBinding(guild.id, entry.channelId, entry.messageId, entry.emoji, message);
   }
 
   function getReactionRoleSummaryLines(guildId) {
@@ -97,41 +108,6 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
         const restriction = entry.requiredRoleId ? ` (requires <@&${entry.requiredRoleId}>)` : '';
         return `${index + 1}. ${entry.emoji} -> <@&${entry.roleId}> on ${entry.channelId}/${entry.messageId}${restriction}`;
       });
-  }
-
-  function buildReactionRoleSummary(guildId, options = {}) {
-    const {
-      maxLength = 1800,
-      maxLines = Infinity
-    } = options;
-
-    const lines = getReactionRoleSummaryLines(guildId);
-    if (lines.length === 0) {
-      return 'No reaction roles configured yet.';
-    }
-
-    const output = [];
-    let currentLength = 0;
-
-    for (const line of lines) {
-      if (output.length >= maxLines) {
-        break;
-      }
-
-      const separatorLength = output.length > 0 ? 1 : 0;
-      if ((currentLength + separatorLength + line.length) > maxLength) {
-        break;
-      }
-
-      output.push(line);
-      currentLength += separatorLength + line.length;
-    }
-
-    if (output.length < lines.length) {
-      output.push(`... and ${lines.length - output.length} more binding(s).`);
-    }
-
-    return output.join('\n');
   }
 
   function purgeReactionRoleBindings(guildId, options = {}) {
@@ -158,16 +134,13 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
   }
 
   async function handleReactionRoleCommand(interaction) {
-    if (!(await ensureSetupAccess(interaction, 'reaction role command'))) {
+    if (!(await ensureServerAccess(interaction, 'reaction role command'))) {
       return;
     }
 
     const subcommand = interaction.options.getSubcommand();
     if (subcommand === 'list') {
-      await interaction.reply({
-        content: buildReactionRoleSummary(interaction.guildId, { maxLength: 1900 }),
-        flags: MessageFlags.Ephemeral
-      });
+      await pagedLists.open(interaction, { title: 'Reaction Role Bindings', lines: getReactionRoleSummaryLines(interaction.guildId), guard: ensureServerAccess, update: false });
       return;
     }
 
@@ -246,6 +219,15 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
     const { message } = resolved;
 
     if (subcommand === 'add') {
+      const problem = getPanelRoleProblem(interaction.guild, resolved.role, store.getGuildConfig(interaction.guildId).botManagers.roleIds);
+      if (problem) {
+        await interaction.reply({
+          content: `<@&${role.id}> cannot be a reaction role: it ${problem}.`,
+          flags: MessageFlags.Ephemeral
+        });
+        return;
+      }
+
       const result = await addReactionRoleBinding(interaction.guildId, message, role.id, emojiInput, requiredRole?.id || null).catch((error) => error);
       if (result instanceof Error) {
         await interaction.reply({
@@ -302,11 +284,7 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
       return;
     }
 
-    const reactionRole = store.getReactionRoleEntries(message.guildId).find((entry) => (
-      entry.channelId === message.channelId &&
-      entry.messageId === message.id &&
-      entry.emoji === emoji
-    ));
+    const reactionRole = store.getReactionRoleEntries(message.guildId).find((entry) => isSameBinding(entry, message.channelId, message.id, emoji));
 
     if (!reactionRole) {
       return;
@@ -342,11 +320,9 @@ function createReactionRoleService({ client, store, ensureSetupAccess }) {
   }
 
   return {
-    buildReactionRoleSummary,
     handleReactionRoleCommand,
-    resolveReactionRoleInputs,
     addReactionRoleBinding,
-    removeReactionRoleBinding,
+    removeReactionRoleEntry,
     purgeReactionRoleBindings,
     applyReactionRoleChange
   };

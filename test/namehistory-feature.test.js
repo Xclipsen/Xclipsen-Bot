@@ -6,7 +6,6 @@ const { createNameHistoryFeature } = require('../src/features/nameHistory');
 const PROFILE = {
   uuid: '12345678-1234-1234-1234-1234567890ab',
   name: 'CurrentName',
-  createdAt: null,
   history: [],
   historySource: 'laby',
   historySourceLabel: 'Laby.net',
@@ -30,7 +29,7 @@ async function runCommand({ profile = PROFILE, player = 'RequestedName', linkedA
       },
       formatUuid(uuid) { return uuid; }
     },
-    store: {
+    linkStore: {
       async getBridgeLinkedAccount(userId) {
         linkedUserIds.push(userId);
         return linkedAccount;
@@ -178,4 +177,104 @@ test('/namehistory displays structured service errors', async () => {
   });
   assert.equal(reply.content, 'Username not found');
   assert.equal(reply.embeds, undefined);
+});
+
+test('/namehistory lists other accounts that used the name in a second embed', async () => {
+  const { reply } = await runCommand({
+    profile: {
+      ...PROFILE,
+      nameOwners: {
+        name: 'CurrentName',
+        status: 'fresh',
+        owners: [
+          { uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'OldOwner', changedAt: '2019-05-01T00:00:00Z' },
+          { uuid: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb', name: 'OtherOwner', changedAt: null }
+        ]
+      }
+    }
+  });
+  assert.equal(reply.embeds.length, 2);
+  const owners = reply.embeds[1];
+  assert.equal(owners.title, 'Everyone who used CurrentName');
+  assert.match(owners.description, /Other Accounts: `2`/);
+  assert.match(owners.description, /\*\*1\. OldOwner\*\* · `aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa`\nHad \*\*CurrentName\*\*: from approx\. May 1, 2019/);
+  assert.match(owners.description, /\*\*2\. OtherOwner\*\* · `bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb`\nHad \*\*CurrentName\*\*: date unknown/);
+});
+
+test('/namehistory shows previous owners of a name nobody currently uses', async () => {
+  const { reply } = await runCommand({
+    profile: {
+      unclaimed: true,
+      query: 'FreeName',
+      nameOwners: { name: 'FreeName', status: 'fresh', owners: [{ uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', name: 'NowOther', changedAt: null }] }
+    }
+  });
+  assert.equal(reply.embeds.length, 1);
+  assert.match(reply.embeds[0].description, /`FreeName` is not used by any account right now/);
+  assert.match(reply.embeds[0].description, /Previous Owners: `1`/);
+  assert.match(reply.embeds[0].description, /\*\*1\. NowOther\*\*/);
+});
+
+test('/namehistory keeps both embeds within the Discord message limit', async () => {
+  const history = Array.from({ length: 150 }, (_, index) => ({ name: `PastName${index}`.padEnd(16, '_'), changedAt: null }));
+  const owners = Array.from({ length: 100 }, (_, index) => ({
+    uuid: `aaaaaaaa-aaaa-4aaa-8aaa-${String(index).padStart(12, '0')}`, name: `Owner${index}`, changedAt: '2019-05-01T00:00:00Z'
+  }));
+  const { reply } = await runCommand({ profile: { ...PROFILE, history, nameOwners: { name: 'CurrentName', status: 'unavailable', owners } } });
+  const total = reply.embeds.reduce((sum, embed) => sum + embed.title.length + embed.description.length + (embed.footer?.text.length || 0), 0);
+  assert.ok(total <= 6000, `total embed length ${total}`);
+  assert.match(reply.embeds[1].description, /more accounts omitted/);
+  assert.match(reply.embeds[1].description, /Owner lookup is temporarily unavailable/);
+});
+
+test('/namehistory shows when another account had the name and bolds it in its name chain', async () => {
+  const { reply } = await runCommand({
+    profile: {
+      ...PROFILE,
+      nameOwners: {
+        name: 'CurrentName',
+        status: 'fresh',
+        owners: [{
+          uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+          name: 'New_Name',
+          changedAt: '2019-05-01T00:00:00Z',
+          periods: [{ from: '2019-05-01T00:00:00Z', to: '2021-02-03T00:00:00Z', accurate: true }],
+          profile: {
+            uuid: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+            name: 'New_Name',
+            history: [
+              { name: 'First', changedAt: null },
+              { name: 'CurrentName', changedAt: '2019-05-01T00:00:00Z' },
+              { name: 'New_Name', changedAt: '2021-02-03T00:00:00Z' }
+            ]
+          }
+        }]
+      }
+    }
+  });
+  const description = reply.embeds[1].description;
+  assert.match(description, /\*\*1\. New\\_Name\*\*/);
+  assert.match(description, /Had \*\*CurrentName\*\*: May 1, 2019 – Feb 3, 2021/);
+  assert.match(description, /First → \*\*CurrentName\*\* → New\\_Name/);
+});
+
+test('/namehistory looked up by a former name shows the renamed account and marks the old name', async () => {
+  const { reply } = await runCommand({
+    profile: {
+      ...PROFILE,
+      name: 'NewName',
+      history: [
+        { name: 'OldName', changedAt: null },
+        { name: 'NewName', changedAt: '2022-03-04T00:00:00Z', accurate: false }
+      ],
+      formerName: 'OldName',
+      formerNamePeriods: [{ from: null, to: '2022-03-04T00:00:00Z', accurate: false }],
+      nameOwners: { name: 'OldName', former: true, status: 'fresh', owners: [] }
+    }
+  });
+  const [history, owners] = reply.embeds;
+  assert.match(history.description, /^\*\*OldName\*\* is a former name of \*\*NewName\*\* \(first name – approx\. Mar 4, 2022\)\./);
+  assert.match(history.description, /Current Name: `NewName`/);
+  assert.match(history.description, /1\. OldName {2}<- searched/);
+  assert.equal(owners.title, 'Other accounts who used OldName');
 });

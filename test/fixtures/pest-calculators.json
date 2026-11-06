@@ -1,0 +1,89 @@
+{
+  "pestWithoutStats": {
+    "title": "Best Pest to Farm",
+    "description": "Farming Fortune: 2,500\nSell Method: NPC Sell\nMayor Finnegan: Enabled (Pest Eradicator)\nPest Shard Level: 0 (+0% rare drops)\n\n1. **Slug** - 187.19K per kill\n2. **Beetle** - 173.85K per kill\n3. **Earthworm** - 151.71K per kill\n4. **Cricket** - 150.52K per kill\n5. **Locust** - 150.52K per kill\n6. **Rat** - 148.44K per kill\n7. **Moth** - 140.59K per kill\n8. **Dragonfly** - 128.20K per kill\n9. **Firefly** - 128.20K per kill\n10. **Praying Mantis** - 126.91K per kill\n11. **Mosquito** - 124.32K per kill\n12. **Mite** - 124.32K per kill\n13. **Fly** - 97.00K per kill",
+    "footer": "NPC Sell is calibrated to the current pest drop formulas."
+  },
+  "profitWithoutStats": {
+    "content": "You need to set your farming stats first using `/setfarmingstats`."
+  },
+  "setFarmingStats": {
+    "title": "Your Farming Stats",
+    "description": "Your farming stats have been updated and saved in the database:",
+    "fields": [
+      {
+        "name": "Bonus Pest Chance",
+        "value": "497",
+        "inline": true
+      },
+      {
+        "name": "Pest Shard Level",
+        "value": "7 (+14% rare drops)",
+        "inline": true
+      },
+      {
+        "name": "Cropeetle Level",
+        "value": "4 (+8%)",
+        "inline": true
+      },
+      {
+        "name": "Rarefinder Level",
+        "value": "9 (+9%)",
+        "inline": true
+      },
+      {
+        "name": "Reforge",
+        "value": "Bountiful (+0.2 coins/crop)",
+        "inline": true
+      }
+    ]
+  },
+  "lastWithoutSetup": {
+    "content": "No previous pest farming setup found. Run `/pestfarmingprofits` first."
+  },
+  "pest_insta_sell": {
+    "title": "Best Pest to Farm",
+    "description": "Farming Fortune: 2,500\nSell Method: Instasell\nMayor Finnegan: Enabled (Pest Eradicator)\nPest Shard Level: 7 (+14% rare drops)\n\n1. **Slug** - 140.44K per kill\n2. **Praying Mantis** - 135.74K per kill\n3. **Dragonfly** - 133.21K per kill\n4. **Firefly** - 133.21K per kill\n5. **Beetle** - 91.97K per kill\n6. **Mosquito** - 78.21K per kill\n7. **Moth** - 72.28K per kill\n8. **Locust** - 62.71K per kill\n9. **Mite** - 60.28K per kill\n10. **Cricket** - 58.55K per kill\n11. **Rat** - 46.51K per kill\n12. **Fly** - 44.98K per kill\n13. **Earthworm** - 42.65K per kill",
+    "footer": "Bazaar methods use live Hypixel Bazaar prices for guaranteed drops. Unsupported rare/AH-only drops stay on the calibrated estimate."
+  },
+  "pest_sell_order": {
+    "title": "Best Pest to Farm",
+    "description": "Farming Fortune: 2,500\nSell Method: Sell Order\nMayor Finnegan: Enabled (Pest Eradicator)\nPest Shard Level: 7 (+14% rare drops)\n\n1. **Slug** - 154.73K per kill\n2. **Praying Mantis** - 135.74K per kill\n3. **Dragonfly** - 133.21K per kill\n4. **Firefly** - 133.21K per kill\n5. **Beetle** - 93.94K per kill\n6. **Mosquito** - 88.43K per kill\n7. **Moth** - 78.81K per kill\n8. **Locust** - 68.10K per kill\n9. **Mite** - 66.02K per kill\n10. **Cricket** - 62.89K per kill\n11. **Rat** - 48.44K per kill\n12. **Fly** - 48.16K per kill\n13. **Earthworm** - 42.68K per kill",
+    "footer": "Bazaar methods use live Hypixel Bazaar prices for guaranteed drops. Unsupported rare/AH-only drops stay on the calibrated estimate."
+  },
+  "pest_npc_sell": {
+    "title": "Best Pest to Farm",
+    "description": "Farming Fortune: 2,500\nSell Method: NPC Sell\nMayor Finnegan: Enabled (Pest Eradicator)\nPest Shard Level: 7 (+14% rare drops)\n\n1. **Slug** - 197.30K per kill\n2. **Beetle** - 184.05K per kill\n3. **Earthworm** - 156.81K per kill\n4. **Cricket** - 155.45K per kill\n5. **Locust** - 155.45K per kill\n6. **Rat** - 153.08K per kill\n7. **Moth** - 146.13K per kill\n8. **Praying Mantis** - 135.74K per kill\n9. **Dragonfly** - 133.21K per kill\n10. **Firefly** - 133.21K per kill\n11. **Mosquito** - 128.78K per kill\n12. **Mite** - 128.78K per kill\n13. **Fly** - 100.84K per kill",
+    "footer": "NPC Sell is calibrated to the current pest drop formulas."
+  },
+  "pestLowFortune": {
+    "title": "Best Pest to Farm",
+    "description": "Farming Fortune: 0\nSell Method: Instasell\nMayor Finnegan: Enabled (Pest Eradicator)\nPest Shard Level: 7 (+14% rare drops)\n\n1. **Slug** - 17.73K per kill\n2. **Beetle** - 17.11K per kill\n3. **Praying Mantis** - 15.79K per kill\n4. **Dragonfly** - 10.17K per kill\n5. **Firefly** - 10.17K per kill\n6. **Moth** - 9.86K per kill\n7. **Earthworm** - 9.04K per kill\n8. **Locust** - 8.86K per kill\n9. **Cricket** - 8.85K per kill\n10. **Mosquito** - 8.61K per kill\n11. **Rat** - 8.42K per kill\n12. **Mite** - 8.36K per kill\n13. **Fly** - 7.23K per kill",
+    "footer": "Bazaar methods use live Hypixel Bazaar prices for guaranteed drops. Unsupported rare/AH-only drops stay on the calibrated estimate."
+  },
+  "profit_slugInstasell": {
+    "title": "Pest Farming Profit Calculator",
+    "description": "**Farming Fortune:** 2,900\n**Plots:** 2\n**Crop:** Wheat\n**Bait:** Plant Matter\n**Vinyl:** Slug\n**Sell Method:** Instasell\n**Mayor Finnegan:** Enabled\n**Bonus Pest Chance:** 497\n**Pest Shard Level:** 7 (+14% rare drops)\n**Reforge:** Bountiful\n**Average Time to Spawn:** 1m 40s\n\n**Pests per Hour:** 214.9\n**Bait Cost per Hour:** 1.15K\n**Crop Profit per Hour:** 1823.27M × 0.724 = 1319.50M\n**Pest Profit per Hour:** 25.29M\n**Net Profit per Hour:** 1344.78M\n\n**Top Pests by Profit**\n**Slug** (61.02%)\n↳ 131.1/hr × 145.38K = 19.06M/hr\n**Locust** (20.34%)\n↳ 43.7/hr × 64.87K = 2.84M/hr\n**Praying Mantis** (1.69%)\n↳ 3.6/hr × 140.57K = 512.06K/hr\n**Dragonfly** (1.69%)\n↳ 3.6/hr × 138.18K = 503.35K/hr\n**Firefly** (1.69%)\n↳ 3.6/hr × 138.18K = 503.35K/hr",
+    "footer": "Calculated with 215 total pests/hr • Pests use 2,600 fortune"
+  },
+  "profit_slugSellOrder": {
+    "title": "Pest Farming Profit Calculator",
+    "description": "**Farming Fortune:** 2,900\n**Plots:** 3\n**Crop:** Mushroom\n**Bait:** Plant Matter\n**Vinyl:** Slug\n**Sell Method:** Sell Order\n**Mayor Finnegan:** Enabled\n**Bonus Pest Chance:** 497\n**Pest Shard Level:** 7 (+14% rare drops)\n**Reforge:** Bountiful\n**Average Time to Spawn:** 1m 40s\n\n**Pests per Hour:** 214.9\n**Bait Cost per Hour:** 1.73K\n**Crop Profit per Hour:** 2961.35M × 0.724 = 2143.13M\n**Pest Profit per Hour:** 27.61M\n**Net Profit per Hour:** 2170.73M\n\n**Top Pests by Profit**\n**Slug** (61.02%)\n↳ 131.1/hr × 160.24K = 21.01M/hr\n**Locust** (20.34%)\n↳ 43.7/hr × 70.47K = 3.08M/hr\n**Praying Mantis** (1.69%)\n↳ 3.6/hr × 140.57K = 512.06K/hr\n**Dragonfly** (1.69%)\n↳ 3.6/hr × 138.18K = 503.35K/hr\n**Firefly** (1.69%)\n↳ 3.6/hr × 138.18K = 503.35K/hr",
+    "footer": "Calculated with 215 total pests/hr • Pests use 2,600 fortune"
+  },
+  "profit_jellyNpc": {
+    "title": "Pest Farming Profit Calculator",
+    "description": "**Farming Fortune:** 1,800\n**Plots:** 1\n**Crop:** Cocoa Beans\n**Bait:** Jelly\n**Vinyl:** Firefly\n**Sell Method:** NPC Sell\n**Mayor Finnegan:** Enabled\n**Bonus Pest Chance:** 497\n**Pest Shard Level:** 7 (+14% rare drops)\n**Reforge:** Bountiful\n**Average Time to Spawn:** 1m 40s\n\n**Pests per Hour:** 214.9\n**Bait Cost per Hour:** 708\n**Crop Profit per Hour:** 4.03M × 0.724 = 2.92M\n**Pest Profit per Hour:** 18.42M\n**Net Profit per Hour:** 21.34M\n\n**Top Pests by Profit**\n**Firefly** (51.43%)\n↳ 110.5/hr × 83.48K = 9.23M/hr\n**Praying Mantis** (17.14%)\n↳ 36.8/hr × 87.41K = 3.22M/hr\n**Dragonfly** (17.14%)\n↳ 36.8/hr × 83.48K = 3.08M/hr\n**Slug** (1.43%)\n↳ 3.1/hr × 125.15K = 384.24K/hr\n**Beetle** (1.43%)\n↳ 3.1/hr × 117.26K = 360.02K/hr",
+    "footer": "Calculated with 215 total pests/hr • Pests use 1,500 fortune"
+  },
+  "profit_moonflowerNpc": {
+    "title": "Pest Farming Profit Calculator",
+    "description": "**Farming Fortune:** 2,400\n**Plots:** 4\n**Crop:** Moonflower\n**Bait:** Dung\n**Vinyl:** Fly\n**Sell Method:** NPC Sell\n**Mayor Finnegan:** Enabled\n**Bonus Pest Chance:** 497\n**Pest Shard Level:** 7 (+14% rare drops)\n**Reforge:** Bountiful\n**Average Time to Spawn:** 1m 40s\n\n**Pests per Hour:** 214.9\n**Bait Cost per Hour:** 1.96K\n**Crop Profit per Hour:** 3154.84M × 0.724 = 2283.16M\n**Pest Profit per Hour:** 23.17M\n**Net Profit per Hour:** 2306.32M\n\n**Top Pests by Profit**\n**Fly** (61.02%)\n↳ 131.1/hr × 85.83K = 11.26M/hr\n**Beetle** (20.34%)\n↳ 43.7/hr × 157.33K = 6.88M/hr\n**Slug** (1.69%)\n↳ 3.6/hr × 168.44K = 613.57K/hr\n**Earthworm** (1.69%)\n↳ 3.6/hr × 133.17K = 485.08K/hr\n**Cricket** (1.69%)\n↳ 3.6/hr × 131.98K = 480.78K/hr",
+    "footer": "Calculated with 215 total pests/hr • Pests use 2,100 fortune"
+  },
+  "lastProfit": {
+    "title": "Pest Farming Profit Calculator",
+    "description": "**Farming Fortune:** 2,400\n**Plots:** 4\n**Crop:** Moonflower\n**Bait:** Dung\n**Vinyl:** Fly\n**Sell Method:** NPC Sell\n**Mayor Finnegan:** Enabled\n**Bonus Pest Chance:** 497\n**Pest Shard Level:** 7 (+14% rare drops)\n**Reforge:** Bountiful\n**Average Time to Spawn:** 1m 40s\n\n**Pests per Hour:** 214.9\n**Bait Cost per Hour:** 1.96K\n**Crop Profit per Hour:** 3154.84M × 0.724 = 2283.16M\n**Pest Profit per Hour:** 23.17M\n**Net Profit per Hour:** 2306.32M\n\n**Top Pests by Profit**\n**Fly** (61.02%)\n↳ 131.1/hr × 85.83K = 11.26M/hr\n**Beetle** (20.34%)\n↳ 43.7/hr × 157.33K = 6.88M/hr\n**Slug** (1.69%)\n↳ 3.6/hr × 168.44K = 613.57K/hr\n**Earthworm** (1.69%)\n↳ 3.6/hr × 133.17K = 485.08K/hr\n**Cricket** (1.69%)\n↳ 3.6/hr × 131.98K = 480.78K/hr",
+    "footer": "Calculated with 215 total pests/hr • Pests use 2,100 fortune"
+  }
+}

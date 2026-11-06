@@ -1,6 +1,15 @@
 const fs = require('node:fs');
 
-function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache }) {
+const { STATUS_UPDATE_TITLE, getMayorAppEmoji, getMayorLookupKeys, getMayorUnicodeEmoji } = require('./embeds');
+const { createHypixelApi } = require('../../utils/hypixelApi');
+const { NO_APP_EMOJIS } = require('../../utils/appEmojis');
+
+// Text of the mayor role pings (see ./index.js); event reminders share the channel and must never match.
+const MAYOR_ALERT_TEXTS = ['A new mayor has been elected.', 'Election Booth Open'];
+
+function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache, hypixelApi = createHypixelApi({ env }), appEmojis = NO_APP_EMOJIS }) {
+  const loggedMissingEmojiKeys = new Set();
+
   async function fetchElectionData() {
     const mockState = store.getMockState();
 
@@ -12,20 +21,8 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
       return loadMockElectionData(env.MOCK_DATA_FILE_PATH);
     }
 
-    const response = await fetch(env.ELECTION_URL, {
-      headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Hypixel API responded with ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.mayor) {
-      throw new Error('Hypixel API response did not contain mayor data.');
-    }
-
-    return data;
+    // Always fresh for the mayor checks; the response also refreshes the cache other features read.
+    return hypixelApi.getElection({ maxAgeMs: 0 });
   }
 
   function loadMockElectionData(filePath) {
@@ -88,24 +85,16 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
 
     return message.embeds.some((embed) => (
       embed.title === 'Event Calendar' ||
-      embed.title?.includes('SkyBlock Status Update')
+      embed.title?.includes(STATUS_UPDATE_TITLE)
     ));
   }
 
   function isAlertMessage(message) {
-    if (!message || message.author?.id !== client.user?.id) {
+    if (!message || message.author?.id !== client.user?.id || typeof message.content !== 'string') {
       return false;
     }
 
-    if (typeof message.content === 'string') {
-      return [
-        'A new mayor has been elected.',
-        'Election Booth Open',
-        '<@&'
-      ].some((fragment) => message.content.includes(fragment));
-    }
-
-    return false;
+    return MAYOR_ALERT_TEXTS.some((text) => message.content.includes(text));
   }
 
   async function findExistingStatusMessage(guildId, channel) {
@@ -154,8 +143,15 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
     return sentMessage;
   }
 
+  // Removes the status post and the latest mayor ping, plus untracked leftovers of both among the
+  // recent messages; event reminder pings in the same channel stay.
   async function deleteTrackedMayorMessages(guildId) {
     const channel = await getTargetChannel(guildId);
+    for (const [idKey, channelKey] of [['statusMessageId', 'statusChannelId'], ['alertMessageId', 'alertChannelId']]) {
+      const message = await getStoredMessage(guildId, channel, idKey, channelKey, { [idKey]: null, [channelKey]: null });
+      await message?.delete().catch(() => null);
+    }
+
     const recentMessages = await channel.messages.fetch({ limit: 50 });
     const messagesToDelete = recentMessages.filter((message) => isStatusUpdateMessage(message) || isAlertMessage(message));
 
@@ -164,7 +160,6 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
     }
 
     store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
       statusMessageId: null,
       statusChannelId: null,
       alertMessageId: null,
@@ -172,10 +167,28 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
     });
   }
 
-  async function getMayorEmoji(guildId, mayor) {
-    const mayorKey = String(mayor.key || '').toLowerCase();
-    const mayorName = String(mayor.name || '').toLowerCase();
-    const lookupKeys = [mayorName, mayorKey].filter(Boolean);
+  async function loadGuildEmojis(guildId) {
+    try {
+      const channel = await getTargetChannel(guildId);
+      if (!('guild' in channel) || !channel.guild) {
+        return null;
+      }
+
+      await channel.guild.emojis.fetch();
+      return channel.guild.emojis.cache;
+    } catch (error) {
+      console.error(`Could not load the custom emojis of guild ${guildId}:`, error);
+      return null;
+    }
+  }
+
+  // A configured custom emoji (EMOJI_<MAYOR>) or a guild emoji named like the mayor wins and is
+  // cached; otherwise the head application emoji, which can still appear after a late upload.
+  function findCustomMayorEmoji(guildId, mayor, guildEmojis) {
+    const lookupKeys = getMayorLookupKeys(mayor);
+    if (lookupKeys.length === 0) {
+      return null;
+    }
 
     for (const lookupKey of lookupKeys) {
       const cacheKey = `${guildId}:${lookupKey}`;
@@ -184,42 +197,58 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
       }
     }
 
-    const configuredEmoji = env.MAYOR_EMOJIS[mayorName] || env.MAYOR_EMOJIS[mayorKey];
-    if (configuredEmoji && configuredEmoji.startsWith('<')) {
+    const configuredEmoji = lookupKeys.map((lookupKey) => env.MAYOR_EMOJIS[lookupKey]).find(Boolean);
+    const matchingEmoji = configuredEmoji && configuredEmoji.startsWith('<')
+      ? configuredEmoji
+      : guildEmojis?.find((emoji) => {
+        const normalizedName = String(emoji.name || '').toLowerCase();
+        return lookupKeys.some((lookupKey) => (
+          normalizedName === lookupKey ||
+          normalizedName === `mayor_${lookupKey}` ||
+          normalizedName === `mayor${lookupKey}`
+        ));
+      })?.toString();
+
+    if (matchingEmoji) {
       for (const lookupKey of lookupKeys) {
-        resolvedMayorEmojiCache.set(`${guildId}:${lookupKey}`, configuredEmoji);
+        resolvedMayorEmojiCache.set(`${guildId}:${lookupKey}`, matchingEmoji);
       }
-      return configuredEmoji;
+      return matchingEmoji;
     }
 
-    try {
-      const channel = await getTargetChannel(guildId);
-      if ('guild' in channel && channel.guild) {
-        await channel.guild.emojis.fetch();
-        const matchingEmoji = channel.guild.emojis.cache.find((emoji) => {
-          const normalizedName = String(emoji.name || '').toLowerCase();
-          return lookupKeys.some((lookupKey) => (
-            normalizedName === lookupKey ||
-            normalizedName === `mayor_${lookupKey}` ||
-            normalizedName === `mayor${lookupKey}`
-          ));
-        });
+    return getMayorAppEmoji(appEmojis, mayor);
+  }
 
-        if (matchingEmoji) {
-          const formattedEmoji = matchingEmoji.toString();
-          for (const lookupKey of lookupKeys) {
-            resolvedMayorEmojiCache.set(`${guildId}:${lookupKey}`, formattedEmoji);
-          }
-          return formattedEmoji;
-        }
+  // Sync lookup of custom mayor emojis for one status post: guild emoji → head application emoji → ''.
+  async function getMayorIconResolver(guildId) {
+    const guildEmojis = await loadGuildEmojis(guildId);
+    const mayorIcon = (mayor) => findCustomMayorEmoji(guildId, mayor, guildEmojis) || '';
+    mayorIcon.guildEmojiCount = guildEmojis?.size ?? 0;
+    return mayorIcon;
+  }
 
-        console.log(`No custom emoji found for ${lookupKeys.join(', ')}; checked ${channel.guild.emojis.cache.size} guild emojis`);
-      }
-    } catch (error) {
-      console.error(`Could not resolve custom emoji for ${lookupKeys.join(', ')}:`, error);
+  // The mayor's emoji for message content: custom (see above) or the configured Unicode emoji.
+  async function getMayorEmoji(guildId, mayor, mayorIcon = null) {
+    const lookupKeys = getMayorLookupKeys(mayor);
+    const cachedKey = lookupKeys.find((lookupKey) => resolvedMayorEmojiCache.has(`${guildId}:${lookupKey}`));
+    if (cachedKey) {
+      return resolvedMayorEmojiCache.get(`${guildId}:${cachedKey}`);
     }
 
-    return configuredEmoji || '👤';
+    const resolver = mayorIcon || await getMayorIconResolver(guildId);
+    const customEmoji = resolver(mayor);
+    if (customEmoji) {
+      return customEmoji;
+    }
+
+    // Checked on every status update, so a missing emoji is only reported once per guild and mayor.
+    const missingKey = `${guildId}:${lookupKeys.join(',')}`;
+    if (!loggedMissingEmojiKeys.has(missingKey)) {
+      loggedMissingEmojiKeys.add(missingKey);
+      console.log(`No custom emoji found for ${lookupKeys.join(', ')}; checked ${resolver.guildEmojiCount ?? 0} guild emojis and the application emojis`);
+    }
+
+    return getMayorUnicodeEmoji(env, mayor);
   }
 
   return {
@@ -229,7 +258,8 @@ function createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmoji
     findExistingStatusMessage,
     replaceAlertMessage,
     deleteTrackedMayorMessages,
-    getMayorEmoji
+    getMayorEmoji,
+    getMayorIconResolver
   };
 }
 

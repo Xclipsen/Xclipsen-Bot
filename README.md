@@ -11,22 +11,31 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Can ping a configured role when the Election Booth opens.
 - Can ping a configured role when a new mayor becomes active.
 - Posts a status embed with the current mayor and perks.
+- While Jerry is mayor, shows the current Perkpocalypse rotation mayor, its perks and the next switches in the status embed and event calendar, and pings the optional `Jerry Rotation` role at each 6-hour switch.
 - Replaces the previous ping message whenever a new alert is sent.
 - Edits the existing status embed instead of sending a new one every time.
-- Includes an in-Discord `/setup` hub with sections for mayor alerts, mod update tracking with optional role pings, reaction roles, and shitter permissions.
-- Sends cake reminders into a dedicated configured channel on a fixed 124-hour cycle.
+- Includes an in-Discord `/setup` hub with sections for the event calendar, mayor alerts, mining events, SkyBlock weather, mod update tracking with optional role pings, reaction roles, shitter permissions, and bot access.
+- Sends event calendar reminders (Dark Auction, seasonal events, Feasts) with per-event ping roles.
+- Pings mining event roles (Dwarven Mines and Crystal Hollows, from Soopy's `chevents` feed) and keeps a live mining event dashboard.
+- Pings Mild and EXTREME SkyBlock weather roles and keeps a live weather dashboard in `#skyblock-weather`.
 - Supports Discord-configurable reaction roles via `/reactionrole`.
 - Includes `/help` for a grouped command overview with examples.
-- Includes `/cata` and `/catacombs` for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
+- Includes `/cata` (also available as `/catacombs`) for a quick dungeon overview lookup, with linked-account fallback when no player is provided.
 - Includes `/trophyfishing` for a Trophy Fish overview with per-fish info about location and catch chance, with linked-account fallback when no player is provided.
 - Includes `/trophyfrogs` for a Trophy Frog overview with unlocked-tier progress and per-frog requirement info, with linked-account fallback when no player is provided.
+- Includes `/pest` (also available as `/pests`) to rank Garden pests by coins per kill with NPC or live Bazaar prices.
+- Includes `/setfarmingstats`, `/pestfarmingprofits`, and `/lastpestfarmingprofits` for a pest farming profit-per-hour calculator.
+- Includes `/season` and `/harvestfeast` for the current Harvest Feast crops.
+- Includes `/hideonleaf` for the Hideonleaf leaderboard reported by the Xclipsen mod.
 - Includes `/itememoji` to post SkyBlock item emojis from Altpapier's emoji dataset.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
-- Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link.
+- Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link and manage event pings for the Minecraft mod.
 - Includes `/gif` to convert an uploaded image into a GIF.
+- Includes `/tts` to read messages aloud in a voice channel with a local text-to-speech service (no cloud API).
+- Includes `/music` to play YouTube videos and lofi / chill radio stations in a voice channel, controlled from a `#voice` channel with a live control panel.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
-- Persists booth state and the status message ID in `data/state.json`.
+- Persists booth state, tracked message IDs, and per-user farming stats in `data/state.json`.
 - Stores server configuration in `data/config.json`.
 - Stores shitter list entries in `data/shitter-list.json`.
 - Can optionally expose a built-in HTTP IRC bridge server for the Fabric client mod.
@@ -38,23 +47,33 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 3. Invite the bot to your server.
 4. Copy `.env.example` to `.env`.
 5. Fill in your token and optional defaults.
-6. In Discord, run `/setup`, open `Discord -> Mayor Alerts`, and enter the target channel ID and role ID.
-7. Open `Discord -> Mod Updates` to manage tracked GitHub repos. New servers start with `https://github.com/odtheking/Odin` prefilled.
-8. Use the Mayor Alerts toggle buttons to choose whether Election Booth and mayor change alerts should ping the role in that server.
-9. Use `Discord -> Mayor Alerts -> Reload Status` any time you want to force-refresh the current mayor embed.
+6. In Discord, run `/setup`, open **Mayor Alerts**, and pick the calendar/mayor channel and the mayor ping role.
+7. Open **Mod Updates** to manage tracked GitHub repos. New servers start with `https://github.com/odtheking/Odin` prefilled.
+8. Use the **Booth ping** and **Mayor ping** buttons in Mayor Alerts to choose whether Election Booth and mayor change alerts ping the role in that server.
+9. Use **Rebuild posts** in a section any time you want to re-create its bot posts, such as the mayor status embed.
 
 ## Configuration
 
-- `DISCORD_TOKEN` - bot token from the Discord Developer Portal
+All variables are read in `src/config/env.js`; `.env.example` is a template.
+
+- `DISCORD_TOKEN` - bot token from the Discord Developer Portal (required)
+- `HYPIXEL_API_KEY` - required for `/cata`, `/catacombs`, `/trophyfishing`, `/trophyfrogs`, and `/link username:`; the election and Bazaar data used by mayor alerts and `/pest` need no key
 - `IRC_BRIDGE_ENABLED` - enable the built-in HTTP IRC bridge server for the Fabric mod
 - `IRC_BRIDGE_HOST` / `IRC_BRIDGE_PORT` - listen address for the IRC bridge server
-- `IRC_BRIDGE_AUTH_TOKEN` - shared secret used by the Minecraft mod
-- `IRC_BRIDGE_CHANNEL_ID` - Discord channel used for the bridge
+- `IRC_BRIDGE_AUTH_TOKEN` - shared secret used by the Minecraft mod; the bridge stays off without a real token
+- `IRC_BRIDGE_CHANNEL_ID` - Discord channel used for the bridge (falls back to `DISCORD_CHANNEL_ID`)
 - `IRC_BRIDGE_MAX_BUFFERED_MESSAGES` - how many recent Discord/IRC messages the backend keeps for clients
 - `MOD_BACKEND_URL` - standalone Xclipsen Mod backend URL, defaults to `https://api.xclipsen.de`
-- `MOD_BACKEND_AUTH_TOKEN` - token used by the bot when reading/writing mod backend links
+- `MOD_BACKEND_AUTH_TOKEN` - token used by the bot when reading/writing mod backend links and stats (falls back to `IRC_BRIDGE_AUTH_TOKEN`)
 - `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
-- `HYPIXEL_API_KEY` - required for `/cata` and `/catacombs` using the official Hypixel API
+- `CRAFTY_API_KEY` - optional Bearer token for the Crafty.gg name history fallback
+- `MAGICK_PATH` - optional path to the ImageMagick binary used by `/gif` (default `magick`)
+- `TTS_URL` - base URL of the text-to-speech service; set by `docker-compose.yml`, `/tts` is disabled without it
+- `TTS_ROLE_NAME` - role that may use `/tts`, created by the bot when missing (default `TTS`)
+- `TTS_MAX_QUEUE` / `TTS_MAX_CHARS` - queued lines per server and characters read per message (defaults `10` / `300`)
+- `MUSIC_CHANNEL_NAME` - text channel for `/music` and its control panel, set up once per server by the bot (default `voice`)
+- `MUSIC_ROLE_NAME` - role that sees that channel, created once per server by the bot (default `Voice`, needs Manage Roles)
+- `YTDLP_PATH` - path to the yt-dlp binary used by `/music play` (default `yt-dlp`; the Docker image ships it)
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
@@ -66,8 +85,8 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - `MOCK_MODE` - if `true`, the bot always loads `data/mock-election.json` instead of the live API
 - `EMOJI_*` - optional custom emojis for mayors, for example `<:diaz:123...>`
 - `VOTE_BAR_FILLED_EMOJI` / `VOTE_BAR_EMPTY_EMOJI` - optional custom emojis for the mayor vote bar chart
-- Mod update tracking reads public GitHub release data for repos you add in `/setup -> Discord -> Mod Updates` and can post new releases into a configured channel with an optional role ping
-- Cake reminders use their own configured channel and optional ping role.
+- The HTTP User-Agent and the `data/` file paths (including `data/namehistory-cache.json`) are fixed in `src/config/env.js`.
+- Mod update tracking reads public GitHub release data for repos you add in `/setup -> Mod Updates` and can post new releases into a configured channel with an optional role ping
 - If your server already has emojis named like `diaz`, `cole`, or `mayor_diaz`, the bot can detect them automatically.
 - The bot now needs permission to manage roles if you use reaction roles.
 
@@ -101,17 +120,26 @@ npm install
 npm start
 ```
 
+## Tests
+
+```bash
+DISCORD_TOKEN=test-token npm run check
+```
+
+This syntax-checks every file in `src/`, `scripts/`, and `test/` and runs the `node --test` suite in `test/*.test.js` without network access. The Docker image keeps `test/` and `scripts/`, so the same command works inside the container.
+
 - Use `/help` in Discord for a quick overview of public commands and examples.
 - If you enable the IRC bridge, the bot also needs the `GuildMessages` and `MessageContent` intents.
 
 ## Project Structure
 
-- `src/index.js` wires the client and events together.
-- `src/config/` contains environment loading, slash commands, and interaction IDs.
-- `src/features/` contains setup, mayor alerts, access control, reaction roles, simulation, and shitter logic.
-- The shitter list is stored per guild in `data/shitter-list.json`.
-- `src/storage/` contains the config/state store helpers.
-- `src/utils/` contains shared SkyBlock time formatting helpers.
+- `src/index.js` wires the client, features, and events together.
+- `src/config/` contains environment loading, slash commands, help texts, interaction IDs, and the event/mining/weather definitions.
+- `src/features/` contains one module per feature (mayor alerts, event calendar and reminders, mining events, weather, mod updates, setup hub, reaction roles, linking and the IRC bridge, player lookups, pest calculators, shitter list); see `docs/BOT_DOCUMENTATION.md` for the full list.
+- `src/storage/store.js` reads, normalizes, and writes `data/config.json`, `data/state.json`, and `data/shitter-list.json`.
+- `src/utils/` contains shared helpers: `hypixelApi.js` (cached Hypixel Bazaar, election, and profile requests), SkyBlock time, Mojang lookups, the mod backend client, emojis, and image rendering.
+- `scripts/setup-weather.js` provisions the weather channel once from the command line.
+- `test/` contains the `node --test` suite.
 
 After the bot is online, run `/setup` in your Discord server and fill in:
 
@@ -124,7 +152,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 ## Reaction Roles
 
 - Use `/reactionrole add` with a channel, message ID, role, and emoji.
-- Or open `/setup -> Discord -> Reaction Roles` and manage bindings from the interactive panel.
+- Or open `/setup -> Reaction Roles` and manage bindings from the interactive panel.
 - You can optionally set `required_role` so only members with that role can use the reaction to get the target role.
 - Use `/reactionrole remove` to delete a binding.
 - Use `/reactionrole list` to see all current bindings for the server.
@@ -138,6 +166,8 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - The player's Hypixel `Discord` social link must match the Discord username running the command.
 - This feature requires `HYPIXEL_API_KEY`.
 - Links created by the old Minecraft code flow are treated as legacy and must be re-verified with `/link username:<ign>`.
+- `/link` without options shows your status; `/link remove:<ign>` removes one username, `/link event:<event> enabled:<true|false>` toggles an event ping for your Minecraft client, and `/link unlink:true` deletes the whole link.
+- Links are stored in the mod backend (`MOD_BACKEND_URL`), not in `data/`.
 - If you leave the name field empty on supported commands, the bot uses your linked Minecraft username.
 
 ## Shitter List
@@ -150,7 +180,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - Use `/shitter query [name:<ign>]` to check whether an IGN is listed.
 - Use `/shitter remove [name:<ign>]` to mark all active entries for that IGN as removed while keeping history.
 - Use `/shitter list` to show unique names for the server and select one from a menu.
-- In `/setup -> Discord -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
+- In `/setup -> Shitter List`, you can block specific Discord user IDs, block roles, or require allowed roles for adding/removing shitter entries.
 
 ## Minecraft UUID Lookup
 
@@ -167,6 +197,15 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - By default the bot loads the mapping data from `Altpapier/Skyblock-Item-Emojis` version 3 on demand.
 - Credit for the dataset stays with [Altpapier/Skyblock-Item-Emojis](https://github.com/Altpapier/Skyblock-Item-Emojis).
 
+## Application Emojis (event icons and mayor heads)
+
+- The event calendar, event reminders, mining event pings and dashboard, weather posts, reaction-role panels, `/cata` and the mayor status show SkyBlock item icons and mayor heads as Discord **application emojis** (owned by the bot, usable in every server and in interaction replies).
+- The icons live in `assets/app-emojis/` with `manifest.json` (emoji name → file and source). On every start the bot fetches its application emojis and uploads only the ones that are missing; existing or other emojis are never deleted or replaced. The first start uploads all of them (56 at the moment), which can take a minute.
+- Until the upload is done, or if Discord rejects it, the bot keeps showing the Unicode emojis. Discord does not render custom emojis in embed titles, field names and footers, so those carry no emoji and the icon is shown as thumbnail or at the start of the text; the Minecraft bridge keeps the Unicode emojis.
+- The role panels react with the item icons. On start the bot rebuilds every event, mining and weather panel whose reactions still use other emojis (only once all icons are loaded); members react once more on the new panel, their roles are kept.
+- A guild emoji named like a mayor (`diaz`, `mayor_diaz`) or an `EMOJI_*` setting still takes priority over the head emoji.
+- Item icons come from [Altpapier/Skyblock-Item-Emojis](https://github.com/Altpapier/Skyblock-Item-Emojis) (textures mostly from FurfSky Reborn), mayor heads from [mc-heads.net](https://mc-heads.net/) renders. To add an icon, see `assets/app-emojis/README.md`.
+
 ## Minecraft Name History
 
 - Use `/namehistory [player:<ign>]` to show a player's known username history.
@@ -177,9 +216,34 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - A valid empty or hidden response does not trigger a fallback or restore names from an older cache.
 - `CRAFTY_API_KEY` optionally supplies a Bearer token for Crafty. Public requests worked without a token during testing; the API documentation lists Bearer authentication. The bot honors `Retry-After` on rate limits.
 
+## Pest Calculators
+
+- `/pest fortune:<amount> sell_method:<Instasell|Sell Order|NPC Sell>` (or `/pests`) ranks all pests by estimated coins per kill. Bazaar methods use live prices for guaranteed drops; rare drops stay on the calibrated NPC estimate.
+- `/setfarmingstats` saves your Bonus Pest Chance, Pest Shard level (+2% rare drops per level), and reforge; Cropeetle and Rarefinder levels are optional and only shown back.
+- `/pestfarmingprofits` estimates crop, pest, and bait profit per hour for a bait, vinyl, crop, Farming Fortune, plot count, and sell method; `/lastpestfarmingprofits` reruns the last setup with current prices.
+- Both commands share one pest valuation and a 60-second Hypixel Bazaar/election cache, and check whether Finnegan's Pest Eradicator perk is active.
+
 ## Media Tools
 
 - Use `/gif media:<image>` to convert an uploaded image into a GIF file.
+
+## Text-to-Speech
+
+- On start the bot creates a `TTS` role in every server (needs the Manage Roles permission) and stores its ID. Give that role to everyone who may use TTS; server managers can always use it.
+- `/tts join` joins your voice channel. The bot then reads messages from the channel where you ran the command and from the voice channel's own chat, but only from TTS role members who are in that voice channel. Before a new speaker it says "<name> sagt: …".
+- The bot stays in the channel until whoever ran `/tts join` leaves (or moves); then it leaves too. `/tts leave` makes it leave earlier.
+- `/tts say text:<text>` reads one text aloud; `/tts voice voice:<name>` (admins) picks the server voice.
+- Speech comes from `tts-service/`, a separate container running Piper (`thorsten`, default) and Kyutai Pocket TTS (`juergen`) on the CPU. Custom Piper voices go into `tts-voices/` as `<id>.onnx` + `<id>.onnx.json`.
+
+## Music and Radio
+
+- On its first start in a server the bot sets up a `#voice` text channel (`MUSIC_CHANNEL_NAME`; it reuses one with that name, else creates it, which needs Manage Channels). This happens once: if an admin later clears the control channel in `/setup` or deletes it, it stays unset until a channel is picked in `/setup`, and `/music` says it is not set up. The bot's own `#voice` channel is hidden from `@everyone` and only visible to the `Voice` role (`MUSIC_ROLE_NAME`, created once like the TTS role, changeable in `/setup`); a channel an admin picks with another name keeps its own permissions. It keeps one control panel message there: now playing (title, source, requester, length or live), queue, volume, current radio station, an overview of the `/music` and `/tts` commands, buttons for pause/resume, skip, stop and volume -10/+10, and a radio station picker. The panel updates itself and is posted again if someone deletes it (only when Discord reports it as deleted, so a temporary error never leaves a duplicate).
+- `/music` only works in that channel. Anyone can use it from a voice channel: `play query:<YouTube link or search>`, `radio station:<name>`, `skip`, `stop`, `pause`, `resume`, `queue`, `nowplaying`, `volume level:<0-100>`. Replies are only visible to you.
+- Without a voice session the bot joins your voice channel and leaves when you leave (the same shared session as `/tts`; `/tts leave` makes it leave earlier). While it is in another voice channel, `play` and `radio` are refused. Playback controls, volume and panel buttons need you in the bot's voice channel; server managers and `ADMIN_USER_IDS` can always use them. While the bot is not in a voice channel, only they can change the stored volume.
+- The queue holds up to 50 tracks; videos longer than 3 hours are refused unless they are live. `play` takes a single video (links to playlists or channels are refused) and looks up one track per server at a time, at most three across all servers; otherwise it asks you to try again in a moment. A radio station replaces the queue, and `play` during radio replaces the station.
+- TTS lines interrupt music: tracks pause and continue afterwards, radio and live streams keep running underneath.
+- YouTube audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp) (against YouTube's terms of service, and it breaks when YouTube changes something; the image pins a release in `YTDLP_VERSION`; bump it and rebuild to update yt-dlp). Radio streams are read by ffmpeg, which reconnects when a stream drops and may only use http(s).
+- Built-in stations are in `src/features/music/stations.js`; admins can add more stations (`music.stations` in the server config) through `/setup`. Custom station URLs must point to a public host: localhost, single-label names (like the `tts` service), and private, loopback, link-local or CGNAT addresses are refused when saving and again when playing (then also after a DNS lookup).
 
 ## Help
 
@@ -199,6 +263,12 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 docker compose up -d --build
 ```
 
+- `docker-compose.yml` publishes the IRC bridge port (host `8767` to container `8765`) for the Minecraft mod.
+- `docs/`, root Markdown files, `.env`, `.env.example`, `data/`, and `tts-service/` are excluded from the bot image.
+- The `tts` service builds `tts-service/`, is only reachable from the bot (`http://tts:5000`), and is limited to 3 CPUs and 3 GB RAM. Model downloads are kept in the `tts-models` volume.
+- The bot image installs the official standalone yt-dlp build for musl (checked against the release checksums), pinned by `YTDLP_VERSION` in the `Dockerfile`; bump it or build with `--build-arg YTDLP_VERSION=latest` to update.
+- The bot runs as the unprivileged `node` user (uid 1000), so the host's `data/` directory must be writable by uid 1000; it is limited to 1 GB RAM.
+
 - The bot loads its token and optional legacy defaults from `.env`.
 - `./data` is mounted to `/app/data` so server config, the stored status message ID, and booth state survive restarts.
 - View logs with `docker compose logs -f`.
@@ -206,9 +276,40 @@ docker compose up -d --build
 
 ## Notes
 
-- This election endpoint currently does not require a Hypixel API key.
-- If you want to use other Hypixel endpoints later, you can extend the bot with an API key.
-- The bot only needs the `Guilds` intent because it does not read messages.
-- The `/setup` command is registered per server when the bot starts or joins a new guild.
+- The election and Bazaar endpoints do not require a Hypixel API key; SkyBlock profiles and player lookups do.
+- The bot uses the `Guilds`, `GuildMembers`, `GuildMessages`, `GuildMessageReactions`, and `MessageContent` intents (reaction roles, the IRC bridge, and message-based features).
+- Slash commands are registered per server when the bot starts or joins a new guild; restart the bot after changing command definitions.
 - For custom emojis, upload them to your Discord server and paste the full emoji tag into `.env`.
 - As an alternative, you can simply name your server emojis `diaz`, `cole`, `foxy`, or `mayor_diaz` and the bot will try to resolve them automatically.
+
+## Harvest Feast crop commands
+
+- `/season` shows the four current in-season crops and the rotation countdown.
+- `/harvestfeast` also shows the SkyBlock month and upcoming reported crop rotations.
+- Uses the public EliteSkyBlock Harvest Feast API, also used by SkyHanni, without an API key. Community data may lag behind the game; missing, incomplete or stale current data is marked unavailable.
+- Responses are cached for 60 seconds; requests time out after 8 seconds and failures have a 15-second retry cooldown.
+- Reference: https://github.com/hannibal002/SkyHanni/blob/beta/src/main/java/at/hannibal2/skyhanni/features/event/harvestfeast/HarvestFeastManager.kt
+
+## Admin overview and setup
+
+`/setup` provides native channel, role and user selectors, module resets with confirmation, and rebuilding of bot posts. Users or roles can be delegated guild-local bot-manager access under Bot Access; granting access and managing reaction-role bindings remain restricted to Manage Server or existing privileged bot users. Target-channel setup does not require the operator to send messages there, but the bot must have the required permissions.
+
+The Reaction Roles editor creates a new panel or accepts a link to an existing message. Bindings, long admin lists, repositories, shitter names and per-player entries can be browsed on multiple pages. Add/remove operations preserve entries beyond Discord's 25-selection limit.
+
+Event-role panels share the mayor/calendar channel, appear above the tracked status posts and are pinned when the bot has Pin Messages permission. Mining panels are built before their tracked posts. Startup restores missing or misplaced panels while retaining correctly ordered existing panels.
+
+## SkyBlock Weather
+
+The weather channel contains a pinned reaction-role panel (🌦️ Mild Weather, ⛈️ Extreme Weather) followed by a compact live dashboard with the current weather, the next Mild and EXTREME windows and the next four windows. An island menu under the dashboard lets anyone pick an island; the bot answers privately with an image of that island's Mild and EXTREME in-game tooltips (rendered once per island, with a plain-text fallback if rendering fails). The schedule is calculated locally: weather is assumed every hour from XX:35 to XX:55, and every 3rd window is EXTREME (02:35, 05:35, … 23:35 UTC). When a window starts, the matching role is pinged with a short list of each island's weather; the ping is deleted when the window ends. Island stats come from in-game tooltips for the Garden, Lotus Atoll, Glacite Tunnels, The End and Moonglade Marsh, and from the wiki for the other islands.
+
+Setup: `/setup` → **Weather** → **Create new channel** (`#skyblock-weather`, placed in the category of the other bot channels) or choose an existing channel. Missing roles are reused by name or created when the bot has Manage Roles; then the panel is pinned and the dashboard posted. **Rebuild posts** repairs both, and `/test weather tier:<Mild|EXTREME>` sends a test ping. Every **Create new channel** action in `/setup` places the new channel next to the existing bot channels.
+
+For one-time provisioning from the server, stop the bot first (both processes would write `data/config.json`), then run `node scripts/setup-weather.js <guildId> [--category <name>]`.
+
+Grand Feast and Harvest Feast reminders show confirmed current and upcoming crops. Each changed crop set triggers a fresh reminder with the configured event role. Persistent crop state avoids duplicate pings after restarts, reordered API responses or outages.
+
+## Jerry's Perkpocalypse rotation
+
+While Jerry is mayor, his Perkpocalypse activates all perks of one other mayor (Aatrox, Cole, Diana, Finnegan, Marina, Paul) every 6 hours; Finnegan's Grand Feast is never included. The Hypixel API does not expose the rotation, so the bot reads the order for the current term from the wiki page `https://hypixelskyblock.minecraft.wiki/w/Candidate_Jerry/Perkpocalypse/Year_<year>?action=raw`. Failed lookups are retried after 15 minutes, a complete order is re-read every 6 hours, and the last order is kept in `data/state.json` for restarts without wiki access. Slot times follow the wiki: the term starts on Late Spring 27, 00:00 SkyBlock time, and the last slot is shortened by the term end.
+
+The status embed gets a `🔄 Perkpocalypse` field (current mayor and perks, end of the slot, next three mayors, full order), and the event calendar shows `Jerry's Perkpocalypse` only during Jerry's term. Each switch is its own event window, so the `Jerry Rotation` role (choose it under `/setup` → Event Calendar, or use Auto-create event roles there) is pinged once per switch with the active mayor's perks; the ping is deleted when the slot ends. Slots the wiki strikes out are skipped. Until the order is published, only the switch times are shown and pings say that a new mayor's perks are active. Perk texts are hardcoded from the wiki (checked 2026-10-21) and must be updated if Hypixel changes them.

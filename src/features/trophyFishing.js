@@ -1,5 +1,6 @@
 const { ActionRowBuilder, EmbedBuilder, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
+const { normalizeUuid, selectProfile } = require('../utils/hypixelApi');
 
 const TROPHY_FISH_SELECT_ID = 'trophy-fish-select';
 const TROPHY_FROG_SELECT_ID = 'trophy-frog-select';
@@ -240,89 +241,30 @@ const TROPHY_FISH_RANKS = [
 ];
 const TROPHY_FISH_DIAMOND_PITY = 600;
 
-function createTrophyFishingFeature({ env, minecraft, store }) {
-  const messageContext = new Map();
+function formatTierLabel(tier) {
+  return `${tier[0].toUpperCase()}${tier.slice(1)}`;
+}
 
-  async function fetchProfiles(uuid) {
-    if (!env.HYPIXEL_API_KEY) {
-      throw new Error('HYPIXEL_API_KEY is missing. Add it to the bot environment first.');
-    }
+// One `Tier: value` line per trophy tier, bronze to diamond.
+function formatTierLines(formatValue) {
+  return TROPHY_TIERS.map((tier) => `${formatTierLabel(tier)}: ${formatValue(tier)}`);
+}
 
-    const response = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${uuid}`, {
-      headers: {
-        'API-Key': env.HYPIXEL_API_KEY,
-        'User-Agent': 'hypixel-mayor-discord-bot/1.0.0'
-      }
-    });
-
-    if (response.status === 403) {
-      throw new Error('Hypixel rejected the API key for `/trophyfishing` requests.');
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch Hypixel SkyBlock profiles (${response.status}).`);
-    }
-
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.cause || 'Hypixel API did not return profile data.');
-    }
-
-    return Array.isArray(data.profiles) ? data.profiles : [];
-  }
-
-  async function resolveRequestedPlayer(interaction) {
-    const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({
-      interaction,
-      store,
-      optionName: 'player',
-      missingMessage: 'No player provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `player:`.'
-    });
-
-    return { player: username, usedLinkedAccount };
-  }
-
-  function getAvailableProfileNames(profiles) {
-    return profiles
-      .map((profile) => profile?.cute_name || profile?.cuteName)
-      .filter(Boolean)
-      .sort((left, right) => String(left).localeCompare(String(right)));
-  }
-
-  function selectProfile(profiles, uuid, requestedProfileName = null) {
-    const requestedProfile = String(requestedProfileName || '').trim();
-    const candidates = profiles
-      .map((profile) => ({
-        profile,
-        member: profile?.members?.[uuid],
-        cuteName: profile?.cute_name || profile?.cuteName || 'Unknown',
-        selected: profile?.selected === true
-      }))
-      .filter((entry) => entry.member);
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    if (requestedProfile) {
-      const matchedProfile = candidates.find((entry) => entry.cuteName.toLowerCase() === requestedProfile.toLowerCase());
-      if (!matchedProfile) {
-        const availableProfiles = getAvailableProfileNames(profiles);
-        throw new Error(`Profile \`${requestedProfile}\` was not found. Available profiles: ${availableProfiles.map((name) => `\`${name}\``).join(', ')}`);
-      }
-
-      return matchedProfile;
-    }
-
-    return candidates.find((entry) => entry.selected) || candidates[0];
-  }
-
+function createTrophyFishingFeature({ minecraft, linkStore, hypixelApi }) {
   function formatNumber(value) {
     if (typeof value !== 'number' || Number.isNaN(value)) {
       return '0';
     }
 
     return new Intl.NumberFormat('en-US').format(value);
+  }
+
+  function formatCountOrMissing(count) {
+    return count > 0 ? formatNumber(count) : '❌';
+  }
+
+  function formatUnlocked(unlocked) {
+    return unlocked ? '✅' : '❌';
   }
 
   function getTierCount(trophyFish, fishKey, tier) {
@@ -378,15 +320,10 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
   }
 
   function getRewardStatus(trophyFish) {
-    const bronzeCount = TROPHY_FISH_NAMES.filter((fish) => getFishTotal(trophyFish, fish.key) > 0).length;
-    const silverCount = getTierProgressCount(trophyFish, 'silver');
-    const goldCount = getTierProgressCount(trophyFish, 'gold');
-    const diamondCount = getTierProgressCount(trophyFish, 'diamond');
     const progressMap = {
-      bronze: bronzeCount,
-      silver: silverCount,
-      gold: goldCount,
-      diamond: diamondCount
+      ...Object.fromEntries(TROPHY_TIERS.map((tier) => [tier, getTierProgressCount(trophyFish, tier)])),
+      // Bronze counts any catch of a fish, not only bronze-tier catches.
+      bronze: TROPHY_FISH_NAMES.filter((fish) => getFishTotal(trophyFish, fish.key) > 0).length
     };
 
     for (const rank of TROPHY_FISH_RANKS) {
@@ -401,19 +338,13 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
   }
 
   function createFishOverviewField(trophyFish, fish) {
-    const bronze = getTierCount(trophyFish, fish.key, 'bronze');
-    const silver = getTierCount(trophyFish, fish.key, 'silver');
-    const gold = getTierCount(trophyFish, fish.key, 'gold');
     const diamond = getTierCount(trophyFish, fish.key, 'diamond');
     const total = getFishTotal(trophyFish, fish.key);
 
     return {
       name: fish.label,
       value: [
-        `Bronze: ${bronze > 0 ? formatNumber(bronze) : '❌'}`,
-        `Silver: ${silver > 0 ? formatNumber(silver) : '❌'}`,
-        `Gold: ${gold > 0 ? formatNumber(gold) : '❌'}`,
-        `Diamond: ${diamond > 0 ? formatNumber(diamond) : '❌'}`,
+        ...formatTierLines((tier) => formatCountOrMissing(getTierCount(trophyFish, fish.key, tier))),
         `Total: ${formatNumber(total)}`,
         diamond === 0 ? `${formatNumber(Math.max(0, TROPHY_FISH_DIAMOND_PITY - total))} until guaranteed Diamond!` : null
       ].filter(Boolean).join('\n'),
@@ -421,7 +352,8 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     };
   }
 
-  function buildOverviewEmbed(playerName, profileName, trophyFish) {
+  function buildFishOverviewEmbed(playerName, profileName, member) {
+    const trophyFish = member?.trophy_fish || {};
     const embed = new EmbedBuilder()
       .setColor(0x3498db)
       .setTitle(`${playerName}'s Trophy Fish on ${profileName || 'Unknown'}`)
@@ -439,104 +371,52 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return embed;
   }
 
-  function createFrogOverviewField(progress, frog) {
-    return {
-      name: frog.label,
-      value: [
-        `Bronze: ${hasUnlockedTier(progress, frog.key, 'bronze') ? '✅' : '❌'}`,
-        `Silver: ${hasUnlockedTier(progress, frog.key, 'silver') ? '✅' : '❌'}`,
-        `Gold: ${hasUnlockedTier(progress, frog.key, 'gold') ? '✅' : '❌'}`,
-        `Diamond: ${hasUnlockedTier(progress, frog.key, 'diamond') ? '✅' : '❌'}`
-      ].join('\n'),
-      inline: true
-    };
-  }
-
-  function buildFrogOverviewEmbed(playerName, profileName, progress) {
+  function buildFrogOverviewEmbed(playerName, profileName, member) {
+    const progress = createTrophyFrogProgress(member);
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
       .setTitle(`${playerName}'s Trophy Frogs on ${profileName || 'Unknown'}`)
       .setDescription([
-        `Bronze Progress: ${getUnlockedTierProgressCount(progress, 'bronze')}/${TROPHY_FROG_NAMES.length}`,
-        `Silver Progress: ${getUnlockedTierProgressCount(progress, 'silver')}/${TROPHY_FROG_NAMES.length}`,
-        `Gold Progress: ${getUnlockedTierProgressCount(progress, 'gold')}/${TROPHY_FROG_NAMES.length}`,
-        `Diamond Progress: ${getUnlockedTierProgressCount(progress, 'diamond')}/${TROPHY_FROG_NAMES.length}`,
+        ...TROPHY_TIERS.map((tier) => `${formatTierLabel(tier)} Progress: ${getUnlockedTierProgressCount(progress, tier)}/${TROPHY_FROG_NAMES.length}`),
         `Total Trophy Frogs Caught: ${formatNumber(progress.totalCaught)}`
       ].join('\n'))
       .setFooter({ text: 'Hypixel only exposes total frog catches plus unlocked tiers right now. Requirements from the Hypixel SkyBlock Wiki.' })
       .setTimestamp();
 
     for (const frog of TROPHY_FROG_NAMES) {
-      embed.addFields(createFrogOverviewField(progress, frog));
-    }
-
-    return embed;
-  }
-
-  function buildFishSelect() {
-    return [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(TROPHY_FISH_SELECT_ID)
-          .setPlaceholder('View fish information')
-          .addOptions(
-            TROPHY_FISH_NAMES.map((fish) => ({
-              label: fish.label,
-              value: fish.key,
-              description: fish.foundAt.slice(0, 100)
-            }))
-          )
-      )
-    ];
-  }
-
-  function buildFrogSelect() {
-    return [
-      new ActionRowBuilder().addComponents(
-        new StringSelectMenuBuilder()
-          .setCustomId(TROPHY_FROG_SELECT_ID)
-          .setPlaceholder('View frog information')
-          .addOptions(
-            TROPHY_FROG_NAMES.map((frog) => ({
-              label: frog.label,
-              value: frog.key,
-              description: frog.foundAt.slice(0, 100)
-            }))
-          )
-      )
-    ];
-  }
-
-  function buildFishInfoEmbed(fish, counts = null) {
-    const embed = new EmbedBuilder()
-      .setColor(0x3498db)
-      .setTitle(fish.label)
-      .setDescription([
-        `Chance: ${fish.chance}`,
-        fish.foundAt,
-        `Requirement: ${fish.requirement}`
-      ].join('\n\n'));
-
-    if (counts) {
       embed.addFields({
-        name: 'Your Counts',
-        value: [
-          `Bronze: ${counts.bronze > 0 ? formatNumber(counts.bronze) : '❌'}`,
-          `Silver: ${counts.silver > 0 ? formatNumber(counts.silver) : '❌'}`,
-          `Gold: ${counts.gold > 0 ? formatNumber(counts.gold) : '❌'}`,
-          `Diamond: ${counts.diamond > 0 ? formatNumber(counts.diamond) : '❌'}`,
-          `Total: ${formatNumber(counts.total)}`
-        ].join('\n'),
-        inline: false
+        name: frog.label,
+        value: formatTierLines((tier) => formatUnlocked(hasUnlockedTier(progress, frog.key, tier))).join('\n'),
+        inline: true
       });
     }
 
     return embed;
   }
 
-  function buildFrogInfoEmbed(frog, progress) {
-    const sackCounts = Object.fromEntries(TROPHY_TIERS.map((tier) => [tier, getFrogSackCount(progress, frog.key, tier)]));
-    const hasTrackedSackCounts = Object.values(sackCounts).some((value) => value > 0);
+  function buildFishInfoEmbed(fish, member) {
+    const trophyFish = member?.trophy_fish || {};
+    return new EmbedBuilder()
+      .setColor(0x3498db)
+      .setTitle(fish.label)
+      .setDescription([
+        `Chance: ${fish.chance}`,
+        fish.foundAt,
+        `Requirement: ${fish.requirement}`
+      ].join('\n\n'))
+      .addFields({
+        name: 'Your Counts',
+        value: [
+          ...formatTierLines((tier) => formatCountOrMissing(getTierCount(trophyFish, fish.key, tier))),
+          `Total: ${formatNumber(getFishTotal(trophyFish, fish.key))}`
+        ].join('\n'),
+        inline: false
+      });
+  }
+
+  function buildFrogInfoEmbed(frog, member) {
+    const progress = createTrophyFrogProgress(member);
+    const hasTrackedSackCounts = TROPHY_TIERS.some((tier) => getFrogSackCount(progress, frog.key, tier) > 0);
     const embed = new EmbedBuilder()
       .setColor(0x2ecc71)
       .setTitle(frog.label)
@@ -550,12 +430,7 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     embed.addFields(
       {
         name: 'Your Progress',
-        value: [
-          `Bronze: ${hasUnlockedTier(progress, frog.key, 'bronze') ? '✅' : '❌'}`,
-          `Silver: ${hasUnlockedTier(progress, frog.key, 'silver') ? '✅' : '❌'}`,
-          `Gold: ${hasUnlockedTier(progress, frog.key, 'gold') ? '✅' : '❌'}`,
-          `Diamond: ${hasUnlockedTier(progress, frog.key, 'diamond') ? '✅' : '❌'}`
-        ].join('\n'),
+        value: formatTierLines((tier) => formatUnlocked(hasUnlockedTier(progress, frog.key, tier))).join('\n'),
         inline: true
       },
       {
@@ -571,12 +446,7 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     if (hasTrackedSackCounts) {
       embed.addFields({
         name: 'Currently In Sack',
-        value: [
-          `Bronze: ${formatNumber(sackCounts.bronze)}`,
-          `Silver: ${formatNumber(sackCounts.silver)}`,
-          `Gold: ${formatNumber(sackCounts.gold)}`,
-          `Diamond: ${formatNumber(sackCounts.diamond)}`
-        ].join('\n'),
+        value: formatTierLines((tier) => formatNumber(getFrogSackCount(progress, frog.key, tier))).join('\n'),
         inline: false
       });
     }
@@ -584,129 +454,119 @@ function createTrophyFishingFeature({ env, minecraft, store }) {
     return embed;
   }
 
-  async function handleTrophyFishingCommand(interaction) {
+  const VIEWS = {
+    fish: {
+      selectId: TROPHY_FISH_SELECT_ID,
+      items: TROPHY_FISH_NAMES,
+      itemsByKey: TROPHY_FISH_BY_KEY,
+      command: '/trophyfishing',
+      placeholder: 'View fish information',
+      unknownItem: 'That trophy fish is not available.',
+      failure: 'Failed to fetch trophy fishing data.',
+      buildOverview: buildFishOverviewEmbed,
+      buildInfo: buildFishInfoEmbed
+    },
+    frog: {
+      selectId: TROPHY_FROG_SELECT_ID,
+      items: TROPHY_FROG_NAMES,
+      itemsByKey: TROPHY_FROG_BY_KEY,
+      command: '/trophyfrogs',
+      placeholder: 'View frog information',
+      unknownItem: 'That trophy frog is not available.',
+      failure: 'Failed to fetch trophy frog data.',
+      buildOverview: buildFrogOverviewEmbed,
+      buildInfo: buildFrogInfoEmbed
+    }
+  };
+
+  // The select id carries `<select id>:<uuid>:<profile id>` so the info view survives restarts.
+  function buildInfoSelect(view, uuid, profileId) {
+    return [
+      new ActionRowBuilder().addComponents(
+        new StringSelectMenuBuilder()
+          .setCustomId(`${view.selectId}:${normalizeUuid(uuid)}:${normalizeUuid(profileId)}`)
+          .setPlaceholder(view.placeholder)
+          .addOptions(
+            view.items.map((item) => ({
+              label: item.label,
+              value: item.key,
+              description: item.foundAt.slice(0, 100)
+            }))
+          )
+      )
+    ];
+  }
+
+  async function handleOverviewCommand(interaction, view) {
     await interaction.deferReply();
 
     try {
-      const { player, usedLinkedAccount } = await resolveRequestedPlayer(interaction);
+      const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({ interaction, linkStore, optionName: 'player' });
       const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
-      const { uuid, name } = await minecraft.resolvePlayerProfile(player);
-      const profiles = await fetchProfiles(uuid);
-      const selectedProfile = selectProfile(profiles, uuid, requestedProfile);
+      const { uuid, name } = await minecraft.resolvePlayerProfile(username);
+      const profiles = await hypixelApi.getProfiles(uuid);
+      const selectedProfile = selectProfile(profiles, uuid, { profileName: requestedProfile });
 
       if (!selectedProfile) {
         throw new Error('No SkyBlock profile found for that player.');
       }
 
-      const trophyFish = selectedProfile.member?.trophy_fish || {};
       await interaction.editReply({
         content: usedLinkedAccount ? buildLinkedUsernameNotice(name) : undefined,
-        embeds: [buildOverviewEmbed(name, selectedProfile.cuteName, trophyFish)],
-        components: buildFishSelect()
-      });
-
-      const message = await interaction.fetchReply();
-      messageContext.set(message.id, {
-        trophyFish
+        embeds: [view.buildOverview(name, selectedProfile.cuteName, selectedProfile.member)],
+        components: buildInfoSelect(view, uuid, selectedProfile.profileId)
       });
     } catch (error) {
       await interaction.editReply({
-        content: error.message || 'Failed to fetch trophy fishing data.'
+        content: error.message || view.failure
       });
     }
   }
 
-  async function handleTrophyFrogsCommand(interaction) {
-    await interaction.deferReply();
+  async function handleInfoSelect(interaction, view) {
+    if (!interaction.isStringSelectMenu()
+      || (interaction.customId !== view.selectId && !interaction.customId.startsWith(`${view.selectId}:`))) {
+      return false;
+    }
 
+    const item = view.itemsByKey[interaction.values[0]];
+    if (!item) {
+      await interaction.reply({
+        content: view.unknownItem,
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+
+    const [, uuid, profileId] = interaction.customId.split(':');
+    if (!uuid || !profileId) {
+      // Selects from older bot versions only had the plain id.
+      await interaction.reply({
+        content: `This selector has expired. Run \`${view.command}\` again.`,
+        flags: MessageFlags.Ephemeral
+      });
+      return true;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     try {
-      const { player, usedLinkedAccount } = await resolveRequestedPlayer(interaction);
-      const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
-      const { uuid, name } = await minecraft.resolvePlayerProfile(player);
-      const profiles = await fetchProfiles(uuid);
-      const selectedProfile = selectProfile(profiles, uuid, requestedProfile);
-
+      const selectedProfile = selectProfile(await hypixelApi.getProfiles(uuid), uuid, { profileId });
       if (!selectedProfile) {
-        throw new Error('No SkyBlock profile found for that player.');
+        throw new Error('This SkyBlock profile is no longer available.');
       }
 
-      const trophyFrogProgress = createTrophyFrogProgress(selectedProfile.member);
-      await interaction.editReply({
-        content: usedLinkedAccount ? buildLinkedUsernameNotice(name) : undefined,
-        embeds: [buildFrogOverviewEmbed(name, selectedProfile.cuteName, trophyFrogProgress)],
-        components: buildFrogSelect()
-      });
-
-      const message = await interaction.fetchReply();
-      messageContext.set(message.id, {
-        trophyFrogProgress
-      });
+      await interaction.editReply({ embeds: [view.buildInfo(item, selectedProfile.member)] });
     } catch (error) {
-      await interaction.editReply({
-        content: error.message || 'Failed to fetch trophy frog data.'
-      });
+      await interaction.editReply({ content: error.message || view.failure });
     }
-  }
-
-  async function handleTrophyFishSelect(interaction) {
-    if (!interaction.isStringSelectMenu() || interaction.customId !== TROPHY_FISH_SELECT_ID) {
-      return false;
-    }
-
-    const fish = TROPHY_FISH_BY_KEY[interaction.values[0]];
-    if (!fish) {
-      await interaction.reply({
-        content: 'That trophy fish is not available.',
-        flags: MessageFlags.Ephemeral
-      });
-      return true;
-    }
-
-    const context = messageContext.get(interaction.message.id);
-    const trophyFish = context?.trophyFish || {};
-    const counts = {
-      bronze: getTierCount(trophyFish, fish.key, 'bronze'),
-      silver: getTierCount(trophyFish, fish.key, 'silver'),
-      gold: getTierCount(trophyFish, fish.key, 'gold'),
-      diamond: getTierCount(trophyFish, fish.key, 'diamond'),
-      total: getFishTotal(trophyFish, fish.key)
-    };
-
-    await interaction.reply({
-      embeds: [buildFishInfoEmbed(fish, counts)],
-      flags: MessageFlags.Ephemeral
-    });
-    return true;
-  }
-
-  async function handleTrophyFrogSelect(interaction) {
-    if (!interaction.isStringSelectMenu() || interaction.customId !== TROPHY_FROG_SELECT_ID) {
-      return false;
-    }
-
-    const frog = TROPHY_FROG_BY_KEY[interaction.values[0]];
-    if (!frog) {
-      await interaction.reply({
-        content: 'That trophy frog is not available.',
-        flags: MessageFlags.Ephemeral
-      });
-      return true;
-    }
-
-    const context = messageContext.get(interaction.message.id);
-    const trophyFrogProgress = context?.trophyFrogProgress || createTrophyFrogProgress(null);
-    await interaction.reply({
-      embeds: [buildFrogInfoEmbed(frog, trophyFrogProgress)],
-      flags: MessageFlags.Ephemeral
-    });
     return true;
   }
 
   return {
-    handleTrophyFishingCommand,
-    handleTrophyFrogsCommand,
-    handleTrophyFishSelect,
-    handleTrophyFrogSelect
+    handleTrophyFishingCommand: (interaction) => handleOverviewCommand(interaction, VIEWS.fish),
+    handleTrophyFrogsCommand: (interaction) => handleOverviewCommand(interaction, VIEWS.frog),
+    handleTrophyFishSelect: (interaction) => handleInfoSelect(interaction, VIEWS.fish),
+    handleTrophyFrogSelect: (interaction) => handleInfoSelect(interaction, VIEWS.frog)
   };
 }
 

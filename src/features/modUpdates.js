@@ -1,17 +1,14 @@
-const { EmbedBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags } = require('discord.js');
 
 const { env } = require('../config/env');
+const { interactionIds } = require('../config/interactionIds');
 
-const DEFAULT_TRACKED_REPO_URL = 'https://github.com/odtheking/Odin';
+function createModUpdatesService({ client, store, pagedLists }) {
+  // Last fetched statuses per guild, reused by the "View all releases" button.
+  const lastStatusesByGuild = new Map();
 
-function createModUpdatesService({ client, store }) {
   function getAlertConfig(guildId) {
     return store.getGuildConfig(guildId).modUpdates;
-  }
-
-  function getTrackedRepoUrls(guildId) {
-    const config = getAlertConfig(guildId);
-    return Array.isArray(config.trackedRepos) ? config.trackedRepos : [DEFAULT_TRACKED_REPO_URL];
   }
 
   function parseTrackedReposInput(rawValue) {
@@ -26,10 +23,41 @@ function createModUpdatesService({ client, store }) {
     })).values()];
   }
 
+  function getTrackedRepos(guildId) {
+    return getAlertConfig(guildId).trackedRepos.map(parseGitHubRepoReference);
+  }
+
   async function fetchTrackedReleaseStatuses(guildId) {
-    const trackedRepos = getTrackedRepoUrls(guildId).map(parseGitHubRepoReference);
-    const statuses = await Promise.all(trackedRepos.map((repo) => fetchRepoReleaseStatus(repo)));
-    return statuses.sort((left, right) => getStatusTimestamp(right) - getStatusTimestamp(left));
+    const statuses = await Promise.all(getTrackedRepos(guildId).map((repo) => fetchRepoReleaseStatus(repo)));
+    statuses.sort((left, right) => getStatusTimestamp(right) - getStatusTimestamp(left));
+    lastStatusesByGuild.set(guildId, statuses);
+    return statuses;
+  }
+
+  async function getCachedReleaseStatuses(guildId) {
+    const cached = lastStatusesByGuild.get(guildId);
+    const trackedNames = getTrackedRepos(guildId).map((repo) => repo.fullName.toLowerCase()).sort();
+    const cachedNames = (cached || []).map((status) => status.fullName.toLowerCase()).sort();
+    if (cached && trackedNames.join('\n') === cachedNames.join('\n')) {
+      return cached;
+    }
+
+    return fetchTrackedReleaseStatuses(guildId);
+  }
+
+  async function handleViewAllReleasesButton(interaction) {
+    if (!interaction.isButton() || interaction.customId !== interactionIds.MOD_RELEASES_ALL_ID || !interaction.inGuild()) {
+      return false;
+    }
+
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    const statuses = await getCachedReleaseStatuses(interaction.guildId);
+    await pagedLists.open(interaction, {
+      title: 'All tracked mod releases',
+      lines: statuses.map((status) => `**${status.fullName}**\n${status.repoUrl}\n${status.errorMessage || status.latestReleaseName || 'No release available'}\n${status.latestReleaseUrl || ''}`),
+      update: false
+    });
+    return true;
   }
 
   async function syncStatusMessage(guildId, statuses = null) {
@@ -38,7 +66,8 @@ function createModUpdatesService({ client, store }) {
     const existingMessage = await findExistingStatusMessage(guildId, channel);
     const payload = {
       content: null,
-      embeds: [createReleaseStatusEmbed(releaseStatuses)]
+      embeds: [createReleaseStatusEmbed(releaseStatuses)],
+      components: [new ActionRowBuilder().addComponents(new ButtonBuilder().setCustomId(interactionIds.MOD_RELEASES_ALL_ID).setLabel('View all releases').setStyle(ButtonStyle.Secondary))]
     };
 
     if (existingMessage) {
@@ -47,12 +76,9 @@ function createModUpdatesService({ client, store }) {
           throw error;
         }
 
-        store.setGuildRuntimeState(guildId, {
-          modUpdates: {
-            ...store.getGuildRuntimeState(guildId).modUpdates,
-            statusMessageId: null,
-            statusChannelId: null
-          }
+        store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+          statusMessageId: null,
+          statusChannelId: null
         });
       });
 
@@ -63,12 +89,9 @@ function createModUpdatesService({ client, store }) {
     }
 
     const sentMessage = await channel.send(payload);
-    store.setGuildRuntimeState(guildId, {
-      modUpdates: {
-        ...store.getGuildRuntimeState(guildId).modUpdates,
-        statusMessageId: sentMessage.id,
-        statusChannelId: sentMessage.channelId
-      }
+    store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+      statusMessageId: sentMessage.id,
+      statusChannelId: sentMessage.channelId
     });
   }
 
@@ -95,11 +118,8 @@ function createModUpdatesService({ client, store }) {
           updates.push(status);
         }
 
-        store.setGuildRuntimeState(guildId, {
-          modUpdates: {
-            ...currentState.modUpdates,
-            lastSeenReleases: nextReleases
-          }
+        store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+          lastSeenReleases: nextReleases
         });
 
         await syncStatusMessage(guildId, statuses);
@@ -119,17 +139,7 @@ function createModUpdatesService({ client, store }) {
     await replaceAlertMessage(guildId, {
       content: roleId ? `<@&${roleId}>` : null,
       embeds: [createReleaseNotificationEmbed(updates)],
-      allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
-    });
-  }
-
-  async function sendTestNotification(guildId) {
-    const statuses = await fetchTrackedReleaseStatuses(guildId);
-    const { roleId } = getAlertConfig(guildId);
-
-    await replaceAlertMessage(guildId, {
-      content: roleId ? `<@&${roleId}>` : 'Mod update test without configured ping role.',
-      embeds: [createReleaseNotificationEmbed(statuses.slice(0, 3), { isTest: true })],
+      files: updates.length > 5 ? [{ attachment: Buffer.from(updates.map(status => `${status.fullName}\n${buildReleaseFieldValue(status)}`).join('\n\n')), name: 'all-mod-updates.txt' }] : [],
       allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
     });
   }
@@ -169,12 +179,9 @@ function createModUpdatesService({ client, store }) {
 
     const [latestMessage, ...olderMessages] = [...statusMessages.values()];
     await Promise.all(olderMessages.map((message) => message.delete().catch(() => null)));
-    store.setGuildRuntimeState(guildId, {
-      modUpdates: {
-        ...currentState,
-        statusMessageId: latestMessage.id,
-        statusChannelId: latestMessage.channelId
-      }
+    store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+      statusMessageId: latestMessage.id,
+      statusChannelId: latestMessage.channelId
     });
     return latestMessage;
   }
@@ -188,12 +195,9 @@ function createModUpdatesService({ client, store }) {
     }
 
     const sentMessage = await channel.send(payload);
-    store.setGuildRuntimeState(guildId, {
-      modUpdates: {
-        ...store.getGuildRuntimeState(guildId).modUpdates,
-        alertMessageId: sentMessage.id,
-        alertChannelId: sentMessage.channelId
-      }
+    store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+      alertMessageId: sentMessage.id,
+      alertChannelId: sentMessage.channelId
     });
     return sentMessage;
   }
@@ -240,12 +244,9 @@ function createModUpdatesService({ client, store }) {
     }
 
     await Promise.all(channels.map((channel) => deleteStatusMessagesInChannel(channel)));
-    store.setGuildRuntimeState(guildId, {
-      modUpdates: {
-        ...currentState,
-        statusMessageId: null,
-        statusChannelId: null
-      }
+    store.updateGuildRuntimeSection(guildId, 'modUpdates', {
+      statusMessageId: null,
+      statusChannelId: null
     });
   }
 
@@ -259,39 +260,30 @@ function createModUpdatesService({ client, store }) {
   }
 
   return {
-    DEFAULT_TRACKED_REPO_URL,
-    getAlertConfig,
-    getTrackedRepoUrls,
     parseTrackedReposInput,
     fetchTrackedReleaseStatuses,
     syncStatusMessage,
     deleteTrackedStatusMessages,
-    sendTestNotification,
-    checkForUpdates
+    checkForUpdates,
+    handleViewAllReleasesButton
   };
 }
 
 async function fetchRepoReleaseStatus(repo) {
+  const status = {
+    ...repo,
+    repoUrl: repo.url,
+    latestReleaseUrl: null,
+    latestReleaseName: null,
+    publishedAt: null,
+    hasRelease: false,
+    errorMessage: null
+  };
+
   try {
-    const repoResponse = await fetchGitHub(`https://api.github.com/repos/${repo.fullName}`);
-
-    if (!repoResponse.ok) {
-      throw new Error(`GitHub repo lookup failed with status ${repoResponse.status}.`);
-    }
-
-    const repoData = await repoResponse.json();
     const releaseResponse = await fetchGitHub(`https://api.github.com/repos/${repo.fullName}/releases/latest`);
-
     if (releaseResponse.status === 404) {
-      return {
-        ...repo,
-        repoUrl: repoData.html_url || repo.url,
-        latestReleaseUrl: null,
-        latestReleaseName: null,
-        publishedAt: null,
-        hasRelease: false,
-        errorMessage: null
-      };
+      return status;
     }
 
     if (!releaseResponse.ok) {
@@ -299,42 +291,28 @@ async function fetchRepoReleaseStatus(repo) {
     }
 
     const releaseData = await releaseResponse.json();
-
     return {
-      ...repo,
-      repoUrl: repoData.html_url || repo.url,
+      ...status,
       latestReleaseUrl: releaseData.html_url || null,
       latestReleaseName: releaseData.name || releaseData.tag_name || 'Latest release',
       publishedAt: releaseData.published_at || releaseData.created_at || null,
-      hasRelease: true,
-      errorMessage: null
+      hasRelease: true
     };
   } catch (error) {
-    return {
-      ...repo,
-      repoUrl: repo.url,
-      latestReleaseUrl: null,
-      latestReleaseName: null,
-      publishedAt: null,
-      hasRelease: false,
-      errorMessage: error.message
-    };
+    return { ...status, errorMessage: error.message };
   }
 }
 
-function createReleaseNotificationEmbed(updates, options = {}) {
-  const isTest = options.isTest === true;
+function createReleaseNotificationEmbed(updates) {
   const sortedUpdates = [...updates].sort((left, right) => getStatusTimestamp(right) - getStatusTimestamp(left));
   const latestUpdate = sortedUpdates[0] || null;
   const embed = new EmbedBuilder()
-    .setColor(isTest ? 0xf1c40f : 0x2ecc71)
-    .setTitle(isTest ? 'Mod Update Test Ping' : 'Mod Updates Detected')
-    .setDescription(isTest
-      ? 'This is a test notification for the configured mod update channel and ping role.'
-      : buildReleaseNotificationDescription(sortedUpdates.length, latestUpdate))
+    .setColor(0x2ecc71)
+    .setTitle('Mod Updates Detected')
+    .setDescription(buildReleaseNotificationDescription(sortedUpdates.length, latestUpdate))
     .setTimestamp();
 
-  for (const status of sortedUpdates.slice(0, 25)) {
+  for (const status of sortedUpdates.slice(0, 5)) {
     embed.addFields({
       name: status.fullName,
       value: buildReleaseFieldValue(status),
@@ -342,6 +320,7 @@ function createReleaseNotificationEmbed(updates, options = {}) {
     });
   }
 
+  if (sortedUpdates.length > 5) embed.setFooter({ text: `Showing 5/${sortedUpdates.length} updates. The attached file contains every update.` });
   return embed;
 }
 
@@ -363,7 +342,7 @@ function createReleaseStatusEmbed(statuses) {
     return embed;
   }
 
-  for (const status of sortedStatuses.slice(0, 25)) {
+  for (const status of sortedStatuses.slice(0, 5)) {
     embed.addFields({
       name: status.fullName,
       value: buildReleaseFieldValue(status),
@@ -371,6 +350,7 @@ function createReleaseStatusEmbed(statuses) {
     });
   }
 
+  if (sortedStatuses.length > 5) embed.setFooter({ text: `Showing 5/${sortedStatuses.length} repositories. Use View all releases for every entry.` });
   return embed;
 }
 

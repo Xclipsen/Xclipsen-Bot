@@ -1,4 +1,4 @@
-const { EmbedBuilder } = require('discord.js');
+const { EmbedBuilder, MessageFlags } = require('discord.js');
 
 function createHideonleafFeature({ store }) {
   async function handleHideonleafCommand(interaction) {
@@ -13,7 +13,7 @@ function createHideonleafFeature({ store }) {
     if (entries.length === 0) {
       await interaction.reply({
         content: 'Es sind noch keine Hideonleaf-Daten vorhanden.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
       return;
     }

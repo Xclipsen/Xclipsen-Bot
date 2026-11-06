@@ -1,4 +1,4 @@
-const { ActionRowBuilder, EmbedBuilder, MessageFlags, PermissionsBitField, StringSelectMenuBuilder } = require('discord.js');
+const { ActionRowBuilder, ButtonBuilder, ButtonStyle, EmbedBuilder, MessageFlags, StringSelectMenuBuilder } = require('discord.js');
 const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
 
 const SHITTER_YES_COLOR = 0xc0392b;
@@ -6,18 +6,6 @@ const SHITTER_NO_COLOR = 0x2ecc71;
 const IGN_PATTERN = /^[A-Za-z0-9_]{3,16}$/;
 const SHITTER_PLAYER_SELECT_PREFIX = 'shitter-player-select:';
 const SHITTER_ENTRY_SELECT_PREFIX = 'shitter-entry-select:';
-
-function getScreenshots(entry) {
-  if (Array.isArray(entry?.screenshots) && entry.screenshots.length > 0) {
-    return entry.screenshots.filter((screenshot) => screenshot?.url);
-  }
-
-  if (entry?.screenshotUrl) {
-    return [{ url: entry.screenshotUrl, name: entry?.screenshotName || null }];
-  }
-
-  return [];
-}
 
 function addScreenshotFields(embed, screenshots) {
   if (screenshots.length === 0) {
@@ -49,7 +37,7 @@ function buildEntryEmbed({ ign, status, reason = null, createdAt = null, screens
     .addFields({ name: 'Shitter status', value: status, inline: true });
 
   if (reason) {
-    embed.addFields({ name: 'Reason', value: reason.slice(0, 1024), inline: false });
+    embed.addFields({ name: reason.length > 1024 ? 'Reason (preview — Full details below)' : 'Reason', value: reason.slice(0, 1024), inline: false });
   }
 
   if (createdAt) {
@@ -86,7 +74,7 @@ function buildQueryEmbed({ ign, entry, entryCount }) {
     );
 
   embed.addFields({
-    name: 'Reason',
+    name: entry.reason.length > 1024 ? 'Reason (preview — Full details below)' : 'Reason',
     value: entry.reason.slice(0, 1024),
     inline: false
   });
@@ -99,7 +87,7 @@ function buildQueryEmbed({ ign, entry, entryCount }) {
     embed.setFooter({ text: `Showing selected entry of ${entryCount}` });
   }
 
-  return addScreenshotFields(embed, getScreenshots(entry));
+  return addScreenshotFields(embed, entry.screenshots);
 }
 
 function formatTimestamp(value) {
@@ -114,18 +102,52 @@ function formatTimestamp(value) {
   }).format(date);
 }
 
-function createShitterListFeature({ store, ensureSetupAccess }) {
+// Entries come from the store, which always normalizes `screenshots` to an array.
+function createShitterListFeature({ store, linkStore, accessControl, pagedLists }) {
   function normalizeIgn(value) {
     return String(value || '').trim().toLowerCase();
   }
 
-  async function resolveIgn(interaction) {
-    return resolveMinecraftUsernameOption({
-      interaction,
-      store,
-      optionName: 'name',
-      missingMessage: 'No username provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `name:`.'
-    });
+  async function replyEphemeral(interaction, content) {
+    await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  }
+
+  async function ensureInGuild(interaction) {
+    if (interaction.inGuild()) {
+      return true;
+    }
+
+    await replyEphemeral(interaction, 'Dieser Command kann nur auf einem Server genutzt werden.');
+    return false;
+  }
+
+  // Shared guard for add/query/remove; replies itself and returns null when the command must stop.
+  async function resolveCommandIgn(interaction, manageAction = null) {
+    if (!(await ensureInGuild(interaction))) {
+      return null;
+    }
+
+    const deniedReason = manageAction ? getManageDeniedReason(interaction, manageAction) : null;
+    if (deniedReason) {
+      await replyEphemeral(interaction, deniedReason);
+      return null;
+    }
+
+    let resolved;
+    try {
+      resolved = await resolveMinecraftUsernameOption({ interaction, linkStore, optionName: 'name' });
+    } catch (error) {
+      await replyEphemeral(interaction, error.message);
+      return null;
+    }
+
+    const ign = resolved.username.trim();
+    if (!isValidIgn(ign)) {
+      await replyEphemeral(interaction, 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.');
+      return null;
+    }
+
+    return { ign, usedLinkedAccount: resolved.usedLinkedAccount };
   }
 
   function buildReplyContent(content, ign, usedLinkedAccount) {
@@ -139,29 +161,29 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     return IGN_PATTERN.test(String(value || '').trim());
   }
 
-  function canManageShitterEntries(interaction) {
-    const config = store.getGuildConfig(interaction.guildId);
-    const permissions = config.shitterPermissions;
-    const userId = String(interaction.user.id);
-    const memberRoleIds = new Set(interaction.member?.roles?.cache?.keys?.() || []);
-
-    if (interaction.memberPermissions?.has(PermissionsBitField.Flags.ManageGuild)) {
-      return { allowed: true, reason: null };
+  // Server managers, privileged users and bot managers are never restricted, like in the other access checks.
+  function getManageDeniedReason(interaction, action) {
+    if (accessControl.hasAccess(interaction)) {
+      return null;
     }
 
-    if (permissions.blockedUserIds.includes(userId)) {
-      return { allowed: false, reason: 'You are blocked from adding shitter entries in this server.' };
+    const permissions = store.getGuildConfig(interaction.guildId).shitterPermissions;
+    const memberRoles = interaction.member?.roles;
+    const memberRoleIds = new Set(Array.isArray(memberRoles) ? memberRoles : memberRoles?.cache?.keys?.() || []);
+
+    if (permissions.blockedUserIds.includes(String(interaction.user.id))) {
+      return `You are blocked from ${action} shitter entries in this server.`;
     }
 
     if (permissions.blockedRoleIds.some((roleId) => memberRoleIds.has(roleId))) {
-      return { allowed: false, reason: 'One of your roles is blocked from adding shitter entries in this server.' };
+      return `One of your roles is blocked from ${action} shitter entries in this server.`;
     }
 
     if (permissions.allowedRoleIds.length > 0 && !permissions.allowedRoleIds.some((roleId) => memberRoleIds.has(roleId))) {
-      return { allowed: false, reason: 'You need one of the allowed roles to add shitter entries in this server.' };
+      return `You need one of the allowed roles for ${action} shitter entries in this server.`;
     }
 
-    return { allowed: true, reason: null };
+    return null;
   }
 
   function getEntries(guildId) {
@@ -172,10 +194,6 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
 
   function getActiveEntries(guildId) {
     return getEntries(guildId).filter((entry) => !entry.removedAt);
-  }
-
-  function getEntry(guildId, ign) {
-    return getEntriesByIgn(guildId, ign)[0] || null;
   }
 
   function getEntriesByIgn(guildId, ign) {
@@ -204,8 +222,11 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
     return [...uniqueEntries.values()];
   }
 
-  function createPlayerSelectComponents({ guildId, userId, selectedIgn = null }) {
-    const uniqueEntries = getUniqueIgnEntries(guildId).slice(0, 25);
+  function createPlayerSelectComponents({ guildId, userId, selectedIgn = null, page = null }) {
+    const allEntries = getUniqueIgnEntries(guildId);
+    page = page ?? Math.max(0, Math.floor(allEntries.findIndex(e => e.normalizedIgn === selectedIgn) / 15));
+    page = Math.max(0, Math.min(Math.ceil(allEntries.length / 15) - 1, page));
+    const uniqueEntries = allEntries.slice(page * 15, (page + 1) * 15);
     if (uniqueEntries.length === 0) {
       return [];
     }
@@ -223,14 +244,18 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
               default: entry.normalizedIgn === selectedIgn
             }))
           )
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`shitter-list-page:${userId}:${page - 1}`).setLabel('Previous names').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+        new ButtonBuilder().setCustomId(`shitter-list-page:${userId}:${page + 1}`).setLabel('Next names').setStyle(ButtonStyle.Secondary).setDisabled((page + 1) * 15 >= allEntries.length)
       )
     ];
   }
 
   function createEntrySelectComponents({ userId, ign, entries, selectedCreatedAt = null }) {
-    if (entries.length <= 1) {
-      return [];
-    }
+    if (!entries.length) return [];
+    const page = Math.max(0, Math.floor(entries.findIndex(e => e.createdAt === selectedCreatedAt) / 15));
+    const selected = entries.find(e => e.createdAt === selectedCreatedAt) || entries[page * 15];
 
     return [
       new ActionRowBuilder().addComponents(
@@ -238,18 +263,23 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
           .setCustomId(`${SHITTER_ENTRY_SELECT_PREFIX}${userId}:${normalizeIgn(ign)}`)
           .setPlaceholder('Select an entry')
           .addOptions(
-            entries.slice(0, 25).map((entry, index) => ({
-              label: `${index + 1}. ${formatTimestamp(entry.createdAt)}`.slice(0, 100),
+            entries.slice(page * 15, (page + 1) * 15).map((entry, index) => ({
+              label: `${page * 15 + index + 1}. ${formatTimestamp(entry.createdAt)}`.slice(0, 100),
               value: entry.createdAt,
               description: entry.reason.slice(0, 100),
               default: entry.createdAt === selectedCreatedAt
             }))
           )
+      ),
+      new ActionRowBuilder().addComponents(
+        new ButtonBuilder().setCustomId(`shitter-entry-page:${userId}:${normalizeIgn(ign)}:${page - 1}`).setLabel('Previous entries').setStyle(ButtonStyle.Secondary).setDisabled(page === 0),
+        new ButtonBuilder().setCustomId(`shitter-entry-page:${userId}:${normalizeIgn(ign)}:${page + 1}`).setLabel('Next entries').setStyle(ButtonStyle.Secondary).setDisabled((page + 1) * 15 >= entries.length),
+        new ButtonBuilder().setCustomId(`shitter-full:${userId}:${normalizeIgn(ign)}:${selected.createdAt}`).setLabel('Full details').setStyle(ButtonStyle.Secondary)
       )
     ];
   }
 
-  function buildListEmbed(guildId) {
+  function buildListEmbed(guildId, page = 0) {
     const entries = getUniqueIgnEntries(guildId);
     const embed = new EmbedBuilder()
       .setColor(SHITTER_YES_COLOR)
@@ -262,18 +292,14 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
 
     embed.setDescription(
       entries
-        .slice(0, 25)
+        .slice(page * 15, (page + 1) * 15)
         .map((entry, index) => (
-          `${index + 1}. **${entry.ign}** - ${getActiveEntriesByIgn(guildId, entry.ign).length} active entr${getActiveEntriesByIgn(guildId, entry.ign).length === 1 ? 'y' : 'ies'} - added by ${formatAddedByUser(entry.addedByUserId)}`
+          `${page * 15 + index + 1}. **${entry.ign}** - ${getActiveEntriesByIgn(guildId, entry.ign).length} active entr${getActiveEntriesByIgn(guildId, entry.ign).length === 1 ? 'y' : 'ies'} - added by ${formatAddedByUser(entry.addedByUserId)}`
         ))
         .join('\n')
     );
 
-    if (getUniqueIgnEntries(guildId).length > 25) {
-      embed.setFooter({ text: `Showing 25 of ${getUniqueIgnEntries(guildId).length} names` });
-    } else {
-      embed.setFooter({ text: 'Pick a name from the menu below.' });
-    }
+    embed.setFooter({ text: `Page ${page + 1}/${Math.max(1, Math.ceil(entries.length / 15))} • ${entries.length} names` });
 
     return embed;
   }
@@ -302,78 +328,28 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
   }
 
   async function handleShitterAddCommand(interaction) {
-    if (!interaction.inGuild()) {
-      await interaction.reply({
-        content: 'Dieser Command kann nur auf einem Server genutzt werden.',
-        flags: MessageFlags.Ephemeral
-      });
+    const resolved = await resolveCommandIgn(interaction, 'adding');
+    if (!resolved) {
       return;
     }
 
-    const permissionCheck = canManageShitterEntries(interaction);
-    if (!permissionCheck.allowed) {
-      await interaction.reply({
-        content: permissionCheck.reason,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    let username;
-    let usedLinkedAccount;
-    try {
-      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
-    } catch (error) {
-      await interaction.reply({
-        content: error.message,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    const ign = username.trim();
+    const { ign, usedLinkedAccount } = resolved;
     const reason = interaction.options.getString('reason', true).trim();
-    const screenshots = [
-      interaction.options.getAttachment('screenshot'),
-      interaction.options.getAttachment('screenshot_2'),
-      interaction.options.getAttachment('screenshot_3'),
-      interaction.options.getAttachment('screenshot_4'),
-      interaction.options.getAttachment('screenshot_5')
-    ].filter(Boolean);
-
-    if (!ign) {
-      await interaction.reply({
-        content: 'IGN darf nicht leer sein.',
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    if (!isValidIgn(ign)) {
-      await interaction.reply({
-        content: 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.',
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
+    const attachments = ['screenshot', 'screenshot_2', 'screenshot_3', 'screenshot_4', 'screenshot_5']
+      .map((name) => interaction.options.getAttachment(name))
+      .filter(Boolean);
 
     if (!reason) {
-      await interaction.reply({
-        content: 'Reason darf nicht leer sein.',
-        flags: MessageFlags.Ephemeral
-      });
+      await replyEphemeral(interaction, 'Reason darf nicht leer sein.');
       return;
     }
 
-    for (const screenshot of screenshots) {
-      if (!String(screenshot.contentType || '').startsWith('image/')) {
-        await interaction.reply({
-          content: 'Alle Screenshots mussen Bilder sein.',
-          flags: MessageFlags.Ephemeral
-        });
-        return;
-      }
+    if (attachments.some((attachment) => !String(attachment.contentType || '').startsWith('image/'))) {
+      await replyEphemeral(interaction, 'Alle Screenshots mussen Bilder sein.');
+      return;
     }
+
+    const screenshots = attachments.map((attachment) => ({ url: attachment.url, name: attachment.name || null }));
 
     const normalizedIgn = normalizeIgn(ign);
     const existingEntries = store.getShitterEntries(interaction.guildId);
@@ -386,10 +362,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
       reason,
       createdAt: now,
       removedAt: null,
-      screenshots: screenshots.map((screenshot) => ({
-        url: screenshot.url,
-        name: screenshot.name || null
-      })),
+      screenshots,
       addedByUserId: interaction.user.id,
       removedByUserId: null
     });
@@ -404,44 +377,20 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
         reason,
         createdAt: now,
         addedByUserId: interaction.user.id,
-        screenshots: screenshots.map((screenshot) => ({
-          url: screenshot.url,
-          name: screenshot.name || null
-        }))
+        screenshots
       })],
+      components: createEntrySelectComponents({ userId: interaction.user.id, ign, entries: getActiveEntriesByIgn(interaction.guildId, ign), selectedCreatedAt: now }),
       flags: MessageFlags.Ephemeral
     });
   }
 
   async function handleShitterQueryCommand(interaction) {
-    if (!interaction.inGuild()) {
-      await interaction.reply({
-        content: 'Dieser Command kann nur auf einem Server genutzt werden.',
-        flags: MessageFlags.Ephemeral
-      });
+    const resolved = await resolveCommandIgn(interaction);
+    if (!resolved) {
       return;
     }
 
-    let username;
-    let usedLinkedAccount;
-    try {
-      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
-    } catch (error) {
-      await interaction.reply({
-        content: error.message,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    const ign = username.trim();
-    if (!isValidIgn(ign)) {
-      await interaction.reply({
-        content: 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.',
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
+    const { ign, usedLinkedAccount } = resolved;
 
     const entries = getActiveEntriesByIgn(interaction.guildId, ign);
 
@@ -468,43 +417,12 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
   }
 
   async function handleShitterRemoveCommand(interaction) {
-    if (!interaction.inGuild()) {
-      await interaction.reply({
-        content: 'Dieser Command kann nur auf einem Server genutzt werden.',
-        flags: MessageFlags.Ephemeral
-      });
+    const resolved = await resolveCommandIgn(interaction, 'removing');
+    if (!resolved) {
       return;
     }
 
-    const permissionCheck = canManageShitterEntries(interaction);
-    if (!permissionCheck.allowed) {
-      await interaction.reply({
-        content: permissionCheck.reason,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    let username;
-    let usedLinkedAccount;
-    try {
-      ({ username, usedLinkedAccount } = await resolveIgn(interaction));
-    } catch (error) {
-      await interaction.reply({
-        content: error.message,
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
-
-    const ign = username.trim();
-    if (!isValidIgn(ign)) {
-      await interaction.reply({
-        content: 'IGN muss 3 bis 16 Zeichen lang sein und darf nur Buchstaben, Zahlen oder Unterstriche enthalten.',
-        flags: MessageFlags.Ephemeral
-      });
-      return;
-    }
+    const { ign, usedLinkedAccount } = resolved;
 
     const normalizedIgn = normalizeIgn(ign);
     const existingEntries = store.getShitterEntries(interaction.guildId);
@@ -542,11 +460,7 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
   }
 
   async function handleShitterListCommand(interaction) {
-    if (!interaction.inGuild()) {
-      await interaction.reply({
-        content: 'Dieser Command kann nur auf einem Server genutzt werden.',
-        flags: MessageFlags.Ephemeral
-      });
+    if (!(await ensureInGuild(interaction))) {
       return;
     }
 
@@ -646,16 +560,32 @@ function createShitterListFeature({ store, ensureSetupAccess }) {
   }
 
   return {
+    async handlePagination(interaction) {
+      if (!['shitter-list-page:', 'shitter-entry-page:', 'shitter-full:'].some(prefix => interaction.customId?.startsWith(prefix))) return false;
+      const [action, owner, part, ...rest] = interaction.customId.split(':');
+      if (owner !== interaction.user.id || !interaction.inGuild()) {
+        await interaction.reply({ content: 'Open your own shitter list to browse it.', flags: MessageFlags.Ephemeral });
+        return true;
+      }
+      if (action === 'shitter-list-page') {
+        const total = getUniqueIgnEntries(interaction.guildId).length;
+        const page = Math.max(0, Math.min(Math.max(0, Math.ceil(total / 15) - 1), Number(part) || 0));
+        await interaction.update({ embeds: [buildListEmbed(interaction.guildId, page)], components: createPlayerSelectComponents({ guildId: interaction.guildId, userId: owner, page }), allowedMentions: { parse: [] } });
+      } else {
+        const entries = getActiveEntriesByIgn(interaction.guildId, part);
+        const entry = action === 'shitter-full' ? entries.find(e => e.createdAt === rest.join(':')) : entries[Math.max(0, Math.min(Math.max(0, Math.ceil(entries.length / 15) - 1), Number(rest[0]) || 0)) * 15];
+        if (!entry) { await interaction.reply({ content: 'This entry no longer exists.', flags: MessageFlags.Ephemeral }); return true; }
+        if (action === 'shitter-full') {
+          await pagedLists.open(interaction, { title: `Shitter Check: ${entry.ign}`, lines: [`Added: ${formatTimestamp(entry.createdAt)} by ${formatAddedByUser(entry.addedByUserId)}`, `Reason: ${entry.reason}`, ...entry.screenshots.map((image, index) => `${index + 1}. [Screenshot](${image.url})`)], update: false });
+        } else {
+          await interaction.update({ embeds: [buildQueryEmbed({ ign: entry.ign, entry, entryCount: entries.length })], components: [...createPlayerSelectComponents({ guildId: interaction.guildId, userId: owner, selectedIgn: part }), ...createEntrySelectComponents({ userId: owner, ign: part, entries, selectedCreatedAt: entry.createdAt })], allowedMentions: { parse: [] } });
+        }
+      }
+      return true;
+    },
     handleShitterCommand,
     handleShitterPlayerSelect,
-    handleShitterEntrySelect,
-    handleShitterAddCommand,
-    handleShitterQueryCommand,
-    handleShitterRemoveCommand,
-    handleShitterListCommand,
-    getEntries,
-    getEntriesByIgn,
-    getEntry
+    handleShitterEntrySelect
   };
 }
 

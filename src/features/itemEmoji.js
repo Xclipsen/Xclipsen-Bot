@@ -1,5 +1,7 @@
 const { AttachmentBuilder, MessageFlags, PermissionsBitField } = require('discord.js');
 
+const { env } = require('../config/env');
+
 function createItemEmojiFeature({ itemEmojis }) {
   async function handleItemEmojiAutocomplete(interaction) {
     const focusedValue = interaction.options.getFocused();
@@ -57,7 +59,7 @@ function createItemEmojiFeature({ itemEmojis }) {
       }
 
       const emojiResponse = await fetch(resolved.cdnUrl, {
-        headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
+        headers: { 'User-Agent': env.USER_AGENT }
       });
       if (!emojiResponse.ok) {
         throw new Error(`Failed to download the item emoji image (${emojiResponse.status}).`);

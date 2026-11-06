@@ -1,5 +1,16 @@
 const { EmbedBuilder } = require('discord.js');
 
+const { env } = require('../config/env');
+const { NO_APP_EMOJIS } = require('../utils/appEmojis');
+const {
+  ISLAND_EMOJIS,
+  ISLAND_ICONS,
+  ISLAND_LABELS,
+  MINING_EVENT_DEFINITIONS,
+  MINING_EVENT_DEFINITION_MAP,
+  getMiningEventDefinitionsForIsland
+} = require('../config/miningEventDefinitions');
+
 const SOOPY_CHEVENTS_URL = 'https://api.soopy.dev/skyblock/chevents/get';
 
 // An occurrence is tracked by its last sighting in the feed. The grace window
@@ -8,85 +19,13 @@ const SOOPY_CHEVENTS_URL = 'https://api.soopy.dev/skyblock/chevents/get';
 const ACTIVE_EVENT_GRACE_MS = 3 * 60 * 1000;
 const DOUBLE_EVENT_REPEAT_DELAY_MS = 15 * 60 * 1000;
 
-const ISLAND_LABELS = {
-  DWARVEN_MINES: 'Dwarven Mines',
-  CRYSTAL_HOLLOWS: 'Crystal Hollows'
-};
-
-const ISLAND_KEY_SUFFIXES = {
-  DWARVEN_MINES: 'Dwarven',
-  CRYSTAL_HOLLOWS: 'Crystal'
-};
-
-const ISLAND_EMOJIS = {
-  DWARVEN_MINES: '⛏️',
-  CRYSTAL_HOLLOWS: '💎'
-};
-
 const DASHBOARD_COLOR = 0x9b59b6;
 
-// Runs in both Dwarven Mines and Crystal Hollows.
-const SHARED_MINING_EVENTS = [
-  { key: 'gwtw', label: 'Gone with the Wind', emoji: '💨', color: 0x3498db, soopyKey: 'GONE_WITH_THE_WIND' },
-  { key: 'doublePowder', label: '2x Powder', emoji: '⚡', color: 0x1abc9c, soopyKey: 'DOUBLE_POWDER' },
-  { key: 'betterTogether', label: 'Better Together', emoji: '🎭', color: 0xaf7ac5, soopyKey: 'BETTER_TOGETHER' }
-];
-
-// Dwarven Mines only.
-const DWARVEN_ONLY_MINING_EVENTS = [
-  { key: 'goblinRaid', label: 'Goblin Raid', emoji: '⚔️', color: 0xe74c3c, soopyKey: 'GOBLIN_RAID' },
-  { key: 'raffle', label: 'Mining Raffle', emoji: '🎟️', color: 0xf1c40f, soopyKey: 'RAFFLE' },
-  { key: 'mithrilGourmand', label: 'Mithril Gourmand', emoji: '🍽️', color: 0x16a085, soopyKey: 'MITHRIL_GOURMAND' }
-];
-
-function buildRoleAliases(label, islandLabel) {
-  const base = label.toLowerCase();
-  const variants = [base, `${base} ping`, `${base} role`];
-
-  if (islandLabel) {
-    const suffixed = `${base} ${islandLabel.toLowerCase()}`;
-    variants.push(suffixed, `${suffixed} ping`, `${suffixed} role`);
-  }
-
-  return [...new Set(variants)];
-}
-
-const MINING_EVENT_DEFINITIONS = [
-  ...SHARED_MINING_EVENTS.flatMap((event) => Object.keys(ISLAND_LABELS).map((island) => {
-    const islandLabel = ISLAND_LABELS[island];
-    return {
-      key: `${event.key}${ISLAND_KEY_SUFFIXES[island]}`,
-      label: event.label,
-      emoji: event.emoji,
-      color: event.color,
-      island,
-      soopyKey: event.soopyKey,
-      roleName: `${event.label} (${islandLabel})`,
-      roleAliases: buildRoleAliases(event.label, islandLabel)
-    };
-  })),
-  ...DWARVEN_ONLY_MINING_EVENTS.map((event) => ({
-    key: event.key,
-    label: event.label,
-    emoji: event.emoji,
-    color: event.color,
-    island: 'DWARVEN_MINES',
-    soopyKey: event.soopyKey,
-    roleName: event.label,
-    roleAliases: buildRoleAliases(event.label, null)
-  }))
-];
-
-const MINING_EVENT_DEFINITION_MAP = Object.fromEntries(
-  MINING_EVENT_DEFINITIONS.map((definition) => [definition.key, definition])
-);
-
-function getMiningEventDefinitionsForIsland(island) {
-  return MINING_EVENT_DEFINITIONS.filter((definition) => definition.island === island);
-}
-
 async function fetchRunningMiningEvents() {
-  const response = await fetch(SOOPY_CHEVENTS_URL, { signal: AbortSignal.timeout(10_000) });
+  const response = await fetch(SOOPY_CHEVENTS_URL, {
+    headers: { 'User-Agent': env.USER_AGENT },
+    signal: AbortSignal.timeout(10_000)
+  });
   if (!response.ok) {
     throw new Error(`Soopy chevents request failed (${response.status}).`);
   }
@@ -114,46 +53,71 @@ function formatLobbyCount(lobbyCount) {
   return `${lobbyCount} ${lobbyCount === 1 ? 'lobby' : 'lobbies'}`;
 }
 
-function createMiningEventPingDescription(definition, lobbyCount) {
+function getIslandIcon(island, appEmojis = NO_APP_EMOJIS) {
+  return appEmojis.get(ISLAND_ICONS[island], ISLAND_EMOJIS[island]);
+}
+
+function getMiningEventIcon(definition, appEmojis = NO_APP_EMOJIS) {
+  return appEmojis.get(definition.icon, definition.emoji);
+}
+
+function createMiningEventPingDescription(definition, lobbyCount, appEmojis = NO_APP_EMOJIS) {
   return [
-    `Island: ${ISLAND_LABELS[definition.island]}`,
+    `Island: ${getIslandIcon(definition.island, appEmojis)} ${ISLAND_LABELS[definition.island]}`,
     `Observed in ${formatLobbyCount(lobbyCount)} so far`
   ].join('\n');
 }
 
-function createMiningEventPingEmbed(definition, lobbyCount = null, { isRepeat = false } = {}) {
-  return new EmbedBuilder()
-    .setColor(definition.color)
-    .setTitle(`${definition.emoji} ${definition.label} is ACTIVE${isRepeat ? ' AGAIN' : ''}`)
-    .setDescription(createMiningEventPingDescription(definition, lobbyCount))
-    .setTimestamp();
-}
-
-function createMiningEventsDashboardEmbed(activeEntries) {
+// Titles do not render custom emojis, so the item icon is the thumbnail instead.
+function createMiningEventPingEmbed(definition, lobbyCount = null, { isRepeat = false, appEmojis = NO_APP_EMOJIS } = {}) {
   const embed = new EmbedBuilder()
-    .setColor(DASHBOARD_COLOR)
-    .setTitle('⛏️ Active Mining Events')
+    .setColor(definition.color)
+    .setTitle(`${definition.label} is ACTIVE${isRepeat ? ' AGAIN' : ''}`)
+    .setDescription(createMiningEventPingDescription(definition, lobbyCount, appEmojis))
     .setTimestamp();
 
-  for (const island of Object.keys(ISLAND_LABELS)) {
-    const islandEntries = activeEntries.filter((entry) => entry.definition.island === island);
-    if (islandEntries.length === 0) {
-      continue;
-    }
-
-    embed.addFields({
-      name: `${ISLAND_EMOJIS[island]} ${ISLAND_LABELS[island]} Events`,
-      value: islandEntries
-        .map(({ definition, lobbyCount, isDouble }) =>
-          `• ${definition.emoji} **${definition.label}** — Observed in ${formatLobbyCount(lobbyCount)} so far${isDouble ? ' · **Double event**' : ''}`)
-        .join('\n')
-    });
+  const iconUrl = definition.icon ? appEmojis.url(definition.icon) : null;
+  if (iconUrl) {
+    embed.setThumbnail(iconUrl);
   }
 
   return embed;
 }
 
-function createMiningEventsService({ client, store }) {
+// Islands are headings in the description, because field names do not render custom emojis.
+function createMiningEventsDashboardEmbed(activeEntries, { appEmojis = NO_APP_EMOJIS } = {}) {
+  const sections = Object.keys(ISLAND_LABELS)
+    .map((island) => {
+      const islandEntries = activeEntries.filter((entry) => entry.definition.island === island);
+      if (islandEntries.length === 0) {
+        return null;
+      }
+
+      return [
+        `**${getIslandIcon(island, appEmojis)} ${ISLAND_LABELS[island]}**`,
+        ...islandEntries.map(({ definition, lobbyCount, isDouble }) =>
+          `${getMiningEventIcon(definition, appEmojis)} **${definition.label}** — Observed in ${formatLobbyCount(lobbyCount)} so far${isDouble ? ' · **Double event**' : ''}`)
+      ].join('\n');
+    })
+    .filter(Boolean);
+
+  const embed = new EmbedBuilder()
+    .setColor(DASHBOARD_COLOR)
+    .setTitle('Active Mining Events')
+    .setTimestamp();
+
+  if (sections.length > 0) {
+    embed.setDescription(sections.join('\n\n'));
+  }
+
+  return embed;
+}
+
+function createMiningEventsService({ client, store, appEmojis = NO_APP_EMOJIS }) {
+  function updateMiningRuntimeState(guildId, patch) {
+    store.updateGuildRuntimeSection(guildId, 'miningEvents', patch);
+  }
+
   async function deletePreviousMiningEventPing(guildId, channel, definition) {
     const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
     const previousMessageId = runtimeState.pingMessageIds[definition.key] || null;
@@ -185,22 +149,17 @@ function createMiningEventsService({ client, store }) {
 
     const message = await channel.send({
       content: roleId ? `<@&${roleId}>` : null,
-      embeds: [createMiningEventPingEmbed(definition, lobbyCount, { isRepeat })],
+      embeds: [createMiningEventPingEmbed(definition, lobbyCount, { isRepeat, appEmojis })],
       allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
     });
 
-    const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      miningEvents: {
-        ...runtimeState,
-        pingChannelId: channel.id,
-        pingMessageIds: {
-          ...runtimeState.pingMessageIds,
-          [definition.key]: message.id
-        }
+    updateMiningRuntimeState(guildId, (latest) => ({
+      pingChannelId: channel.id,
+      pingMessageIds: {
+        ...latest.pingMessageIds,
+        [definition.key]: message.id
       }
-    });
+    }));
   }
 
   async function updateTrackedMiningEventPing(guildId, channel, definition, lobbyCount) {
@@ -219,7 +178,7 @@ function createMiningEventsService({ client, store }) {
     const embedData = typeof existingEmbed.toJSON === 'function'
       ? existingEmbed.toJSON()
       : existingEmbed;
-    const description = createMiningEventPingDescription(definition, lobbyCount);
+    const description = createMiningEventPingDescription(definition, lobbyCount, appEmojis);
     if (embedData.description === description) {
       return;
     }
@@ -242,16 +201,32 @@ function createMiningEventsService({ client, store }) {
       await message.delete().catch(() => null);
     }
 
-    const nextPingMessageIds = { ...runtimeState.pingMessageIds };
-    delete nextPingMessageIds[definitionKey];
-
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      miningEvents: {
-        ...store.getGuildRuntimeState(guildId).miningEvents,
-        pingMessageIds: nextPingMessageIds
-      }
+    updateMiningRuntimeState(guildId, (latest) => {
+      const pingMessageIds = { ...latest.pingMessageIds };
+      delete pingMessageIds[definitionKey];
+      return { pingMessageIds };
     });
+  }
+
+  // Removes the dashboard and every ping from the channel they were posted in, e.g. after
+  // the mining channel moved. Running events stay tracked, so they are not pinged again.
+  async function deleteTrackedMiningEventMessages(guildId) {
+    const tracked = store.getGuildRuntimeState(guildId).miningEvents;
+    const messageIds = [tracked.dashboardMessageId, ...Object.values(tracked.pingMessageIds)].filter(Boolean);
+    const channel = tracked.pingChannelId && messageIds.length > 0
+      ? await client.channels.fetch(tracked.pingChannelId).catch(() => null)
+      : null;
+
+    if (channel && channel.isTextBased()) {
+      for (const messageId of messageIds) {
+        const message = await channel.messages.fetch(messageId).catch(() => null);
+        if (message) {
+          await message.delete().catch(() => null);
+        }
+      }
+    }
+
+    updateMiningRuntimeState(guildId, { dashboardMessageId: null, pingMessageIds: {}, pingChannelId: null });
   }
 
   // The dashboard is a single message kept in sync with whatever is running, so
@@ -268,12 +243,12 @@ function createMiningEventsService({ client, store }) {
         await existingMessage.delete().catch(() => null);
       }
       if (existingId) {
-        await setDashboardMessageId(guildId, null, channel.id);
+        updateMiningRuntimeState(guildId, { dashboardMessageId: null, pingChannelId: channel.id });
       }
       return;
     }
 
-    const embed = createMiningEventsDashboardEmbed(activeEntries);
+    const embed = createMiningEventsDashboardEmbed(activeEntries, { appEmojis });
 
     if (existingMessage) {
       await existingMessage.edit({ embeds: [embed] }).catch(() => null);
@@ -281,50 +256,7 @@ function createMiningEventsService({ client, store }) {
     }
 
     const message = await channel.send({ embeds: [embed], allowedMentions: { parse: [] } });
-    await setDashboardMessageId(guildId, message.id, channel.id);
-  }
-
-  async function setDashboardMessageId(guildId, messageId, channelId) {
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      miningEvents: {
-        ...store.getGuildRuntimeState(guildId).miningEvents,
-        dashboardMessageId: messageId,
-        pingChannelId: channelId
-      }
-    });
-  }
-
-  // One-off cleanup for pings sent before message-tracking existed. Walks the
-  // channel history once per guild and removes any leftover mining event ping,
-  // then never scans again (ongoing pings are deleted via pingMessageIds).
-  async function sweepOldMiningEventPings(channel) {
-    const expectedTitles = new Set(
-      MINING_EVENT_DEFINITIONS.flatMap((definition) => [
-        `${definition.emoji} ${definition.label} is ACTIVE`,
-        `${definition.emoji} ${definition.label} is ACTIVE AGAIN`
-      ])
-    );
-
-    let before;
-    for (let page = 0; page < 10; page += 1) {
-      const batch = await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) }).catch(() => null);
-      if (!batch || batch.size === 0) {
-        break;
-      }
-
-      const stale = batch.filter((message) =>
-        message.author?.id === client.user?.id &&
-        message.embeds.some((embed) => expectedTitles.has(embed.title))
-      );
-
-      await Promise.all(stale.map((message) => message.delete().catch(() => null)));
-
-      before = batch.last()?.id;
-      if (batch.size < 100) {
-        break;
-      }
-    }
+    updateMiningRuntimeState(guildId, { dashboardMessageId: message.id, pingChannelId: channel.id });
   }
 
   async function checkForMiningEvents() {
@@ -346,15 +278,9 @@ function createMiningEventsService({ client, store }) {
           continue;
         }
 
-        if (!store.getGuildRuntimeState(guildId).miningEvents.oldPingsSwept) {
-          await sweepOldMiningEventPings(channel);
-          store.setGuildRuntimeState(guildId, {
-            ...store.getGuildRuntimeState(guildId),
-            miningEvents: {
-              ...store.getGuildRuntimeState(guildId).miningEvents,
-              oldPingsSwept: true
-            }
-          });
+        const { pingChannelId } = store.getGuildRuntimeState(guildId).miningEvents;
+        if (pingChannelId && pingChannelId !== channel.id) {
+          await deleteTrackedMiningEventMessages(guildId);
         }
 
         const runtimeState = store.getGuildRuntimeState(guildId).miningEvents;
@@ -365,130 +291,89 @@ function createMiningEventsService({ client, store }) {
 
         for (const definition of MINING_EVENT_DEFINITIONS) {
           const runningEntry = findRunningEntry(runningEvents, definition);
-          const storedLastSeenAt = trackedEvents[definition.key] ?? null;
-          // Older state files stored Soopy's future `ends_at` value here. Capping
-          // it at now migrates that state without causing an immediate re-ping.
-          const trackedLastSeenAt = Number.isFinite(storedLastSeenAt)
-            ? Math.min(storedLastSeenAt, now)
-            : null;
-          const existingDoublePingState = doublePingStates[definition.key] || null;
+          const isDouble = runningEntry?.is_double === true;
+          const lastSeenAt = trackedEvents[definition.key] ?? null;
+          const storedDoublePing = doublePingStates[definition.key] || null;
+          // A pending repeat ping keeps a double event tracked even if the feed dropped it for a while.
           const hasPendingDoublePing = Boolean(
-            runningEntry?.is_double === true &&
-            existingDoublePingState &&
-            !existingDoublePingState.handled &&
-            now < (existingDoublePingState.dueAt + ACTIVE_EVENT_GRACE_MS)
+            isDouble &&
+            storedDoublePing &&
+            !storedDoublePing.handled &&
+            now < (storedDoublePing.dueAt + ACTIVE_EVENT_GRACE_MS)
           );
           const isStillTracked = (
-            Number.isFinite(trackedLastSeenAt) && now < (trackedLastSeenAt + ACTIVE_EVENT_GRACE_MS)
+            Number.isFinite(lastSeenAt) && now < (lastSeenAt + ACTIVE_EVENT_GRACE_MS)
           ) || hasPendingDoublePing;
 
-          if (trackedLastSeenAt !== storedLastSeenAt) {
-            trackedEvents[definition.key] = trackedLastSeenAt;
-            runtimeStateChanged = true;
-          }
-
-          if (!runningEntry) {
-            const doublePingState = existingDoublePingState;
-            if (doublePingState && !doublePingState.handled && now >= doublePingState.dueAt) {
-              doublePingStates[definition.key] = { ...doublePingState, handled: true };
-              runtimeStateChanged = true;
-            }
-
-            if (trackedLastSeenAt !== null && !isStillTracked) {
-              delete trackedEvents[definition.key];
-              delete doublePingStates[definition.key];
-              runtimeStateChanged = true;
-              await deleteTrackedMiningEventPing(guildId, channel, definition.key);
-            }
-            continue;
-          }
-
-          const lobbyCount = Number(runningEntry.lobby_count);
-          const normalizedLobbyCount = runningEntry.lobby_count !== null &&
-            Number.isInteger(lobbyCount) && lobbyCount >= 0
-            ? lobbyCount
-            : null;
-          const isDouble = runningEntry.is_double === true;
-
-          activeEntries.push({
-            definition,
-            lobbyCount: normalizedLobbyCount,
-            isDouble
-          });
-
-          trackedEvents[definition.key] = now;
-          runtimeStateChanged = true;
-
-          if (!isStillTracked) {
+          if (!runningEntry && lastSeenAt !== null && !isStillTracked) {
+            delete trackedEvents[definition.key];
             delete doublePingStates[definition.key];
-
-            await sendMiningEventPing(
-              guildId,
-              channel,
-              definition,
-              config.roles[definition.key],
-              normalizedLobbyCount
-            );
-
-            if (isDouble) {
-              doublePingStates[definition.key] = {
-                dueAt: now + DOUBLE_EVENT_REPEAT_DELAY_MS,
-                handled: false
-              };
-            }
+            runtimeStateChanged = true;
+            await deleteTrackedMiningEventPing(guildId, channel, definition.key);
             continue;
           }
 
-          let doublePingState = doublePingStates[definition.key] || null;
-          if (!doublePingState && isDouble) {
-            doublePingState = {
-              dueAt: now + DOUBLE_EVENT_REPEAT_DELAY_MS,
-              handled: false
-            };
-            doublePingStates[definition.key] = doublePingState;
+          let normalizedLobbyCount = null;
+          if (runningEntry) {
+            const lobbyCount = Number(runningEntry.lobby_count);
+            normalizedLobbyCount = runningEntry.lobby_count !== null &&
+              Number.isInteger(lobbyCount) && lobbyCount >= 0
+              ? lobbyCount
+              : null;
+
+            activeEntries.push({ definition, lobbyCount: normalizedLobbyCount, isDouble });
+            trackedEvents[definition.key] = now;
             runtimeStateChanged = true;
+
+            if (!isStillTracked) {
+              await sendMiningEventPing(guildId, channel, definition, config.roles[definition.key], normalizedLobbyCount);
+            }
           }
 
-          if (doublePingState && !doublePingState.handled && !isDouble) {
-            doublePingState = { ...doublePingState, handled: true };
-            doublePingStates[definition.key] = doublePingState;
-            runtimeStateChanged = true;
+          // A new occurrence starts without a repeat ping; a double one schedules it once.
+          let doublePing = isStillTracked || !runningEntry ? storedDoublePing : null;
+          if (!doublePing && isDouble) {
+            doublePing = { dueAt: now + DOUBLE_EVENT_REPEAT_DELAY_MS, handled: false };
           }
 
           let sentRepeatPing = false;
-          if (doublePingState && !doublePingState.handled && now >= doublePingState.dueAt && isDouble) {
-            await sendMiningEventPing(
-              guildId,
-              channel,
-              definition,
-              config.roles[definition.key],
-              normalizedLobbyCount,
-              { isRepeat: true }
-            );
-            doublePingStates[definition.key] = { ...doublePingState, handled: true };
-            runtimeStateChanged = true;
-            sentRepeatPing = true;
+          if (doublePing && !doublePing.handled) {
+            // Settled once it is sent, once the event is seen running without being double,
+            // or once it falls due while the event is missing from the feed.
+            const isDue = now >= doublePing.dueAt;
+            if (isDouble && isDue && isStillTracked) {
+              await sendMiningEventPing(
+                guildId,
+                channel,
+                definition,
+                config.roles[definition.key],
+                normalizedLobbyCount,
+                { isRepeat: true }
+              );
+              sentRepeatPing = true;
+            }
+
+            if (sentRepeatPing || (!isDouble && (runningEntry || isDue))) {
+              doublePing = { ...doublePing, handled: true };
+            }
           }
 
-          if (!sentRepeatPing) {
-            await updateTrackedMiningEventPing(
-              guildId,
-              channel,
-              definition,
-              normalizedLobbyCount
-            );
+          if (doublePing !== storedDoublePing) {
+            if (doublePing) {
+              doublePingStates[definition.key] = doublePing;
+            } else {
+              delete doublePingStates[definition.key];
+            }
+            runtimeStateChanged = true;
+          }
+
+          if (runningEntry && isStillTracked && !sentRepeatPing) {
+            await updateTrackedMiningEventPing(guildId, channel, definition, normalizedLobbyCount);
           }
         }
 
         if (runtimeStateChanged) {
-          store.setGuildRuntimeState(guildId, {
-            ...store.getGuildRuntimeState(guildId),
-            miningEvents: {
-              ...store.getGuildRuntimeState(guildId).miningEvents,
-              activeEvents: trackedEvents,
-              doublePingStates
-            }
-          });
+          updateMiningRuntimeState(guildId, { activeEvents: trackedEvents, doublePingStates });
         }
 
         await syncMiningEventsDashboard(guildId, channel, activeEntries);
@@ -525,6 +410,7 @@ function createMiningEventsService({ client, store }) {
 
   return {
     checkForMiningEvents,
+    deleteTrackedMiningEventMessages,
     sendTestMiningEventPing
   };
 }

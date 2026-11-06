@@ -1,14 +1,16 @@
+const { MessageFlags } = require('discord.js');
 const { EVENT_DEFINITIONS } = require('./eventCalendar');
+const { HOW_TO_LINK } = require('./linkedMinecraftUser');
 
 const HYPIXEL_PLAYER_URL = 'https://api.hypixel.net/v2/player';
-const REQUEST_HEADERS = { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' };
 const HYPIXEL_REQUEST_TIMEOUT_MS = 8_000;
 
 const LINK_EVENT_CHOICES = Object.fromEntries(
   EVENT_DEFINITIONS.map((definition) => [definition.key, definition.label])
 );
 
-function createLinkingFeature({ store, env, minecraft }) {
+// `linkStore` is the mod backend client; links are only stored there.
+function createLinkingFeature({ linkStore, env, minecraft }) {
   async function handleLinkCommand(interaction) {
     const userId = interaction.user.id;
     const usernamesInput = interaction.options.getString('username', false);
@@ -26,13 +28,13 @@ function createLinkingFeature({ store, env, minecraft }) {
     if (selectedActions.length > 1) {
       await interaction.reply({
         content: 'Use only one `/link` action at a time: `username`, `remove`, `event`+`enabled`, or `unlink:true`.',
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
 
     if (usernamesInput) {
-      await interaction.deferReply({ ephemeral: true });
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
       const username = parseMinecraftUsername(usernamesInput);
       if (!username) {
@@ -48,7 +50,7 @@ function createLinkingFeature({ store, env, minecraft }) {
 
       let result;
       try {
-        result = await store.linkVerifiedBridgeMinecraftAccount(
+        result = await linkStore.linkVerifiedBridgeMinecraftAccount(
           userId,
           verification.account,
           getDiscordAccountMetadata(interaction)
@@ -76,14 +78,14 @@ function createLinkingFeature({ store, env, minecraft }) {
     }
 
     if (unlink) {
-      await store.removeBridgeLinkedAccount(userId);
-      await interaction.reply({ content: 'Link removed.', ephemeral: true });
+      await linkStore.removeBridgeLinkedAccount(userId);
+      await interaction.reply({ content: 'Link removed.', flags: MessageFlags.Ephemeral });
       return;
     }
 
     if (removeInput) {
-      const result = await store.removeBridgeMinecraftUsername(userId, removeInput);
-      await interaction.reply({ content: result.ok ? `Remaining usernames: ${result.account.minecraftUsernames.join(', ') || 'none'}` : result.error, ephemeral: true });
+      const result = await linkStore.removeBridgeMinecraftUsername(userId, removeInput);
+      await interaction.reply({ content: result.ok ? `Remaining usernames: ${result.account.minecraftUsernames.join(', ') || 'none'}` : result.error, flags: MessageFlags.Ephemeral });
       return;
     }
 
@@ -91,32 +93,32 @@ function createLinkingFeature({ store, env, minecraft }) {
       if (!eventKey || enabled === null) {
         await interaction.reply({
           content: 'Set both `event` and `enabled` to toggle an event ping.',
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
         return;
       }
 
-      const account = await store.getBridgeLinkedAccount(userId);
+      const account = await linkStore.getBridgeLinkedAccount(userId);
       if (account?.requiresHypixelVerification) {
         await interaction.reply({
           content: formatLegacyLinkMessage(account),
-          ephemeral: true
+          flags: MessageFlags.Ephemeral
         });
         return;
       }
 
-      const result = await store.setBridgeEventPreference(userId, eventKey, enabled);
+      const result = await linkStore.setBridgeEventPreference(userId, eventKey, enabled);
       await interaction.reply({
         content: result.ok ? `${LINK_EVENT_CHOICES[eventKey] || eventKey} is now ${enabled ? 'enabled' : 'disabled'}.` : result.error,
-        ephemeral: true
+        flags: MessageFlags.Ephemeral
       });
       return;
     }
 
-    const account = await store.getBridgeLinkedAccount(userId);
+    const account = await linkStore.getBridgeLinkedAccount(userId);
     await interaction.reply({
       content: formatLinkStatus(account),
-      ephemeral: true
+      flags: MessageFlags.Ephemeral
     });
   }
 
@@ -140,7 +142,7 @@ function createLinkingFeature({ store, env, minecraft }) {
       if (!doesHypixelDiscordMatchUser(linkedDiscord, interaction.user)) {
         return {
           ok: false,
-          error: `${profile.name}: Hypixel has \`${linkedDiscord}\`, but your Discord is \`${formatDiscordUserForLink(interaction.user)}\`.`
+          error: `${profile.name}: Hypixel has \`${linkedDiscord}\`, but your Discord is \`${interaction.user.tag}\`.`
         };
       }
 
@@ -165,7 +167,7 @@ function createLinkingFeature({ store, env, minecraft }) {
 
     const response = await fetch(url, {
       headers: {
-        ...REQUEST_HEADERS,
+        'User-Agent': env.USER_AGENT,
         'API-Key': env.HYPIXEL_API_KEY
       },
       signal: AbortSignal.timeout(HYPIXEL_REQUEST_TIMEOUT_MS)
@@ -227,13 +229,7 @@ function normalizeDiscordUsername(value) {
 }
 
 function getDiscordUserLinkCandidates(user) {
-  return [...new Set([
-    user.username,
-    user.tag,
-    user.discriminator && user.discriminator !== '0' ? `${user.username}#${user.discriminator}` : null
-  ]
-    .map(normalizeDiscordUsername)
-    .filter(Boolean))];
+  return [...new Set([user.username, user.tag].map(normalizeDiscordUsername).filter(Boolean))];
 }
 
 function doesHypixelDiscordMatchUser(hypixelDiscord, user) {
@@ -241,17 +237,9 @@ function doesHypixelDiscordMatchUser(hypixelDiscord, user) {
   return getDiscordUserLinkCandidates(user).includes(normalizedHypixelDiscord);
 }
 
-function formatDiscordUserForLink(user) {
-  if (user.discriminator && user.discriminator !== '0') {
-    return `${user.username}#${user.discriminator}`;
-  }
-
-  return user.username || user.tag || 'unknown';
-}
-
 function formatLinkStatus(account) {
   if (!account || account.minecraftUsernames.length === 0) {
-    return 'Not linked yet. Set your Discord in Hypixel Social Media, then use `/link username:<ign>`.';
+    return `Not linked yet. To link, ${HOW_TO_LINK}.`;
   }
 
   if (account.requiresHypixelVerification) {
@@ -275,7 +263,7 @@ function formatLegacyLinkMessage(account) {
   return [
     'Your existing Minecraft link was created with the old code system and must be re-verified through Hypixel.',
     account?.minecraftUsernames?.length ? `Legacy usernames: ${account.minecraftUsernames.join(', ')}` : null,
-    `Use \`/link username:${username}\` after setting your Discord in Hypixel Social Media.`
+    `To re-verify, ${HOW_TO_LINK.replace('<ign>', username)}.`
   ].filter(Boolean).join('\n');
 }
 
