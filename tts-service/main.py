@@ -65,10 +65,13 @@ POCKET_VOICES = {
 
 
 def _piper_dir_voices() -> dict[str, Path]:
-    if not PIPER_VOICE_DIR.is_dir():
+    try:
+        models = sorted(PIPER_VOICE_DIR.glob("*.onnx")) if PIPER_VOICE_DIR.is_dir() else []
+    except OSError as error:
+        log.warning("cannot read voice dir %s: %s", PIPER_VOICE_DIR, error)
         return {}
     found = {}
-    for model in sorted(PIPER_VOICE_DIR.glob("*.onnx")):
+    for model in models:
         if model.with_name(model.name + ".json").is_file():
             found[model.stem] = model
         else:

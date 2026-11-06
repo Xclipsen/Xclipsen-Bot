@@ -47,9 +47,14 @@ def load_pronunciations(paths=PRONUNCIATION_FILES) -> dict[str, str]:
     """<word or phrase> = <spelling> lines; later files override earlier ones."""
     entries: dict[str, str] = {}
     for path in paths:
-        if not path.is_file():
+        try:
+            if not path.is_file():
+                continue
+            lines = path.read_text(encoding="utf-8").splitlines()
+        except OSError as error:
+            log.warning("cannot read pronunciation file %s: %s", path, error)
             continue
-        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+        for number, line in enumerate(lines, 1):
             line = line.strip()
             if not line or line.startswith("#"):
                 continue
