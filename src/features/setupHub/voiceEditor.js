@@ -60,7 +60,7 @@ function parseStationInput(name, url, stations = []) {
 }
 
 function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds = env.PRIVILEGED_USER_IDS || new Set(),
-  ttsClient = env.TTS_URL ? createTtsClient({ baseUrl: env.TTS_URL }) : null }) {
+  ttsClient = env.TTS_URL ? createTtsClient({ baseUrl: env.TTS_URL }) : null, onMusicChange = () => {} }) {
   const isPrivileged = userId => privilegedUserIds.has(String(userId || ''));
 
   // null when the TTS service is not configured or does not answer.
@@ -197,7 +197,10 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
   }
 
   const setTts = (guildId, changes) => store.setGuildConfig(guildId, { tts: { ...store.getGuildConfig(guildId).tts, ...changes } });
-  const setMusic = (guildId, changes) => store.setGuildConfig(guildId, { music: { ...store.getGuildConfig(guildId).music, ...changes } });
+  const setMusic = (guildId, changes) => {
+    store.setGuildConfig(guildId, { music: { ...store.getGuildConfig(guildId).music, ...changes } });
+    onMusicChange(guildId);
+  };
 
   // Moving the control channel removes the old panel so the music feature posts a fresh one in the new channel.
   async function moveControlChannel(guild, channelId) {

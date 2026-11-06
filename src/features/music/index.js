@@ -458,8 +458,16 @@ function createMusicFeature({
     return true;
   }
 
+  // Called after /setup changed the music config: apply the volume live and rebuild the panel
+  // (a new control channel has no panel message yet).
+  function applyConfig(guildId) {
+    states.get(guildId)?.resource?.volume?.setVolume(getMusicConfig(guildId).volume / 100);
+    schedulePanel(guildId);
+  }
+
   return {
     ensureControlChannel,
+    applyConfig,
     refreshPanel,
     handleMusicCommand,
     handleStationAutocomplete,
