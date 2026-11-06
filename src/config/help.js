@@ -71,6 +71,11 @@ const helpSections = [
         example: '/tts join'
       },
       {
+        command: '/tts whisper | sleepy | drunk | angry text:<text>',
+        description: 'Read one text aloud in a Thorsten mood voice; `/tts say` also takes an optional voice.',
+        example: '/tts whisper text:Psst, ich bin hier'
+      },
+      {
         command: '/tts voice voice:<name>',
         description: 'Choose the TTS voice for this server.',
         example: '/tts voice voice:thorsten',

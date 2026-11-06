@@ -5,6 +5,13 @@ const { createTtsClient } = require('./ttsClient');
 const { toSpeakerName, toSpeechText } = require('./speechText');
 
 const CONNECT_TIMEOUT_MS = 20_000;
+// Mood subcommands: one Thorsten speaker each, announced with a matching verb.
+const MOOD_SUBCOMMANDS = {
+  whisper: { voice: 'thorsten_whisper', verb: 'flüstert' },
+  sleepy: { voice: 'thorsten_sleepy', verb: 'murmelt verschlafen' },
+  drunk: { voice: 'thorsten_drunk', verb: 'lallt' },
+  angry: { voice: 'thorsten_angry', verb: 'schreit' }
+};
 const RECONNECT_TIMEOUT_MS = 5_000;
 
 function normalizeName(value) {
@@ -112,16 +119,17 @@ function createTtsFeature({
   }
 
   // Synthesis starts right away so the next line is ready when the current one ends.
-  function enqueue(session, member, text) {
+  // A mood verb is always announced; plain text only when the speaker changes.
+  function enqueue(session, member, text, { voice: voiceId = null, verb = null } = {}) {
     if (session.queue.length >= env.TTS_MAX_QUEUE) {
       return false;
     }
 
     const speakerName = toSpeakerName(member.displayName) || 'Jemand';
-    const spoken = session.lastSpeakerId === member.id ? text : `${speakerName} sagt: ${text}`;
+    const spoken = verb || session.lastSpeakerId !== member.id ? `${speakerName} ${verb || 'sagt'}: ${text}` : text;
     session.lastSpeakerId = member.id;
 
-    const audio = ttsClient.synthesize(spoken, getTtsConfig(session.guildId).voice);
+    const audio = ttsClient.synthesize(spoken, voiceId || getTtsConfig(session.guildId).voice);
     audio.catch(() => {});
     session.queue.push({ audio });
     playNext(session);
@@ -234,7 +242,7 @@ function createTtsFeature({
     await interaction.reply({ content: '👋 Left the voice channel.', allowedMentions: { parse: [] } });
   }
 
-  async function handleSay(interaction, member) {
+  async function handleSay(interaction, member, { voice: voiceId = null, verb = null } = {}) {
     const session = sessions.get(interaction.guildId);
     if (!session) {
       await replyEphemeral(interaction, 'Use `/tts join` first.');
@@ -252,7 +260,7 @@ function createTtsFeature({
       return;
     }
 
-    if (!enqueue(session, member, text)) {
+    if (!enqueue(session, member, text, { voice: voiceId || interaction.options.getString('voice'), verb })) {
       await replyEphemeral(interaction, 'The queue is full, please wait a moment.');
       return;
     }
@@ -305,6 +313,7 @@ function createTtsFeature({
     if (subcommand === 'join') await handleJoin(interaction, member);
     else if (subcommand === 'leave') await handleLeave(interaction, member);
     else if (subcommand === 'say') await handleSay(interaction, member);
+    else if (Object.hasOwn(MOOD_SUBCOMMANDS, subcommand)) await handleSay(interaction, member, MOOD_SUBCOMMANDS[subcommand]);
   }
 
   async function handleVoiceAutocomplete(interaction) {

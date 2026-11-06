@@ -17,6 +17,8 @@ RUN pip install -r requirements.txt
 
 ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx /opt/piper/
 ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx.json /opt/piper/
 
 RUN useradd --create-home --uid 10001 tts \
     && mkdir -p /models/hf /voices \

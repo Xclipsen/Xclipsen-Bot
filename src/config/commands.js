@@ -243,6 +243,43 @@ const ttsCommand = new SlashCommandBuilder()
       .setName('text')
       .setDescription('Text to read aloud')
       .setRequired(true)
+      .setMaxLength(500))
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice for this text only')
+      .setRequired(false)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('whisper')
+    .setDescription('Whisper a text.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('sleepy')
+    .setDescription('Read a text sleepily.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('drunk')
+    .setDescription('Read a text like a drunk.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('angry')
+    .setDescription('Shout a text angrily.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
       .setMaxLength(500)))
   .addSubcommand((subcommand) => subcommand
     .setName('voice')

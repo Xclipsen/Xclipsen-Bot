@@ -33,32 +33,40 @@ class Engine:
         return {"id": self.id, "label": self.label, "engine": self.engine}
 
 
+def load_piper_voice(model_path: Path, threads: int):
+    import onnxruntime
+    from piper import PiperVoice
+
+    voice = PiperVoice.load(model_path)
+    # PiperVoice.load uses default SessionOptions (one thread per core);
+    # rebuild the session with a thread limit.
+    opts = onnxruntime.SessionOptions()
+    opts.intra_op_num_threads = threads
+    opts.inter_op_num_threads = 1
+    voice.session = onnxruntime.InferenceSession(
+        str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
+    )
+    log.info("loaded piper model %s", model_path)
+    return voice
+
+
 class PiperEngine(Engine):
-    """Piper ONNX voice, loaded eagerly."""
+    """Piper ONNX voice, loaded eagerly. Speakers of one multi-speaker model share its voice object."""
 
     engine = "piper"
 
-    def __init__(self, voice_id: str, model_path: Path, label: str, threads: int):
-        import onnxruntime
-        from piper import PiperVoice
-
+    def __init__(self, voice_id: str, voice, label: str, speaker_id: int | None = None):
         self.id = voice_id
         self.label = label
-        self.voice = PiperVoice.load(model_path)
-        # PiperVoice.load uses default SessionOptions (one thread per core);
-        # rebuild the session with a thread limit.
-        opts = onnxruntime.SessionOptions()
-        opts.intra_op_num_threads = threads
-        opts.inter_op_num_threads = 1
-        self.voice.session = onnxruntime.InferenceSession(
-            str(model_path), sess_options=opts, providers=["CPUExecutionProvider"]
-        )
-        log.info("loaded piper voice %s from %s", voice_id, model_path)
+        self.voice = voice
+        self.speaker_id = speaker_id
 
     def synthesize(self, text: str) -> bytes:
+        from piper import SynthesisConfig
+
         buf = io.BytesIO()
         with wave.open(buf, "wb") as wav:
-            self.voice.synthesize_wav(text, wav)
+            self.voice.synthesize_wav(text, wav, syn_config=SynthesisConfig(speaker_id=self.speaker_id))
         return buf.getvalue()
 
 

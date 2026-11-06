@@ -260,3 +260,19 @@ test('/tts voice stores a known voice for the server', async () => {
   assert.match(unknown.replies[0].content, /Unknown voice/);
   assert.equal(synthesized.length, 0);
 });
+
+test('/tts whisper uses the whisper voice and always announces the verb', async () => {
+  const { feature, synthesized } = createFeature();
+  const owner = createMember('owner', { roles: ['tts-role'] });
+  await feature.handleTtsCommand(createInteraction(owner, 'join'), accessControl);
+
+  await feature.handleTtsCommand(createInteraction(owner, 'say', { text: 'Hallo' }), accessControl);
+  await feature.handleTtsCommand(createInteraction(owner, 'whisper', { text: 'Psst' }), accessControl);
+  await feature.handleTtsCommand(createInteraction(owner, 'say', { text: 'Normal', voice: 'thorsten_sleepy' }), accessControl);
+
+  assert.deepEqual(synthesized, [
+    { text: 'User owner sagt: Hallo', voiceId: null },
+    { text: 'User owner flüstert: Psst', voiceId: 'thorsten_whisper' },
+    { text: 'Normal', voiceId: 'thorsten_sleepy' }
+  ]);
+});
