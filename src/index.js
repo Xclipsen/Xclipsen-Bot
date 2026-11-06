@@ -40,6 +40,7 @@ const { createHarvestFeastFeature } = require('./features/harvestFeast');
 const { createPagedLists } = require('./features/pagedLists');
 const { createSetupEditor } = require('./features/setupHub/editor');
 const { createReactionEditor } = require('./features/setupHub/reactionEditor');
+const { createVoiceEditor } = require('./features/setupHub/voiceEditor');
 
 process.on('unhandledRejection', (reason) => {
   console.error('Unhandled promise rejection:', reason);
@@ -98,6 +99,7 @@ const setupHub = createSetupHub({
 });
 const setupEditor = createSetupEditor({ store, accessControl, setupHub, mayorAlerts, modUpdates, miningEvents, pagedLists, weather });
 const reactionEditor = createReactionEditor({ store, reactionRoles, accessControl, setupEditor, setupHub });
+const voiceEditor = createVoiceEditor({ store, accessControl, env });
 
 const catacombs = createCatacombsFeature({ env, minecraft, linkStore: modBackend, hypixelApi, appEmojis });
 const itemEmoji = createItemEmojiFeature({ itemEmojis });
@@ -349,6 +351,7 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (await pagedLists.handle(interaction)) return;
     if (await shitterList.handlePagination(interaction)) return;
     if (await modUpdates.handleViewAllReleasesButton(interaction)) return;
+    if (await voiceEditor.handle(interaction)) return;
     if (await setupEditor.handle(interaction)) return;
 
     if (interaction.isAutocomplete() && interaction.commandName === commandNames.tts) {

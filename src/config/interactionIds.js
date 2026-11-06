@@ -1,4 +1,4 @@
-// Section buttons use the editor ids (`admin:<action>:<section>:<field>`, see setupHub/editor.js);
+// Section buttons use the editor ids (`admin:<action>:<section>:<field>`, see setupHub/editor.js and setupHub/voiceEditor.js);
 // retired setup-view-* ids are still routed there for panels that are open in Discord.
 const interactionIds = {
   SETUP_VIEW_HOME_ID: 'setup-view-home',

@@ -90,6 +90,11 @@ function createSetupHubRenderers({ store, interactionIds }) {
           inline: true
         },
         {
+          name: 'Voice',
+          value: `TTS role: ${config.tts.roleId ? `<@&${config.tts.roleId}>` : 'Not selected'}\nServer voice: ${config.tts.voice ? `\`${config.tts.voice}\`` : 'Default'}\nMusic: ${channel(config.music.controlChannelId)}\nVolume: ${config.music.volume}% · Stations: ${config.music.stations.length}`,
+          inline: true
+        },
+        {
           name: nextSteps.length ? 'Next steps' : 'Manage your server',
           value: nextSteps.length ? nextSteps.map((step, index) => `${index + 1}. ${step}`).join('\n') : 'Choose a section to adjust settings, or open Player Tools for the command guide.'
         }
@@ -141,7 +146,8 @@ function createSetupHubRenderers({ store, interactionIds }) {
       new ActionRowBuilder().addComponents(
         button('admin:open:mods:channel', 'Mod Updates'),
         button(REACTION_EDITOR_OPEN_ID, 'Reaction Roles'),
-        button('admin:open:shitter:allowedRoleIds', 'Shitter List')
+        button('admin:open:shitter:allowedRoleIds', 'Shitter List'),
+        button('admin:open:voice:role', 'Voice')
       ),
       new ActionRowBuilder().addComponents(
         button('admin:open:access:userIds', 'Bot Access'),
