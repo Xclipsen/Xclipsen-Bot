@@ -101,7 +101,7 @@ const setupHub = createSetupHub({
 const setupEditor = createSetupEditor({ store, accessControl, setupHub, mayorAlerts, modUpdates, miningEvents, pagedLists, weather });
 const reactionEditor = createReactionEditor({ store, reactionRoles, accessControl, setupEditor, setupHub });
 // Music is created further down; the callback only runs on interactions, after start-up.
-const voiceEditor = createVoiceEditor({ store, accessControl, env, onMusicChange: (guildId) => music.applyConfig(guildId) });
+const voiceEditor = createVoiceEditor({ store, accessControl, env, onMusicChange: (guildId, previous) => music.applyConfig(guildId, previous).catch((error) => console.error('Music config update failed:', error)) });
 
 const catacombs = createCatacombsFeature({ env, minecraft, linkStore: modBackend, hypixelApi, appEmojis });
 const itemEmoji = createItemEmojiFeature({ itemEmojis });

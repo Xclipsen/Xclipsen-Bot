@@ -147,6 +147,11 @@ function createTextChannel(id, name = 'voice') {
     sent: [],
     edits: [],
     deleted: [],
+    overwrites: new Map(),
+    permissionOverwrites: {
+      edit: async (id, options) => { channel.overwrites.set(id, { ...channel.overwrites.get(id), ...options }); },
+      delete: async (id) => { channel.overwrites.delete(id); }
+    },
     async send(payload) {
       const message = {
         id: `m${nextId++}`,
@@ -163,11 +168,25 @@ function createTextChannel(id, name = 'voice') {
   return channel;
 }
 
-function createGuild({ channels = [createTextChannel(CONTROL_CHANNEL_ID)], canCreate = true } = {}) {
+function createGuild({ channels = [createTextChannel(CONTROL_CHANNEL_ID)], canCreate = true, roles = [] } = {}) {
   const cache = new Collection(channels.map((channel) => [channel.id, channel]));
+  const roleCache = new Collection([['g1', { id: 'g1', name: '@everyone' }], ...roles.map((role) => [role.id, role])]);
   const guild = {
     id: 'g1',
     name: 'Guild',
+    roles: {
+      cache: roleCache,
+      everyone: roleCache.get('g1'),
+      createdRoles: [],
+      fetch: async (id) => roleCache.get(id) || null,
+      async create(options) {
+        if (!canCreate) throw new Error('Missing Permissions');
+        const role = { id: 'voice-role', name: options.name };
+        roleCache.set(role.id, role);
+        guild.roles.createdRoles.push(options);
+        return role;
+      }
+    },
     voiceAdapterCreator: () => {},
     members: { me: {}, fetch: async () => null },
     channels: {
@@ -186,7 +205,7 @@ function createGuild({ channels = [createTextChannel(CONTROL_CHANNEL_ID)], canCr
   return guild;
 }
 
-const env = { MUSIC_CHANNEL_NAME: 'voice', YTDLP_PATH: 'yt-dlp', PRIVILEGED_USER_IDS: new Set(['god']) };
+const env = { MUSIC_CHANNEL_NAME: 'voice', MUSIC_ROLE_NAME: 'Voice', YTDLP_PATH: 'yt-dlp', PRIVILEGED_USER_IDS: new Set(['god']) };
 
 function createMember(id, { channelId = 'vc1', manageGuild = false } = {}) {
   return {
@@ -739,4 +758,29 @@ test('without a voice session only server managers may change the stored volume'
     assert.match(interaction.lastReply().content, /80%/);
   }
   assert.equal(store.guilds.g1.music.volume, 80);
+});
+
+test('the music channel is only visible to the Voice role, which is created once', async () => {
+  const created = createFeature({ store: createFakeStore({ controlChannelId: null }), guild: createGuild({ channels: [] }) });
+  await created.feature.ensureControlChannel(created.guild);
+
+  assert.equal(created.guild.roles.createdRoles[0].name, 'Voice');
+  const overwrites = created.guild.channels.created[0].permissionOverwrites;
+  assert.deepEqual(overwrites.find((entry) => entry.id === 'g1').deny, ['ViewChannel']);
+  assert.ok(overwrites.find((entry) => entry.id === 'voice-role').allow.includes('ViewChannel'));
+  assert.ok(overwrites.find((entry) => entry.id === 'bot').allow.includes('ViewChannel'));
+  assert.equal(created.store.guilds.g1.music.roleId, 'voice-role');
+
+  // An existing bot channel is limited once; an admin-picked channel with another name never is.
+  const existing = createTextChannel('old-voice', 'voice');
+  const migrated = createFeature({ store: createFakeStore({ controlChannelId: 'old-voice', autoSetupDone: true }), guild: createGuild({ channels: [existing] }) });
+  await migrated.feature.ensureControlChannel(migrated.guild);
+  assert.equal(existing.overwrites.get('g1').ViewChannel, false);
+  assert.equal(existing.overwrites.get('voice-role').ViewChannel, true);
+  assert.equal(migrated.store.guilds.g1.music.accessSetupDone, true);
+
+  const general = createTextChannel('general', 'general');
+  const picked = createFeature({ store: createFakeStore({ controlChannelId: 'general', autoSetupDone: true }), guild: createGuild({ channels: [general] }) });
+  await picked.feature.ensureControlChannel(picked.guild);
+  assert.equal(general.overwrites.size, 0);
 });

@@ -76,6 +76,11 @@ function normalizeGuildConfig(config) {
       panelMessageId: config?.music?.panelMessageId || null,
       // Set once the control channel was auto-created/found; afterwards a cleared channel stays cleared.
       autoSetupDone: config?.music?.autoSetupDone === true,
+      // Role that sees the control channel; created once like the TTS role (roleSetupDone).
+      roleId: config?.music?.roleId || null,
+      roleSetupDone: config?.music?.roleSetupDone === true,
+      // The bot hid its own control channel from everyone except roleId (done once; admins may change it later).
+      accessSetupDone: config?.music?.accessSetupDone === true,
       stations: Array.isArray(config?.music?.stations)
         ? config.music.stations
           .filter((station) => station && typeof station.name === 'string' && /^https?:\/\//i.test(String(station.url || '')))

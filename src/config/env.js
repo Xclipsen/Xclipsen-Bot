@@ -31,6 +31,8 @@ const env = {
   TTS_MAX_CHARS: Math.max(20, Number.parseInt(process.env.TTS_MAX_CHARS || '300', 10)),
   // Text channel with the music control panel; created when missing (needs Manage Channels).
   MUSIC_CHANNEL_NAME: process.env.MUSIC_CHANNEL_NAME || 'voice',
+  // Only members with this role see the music channel; the bot creates it once (needs Manage Roles).
+  MUSIC_ROLE_NAME: process.env.MUSIC_ROLE_NAME || 'Voice',
   YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
   USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,

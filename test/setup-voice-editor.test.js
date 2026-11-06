@@ -54,7 +54,7 @@ test('the voice section renders TTS and music summaries with a setting menu and 
   assert.equal(embed.title, 'Admin • Voice (TTS & Music)');
   assert.match(embed.fields.find(x => x.name === 'TTS').value, new RegExp(`<@&${ROLE}>[\\s\\S]*\`thorsten\``));
   assert.match(embed.fields.find(x => x.name === 'Music').value, new RegExp(`<#${CHANNEL}>[\\s\\S]*40%[\\s\\S]*0/25`));
-  assert.deepEqual(rows[0].components[0].options.map(o => o.value), ['role', 'voice', 'uservoices', 'follow', 'channel', 'volume', 'stations']);
+  assert.deepEqual(rows[0].components[0].options.map(o => o.value), ['role', 'voice', 'uservoices', 'follow', 'channel', 'musicrole', 'volume', 'stations']);
   assert.equal(rows[1].components[0].type, 6, 'role select');
   assert.deepEqual(rows[1].components[0].default_values, [{ id: ROLE, type: 'role' }]);
   assert.equal(rows.at(-1).components[0].custom_id, interactionIds.SETUP_VIEW_HOME_ID);

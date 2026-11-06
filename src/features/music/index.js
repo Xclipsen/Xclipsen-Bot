@@ -215,7 +215,71 @@ function createMusicFeature({
   // Uses the stored channel; otherwise sets one up once per server (one named MUSIC_CHANNEL_NAME,
   // else a new one) and then posts the panel. After that first setup a channel that admins cleared
   // or deleted stays unset, and /music says so.
+  // Creates or finds the Voice role once; afterwards a role an admin cleared or deleted stays gone.
+  async function ensureVoiceRole(guild) {
+    const config = getMusicConfig(guild.id);
+    let role = config.roleId
+      ? guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null)
+      : null;
+    if (!role && config.roleSetupDone) return null;
+
+    if (!role) {
+      role = guild.roles.cache.find((entry) => normalizeName(entry.name) === normalizeName(env.MUSIC_ROLE_NAME)) || null;
+    }
+    if (!role) {
+      try {
+        role = await guild.roles.create({
+          name: env.MUSIC_ROLE_NAME,
+          permissions: [],
+          mentionable: false,
+          reason: 'Members with this role see the music channel.'
+        });
+        console.log(`Created Voice role ${role.id} in guild ${guild.id} (${guild.name})`);
+      } catch (error) {
+        console.error(`Could not create the Voice role in guild ${guild.id} (${guild.name}); the bot needs Manage Roles:`, error.message);
+        return null;
+      }
+    }
+
+    updateMusicConfig(guild.id, { roleId: role.id, roleSetupDone: true });
+    return role;
+  }
+
+  function controlChannelOverwrites(guild, roleId) {
+    return [
+      { id: guild.roles.everyone.id, deny: ['ViewChannel'] },
+      ...(roleId ? [{ id: roleId, allow: ['ViewChannel', 'SendMessages', 'ReadMessageHistory', 'UseApplicationCommands'] }] : []),
+      { id: client.user.id, allow: ['ViewChannel', 'SendMessages', 'EmbedLinks', 'ReadMessageHistory', 'ManageMessages'] }
+    ];
+  }
+
+  // Only the bot's own "voice" channel is ever hidden; a channel an admin picked keeps its permissions.
+  function isManagedChannel(channel) {
+    return normalizeName(channel?.name) === normalizeName(env.MUSIC_CHANNEL_NAME);
+  }
+
+  async function applyChannelAccess(guild, channel, previousRoleId = null) {
+    if (!isManagedChannel(channel) || !channel.permissionOverwrites) return;
+    const { roleId } = getMusicConfig(guild.id);
+    try {
+      for (const overwrite of controlChannelOverwrites(guild, roleId)) {
+        const options = Object.fromEntries([
+          ...(overwrite.allow || []).map((name) => [name, true]),
+          ...(overwrite.deny || []).map((name) => [name, false])
+        ]);
+        await channel.permissionOverwrites.edit(overwrite.id, options, { reason: 'Music channel is only for the Voice role.' });
+      }
+      if (previousRoleId && previousRoleId !== roleId) {
+        await channel.permissionOverwrites.delete(previousRoleId, 'Voice role changed.').catch(() => {});
+      }
+      updateMusicConfig(guild.id, { accessSetupDone: true });
+    } catch (error) {
+      console.error(`Could not limit the music channel to the Voice role in guild ${guild.id} (${guild.name}); the bot needs Manage Channels/Roles:`, error.message);
+    }
+  }
+
   async function ensureControlChannel(guild) {
+    const role = await ensureVoiceRole(guild);
     const config = getMusicConfig(guild.id);
     let channel;
     try {
@@ -226,6 +290,7 @@ function createMusicFeature({
     }
     if (channel) {
       if (!getMusicConfig(guild.id).autoSetupDone) updateMusicConfig(guild.id, { autoSetupDone: true });
+      if (!getMusicConfig(guild.id).accessSetupDone) await applyChannelAccess(guild, channel);
       await refreshPanel(guild.id);
       return channel;
     }
@@ -239,6 +304,7 @@ function createMusicFeature({
           name: env.MUSIC_CHANNEL_NAME,
           type: ChannelType.GuildText,
           topic: 'Music and radio: use /music here. The panel below shows what is playing.',
+          permissionOverwrites: controlChannelOverwrites(guild, role?.id || null),
           reason: 'Control channel for the music and radio player (/music).'
         });
         console.log(`Created music channel ${channel.id} in guild ${guild.id} (${guild.name})`);
@@ -259,6 +325,7 @@ function createMusicFeature({
       autoSetupDone: true,
       ...(channel.id !== latest.controlChannelId ? { controlChannelId: channel.id, panelMessageId: null } : {})
     });
+    if (!getMusicConfig(guild.id).accessSetupDone) await applyChannelAccess(guild, channel);
     await refreshPanel(guild.id);
     return channel;
   }
@@ -544,9 +611,16 @@ function createMusicFeature({
 
   // Called after /setup changed the music config: apply the volume live and rebuild the panel
   // (a new control channel has no panel message yet).
-  function applyConfig(guildId) {
-    states.get(guildId)?.resource?.volume?.setVolume(getMusicConfig(guildId).volume / 100);
+  // `previous` is the music config before the change; a new Voice role is applied to the channel.
+  async function applyConfig(guildId, previous = null) {
+    const config = getMusicConfig(guildId);
+    states.get(guildId)?.resource?.volume?.setVolume(config.volume / 100);
     schedulePanel(guildId);
+    if (previous && previous.roleId !== config.roleId && config.controlChannelId) {
+      const guild = client.guilds.cache.get(guildId);
+      const channel = guild ? await fetchChannel(guild, config.controlChannelId).catch(() => null) : null;
+      if (channel) await applyChannelAccess(guild, channel, previous.roleId);
+    }
   }
 
   return {

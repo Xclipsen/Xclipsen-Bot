@@ -14,6 +14,7 @@ const FIELDS = [
   ['uservoices', 'Personal voices'],
   ['follow', 'Follow list'],
   ['channel', 'Music control channel'],
+  ['musicrole', 'Voice role (sees the music channel)'],
   ['volume', 'Playback volume'],
   ['stations', 'Radio stations']
 ];
@@ -106,6 +107,7 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
     if (field === 'uservoices') detail = `${fitLines(userVoiceLines, 'Nobody has a personal voice.')}\n\n${userId ? `Editing <@${userId}>: pick a voice below, or "Server voice" to reset.` : 'Choose a member to set or reset their voice.'}${voices ? '' : `\n${unavailable}`}`;
     if (field === 'follow') detail = `${fitLines(tts.followUserIds.map(user => `<@${user}>`), 'Nobody is followed.')}\n\nEvery message from followed users is read aloud while the bot is in a voice channel.${privileged ? '' : '\n🔒 Read-only: only the bot owners can change the follow list.'}`;
     if (field === 'channel') detail = `${music.controlChannelId ? `<#${music.controlChannelId}>` : 'Not selected'}\nThe music control panel is posted in this text channel.`;
+    if (field === 'musicrole') detail = `${music.roleId ? `<@&${music.roleId}>` : 'Not selected'}\nOnly members with this role see the bot's own music channel. The bot creates or reuses this role once when it starts.`;
     if (field === 'volume') detail = `${'▰'.repeat(Math.round(music.volume / 10))}${'▱'.repeat(10 - Math.round(music.volume / 10))} **${music.volume}%**\nApplies to music and radio playback.`;
     if (field === 'stations') detail = fitLines(music.stations.map((station, index) => `${index + 1}. **${station.name}** — ${station.url}`), 'No custom stations yet. Use Add station to add a stream URL.');
 
@@ -123,6 +125,11 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
     if (field === 'role') {
       const picker = new RoleSelectMenuBuilder().setCustomId(id('save', field)).setPlaceholder('Choose the TTS role').setMinValues(0).setMaxValues(1);
       if (tts.roleId) picker.setDefaultRoles(tts.roleId);
+      rows.push(row(picker));
+    }
+    if (field === 'musicrole') {
+      const picker = new RoleSelectMenuBuilder().setCustomId(id('save', field)).setPlaceholder('Choose the Voice role').setMinValues(0).setMaxValues(1);
+      if (music.roleId) picker.setDefaultRoles(music.roleId);
       rows.push(row(picker));
     }
     if (field === 'voice') {
@@ -201,8 +208,9 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
 
   const setTts = (guildId, changes) => store.setGuildConfig(guildId, { tts: { ...store.getGuildConfig(guildId).tts, ...changes } });
   const setMusic = (guildId, changes) => {
-    store.setGuildConfig(guildId, { music: { ...store.getGuildConfig(guildId).music, ...changes } });
-    onMusicChange(guildId);
+    const previous = store.getGuildConfig(guildId).music;
+    store.setGuildConfig(guildId, { music: { ...previous, ...changes } });
+    onMusicChange(guildId, previous);
   };
 
   // Moving the control channel removes the old panel so the music feature posts a fresh one in the new channel.
@@ -258,6 +266,11 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
         const [roleId = null] = selection(interaction, 1);
         if (roleId) await validateRole(guild, roleId);
         setTts(guildId, { roleId });
+        note = 'Saved.';
+      } else if (action === 'save' && field === 'musicrole') {
+        const [roleId = null] = selection(interaction, 1);
+        if (roleId) await validateRole(guild, roleId);
+        setMusic(guildId, { roleId });
         note = 'Saved.';
       } else if (action === 'save' && field === 'channel') {
         const [channelId = null] = selection(interaction, 1);
