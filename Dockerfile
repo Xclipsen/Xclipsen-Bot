@@ -30,7 +30,9 @@ COPY . .
 # Run as the image's unprivileged node user (uid 1000, like the owner of the host's data/ directory).
 # The app files stay root-owned; only data/ and the home directory (yt-dlp's cache) are writable.
 ENV HOME=/home/node XDG_CACHE_HOME=/home/node/.cache
-RUN mkdir -p /app/data /home/node/.cache && chown node:node /app/data /home/node/.cache
+# Checkouts may carry 0600 files; the app runs as node, so everything must be world-readable.
+RUN chmod -R a+rX /app \
+  && mkdir -p /app/data /home/node/.cache && chown node:node /app/data /home/node/.cache
 USER node
 
 CMD ["npm", "start"]
