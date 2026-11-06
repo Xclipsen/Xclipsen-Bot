@@ -36,10 +36,10 @@ def test_range_dash_is_not_a_minus():
     [
         ("gg", "dschi dschi"),
         ("GG ez", "dschi dschi iesi"),
-        ("bin afk", "bin a f k"),
+        ("bin afk", "bin a ef ka"),
         ("brb", "bin gleich zurück"),
         ("idk", "keine Ahnung"),
-        ("wtf", "w t f"),
+        ("wtf", "we te ef"),
         ("k", "okay"),
         ("ok", "okay"),
         ("np", "kein Problem"),
@@ -126,3 +126,32 @@ def test_english_voices_get_english_numbers_and_no_spelling_list():
 def test_abbreviations_are_written_out_and_pronounced():
     assert normalize("vllt hab ich nen zweiten acc, kp") == "vielleicht hab ich nen zweiten äkaunt, kein Plan"
     assert normalize("gl hf") == "gud lack häw fann"
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("500k", "fünfhundert k"),
+        ("1m", "eine Million"),
+        ("2.5b", "zwei Komma fünf Milliarden"),
+        ("für 1,5m verkauft", "für eins Komma fünf Millionen verkauft"),
+        ("Ich bin 5 min weg", "Ich bin fünf minuten weg"),
+    ],
+)
+def test_coin_amounts(text, expected):
+    assert normalize(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("gg m7 und f7", "dschi dschi master mohd sieben und flohr sieben"),
+        ("hotm7 fertig", "haart of de mauntn sieben fertig"),
+        ("64x enchanted", "vierundsechzig mal entschäntet"),
+        ("wtb aotv", "wont to bai äspekt of de weud"),
+        # German words with English twins stay untouched outside the listed phrases.
+        ("Die nächste Phase war privat, Chance auf Mode", "Die nächste Phase war privat, Chance auf Mode"),
+    ],
+)
+def test_skyblock_terms(text, expected):
+    assert normalize(text) == expected

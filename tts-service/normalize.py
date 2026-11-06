@@ -108,6 +108,14 @@ SYMBOLS_EN: dict[str, str] = {
 # Words for the decimal separator per language.
 DECIMAL_WORD = {"de": "Komma", "en": "point"}
 
+def _amount(match: re.Match[str], lang: str) -> str:
+    value, unit = match.group(1), match.group(2).lower()
+    singular, plural = AMOUNT_UNITS[lang][unit]
+    if value == "1" and unit != "k":
+        return f" {'eine' if lang == 'de' else 'one'} {singular} "
+    return f" {value} {plural} "
+
+
 # Integers with digits read as one number up to this length; longer runs
 # (IDs, phone numbers, keyboard mashing) are read digit by digit.
 MAX_NUMBER_DIGITS = 12
@@ -115,7 +123,17 @@ MAX_NUMBER_DIGITS = 12
 _REPEAT_RE = re.compile(r"(\D)\1{3,}")
 _XD_RE = re.compile(r"\bx+d+\b", re.IGNORECASE)
 _LOL_RE = re.compile(r"\blo+l+\b", re.IGNORECASE)
-_WORD_RE = re.compile(r"\b[^\W\d_]+\b")
+# Letters and digits, so abbreviations like "f7" or "m7" match as one token.
+_WORD_RE = re.compile(r"\b[^\W_]+\b")
+# Coin amounts as SkyBlock chat writes them: 500k, 1m, 2.5b, 1,5m.
+_AMOUNT_RE = re.compile(r"(?<![\w.,])(\d+(?:[.,]\d+)?)\s?([kmb])\b", re.IGNORECASE)
+# Stack counts: 64x or x64.
+_MULTIPLIER_RE = re.compile(r"\b(?:(\d+)x|x(\d+))\b", re.IGNORECASE)
+MULTIPLIER_WORD = {"de": "mal", "en": "times"}
+AMOUNT_UNITS = {
+    "de": {"k": ("k", "k"), "m": ("Million", "Millionen"), "b": ("Milliarde", "Milliarden")},
+    "en": {"k": ("k", "k"), "m": ("million", "million"), "b": ("billion", "billion")},
+}
 # 1.000.000 style thousands separators (German).
 _THOUSANDS_RE = re.compile(r"(?<![\d.,])\d{1,3}(?:\.\d{3})+(?![\d,]|\.\d)")
 # Optional minus, integer part, optional decimal part ("3,5" or "3.5").
@@ -167,6 +185,9 @@ def normalize(text: str, language: str = "de") -> str:
     text = _XD_RE.sub(" ex dee " if lang == "en" else " iks de ", text)
     text = _LOL_RE.sub("lol", text)
     text = _WORD_RE.sub(lambda m: abbreviations.get(m.group(0).lower(), m.group(0)), text)
+    # After the abbreviations, so the "k" of "500k" is not read as "okay".
+    text = _AMOUNT_RE.sub(lambda m: _amount(m, lang), text)
+    text = _MULTIPLIER_RE.sub(lambda m: f" {m.group(1) or m.group(2)} {MULTIPLIER_WORD[lang]} ", text)
     # The spelling list makes German voices say English words; English voices say them anyway.
     if lang == "de" and _PRONUNCIATION_RE is not None:
         text = _PRONUNCIATION_RE.sub(_pronounce, text)
