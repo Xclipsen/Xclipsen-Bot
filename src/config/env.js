@@ -29,6 +29,9 @@ const env = {
   TTS_ROLE_NAME: process.env.TTS_ROLE_NAME || 'TTS',
   TTS_MAX_QUEUE: Math.max(1, Number.parseInt(process.env.TTS_MAX_QUEUE || '10', 10)),
   TTS_MAX_CHARS: Math.max(20, Number.parseInt(process.env.TTS_MAX_CHARS || '300', 10)),
+  // Text channel with the music control panel; created when missing (needs Manage Channels).
+  MUSIC_CHANNEL_NAME: process.env.MUSIC_CHANNEL_NAME || 'voice',
+  YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
   USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,

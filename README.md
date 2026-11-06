@@ -33,6 +33,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link and manage event pings for the Minecraft mod.
 - Includes `/gif` to convert an uploaded image into a GIF.
 - Includes `/tts` to read messages aloud in a voice channel with a local text-to-speech service (no cloud API).
+- Includes `/music` to play YouTube videos and lofi / chill radio stations in a voice channel, controlled from a `#voice` channel with a live control panel.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
 - Persists booth state, tracked message IDs, and per-user farming stats in `data/state.json`.
 - Stores server configuration in `data/config.json`.
@@ -70,6 +71,8 @@ All variables are read in `src/config/env.js`; `.env.example` is a template.
 - `TTS_URL` - base URL of the text-to-speech service; set by `docker-compose.yml`, `/tts` is disabled without it
 - `TTS_ROLE_NAME` - role that may use `/tts`, created by the bot when missing (default `TTS`)
 - `TTS_MAX_QUEUE` / `TTS_MAX_CHARS` - queued lines per server and characters read per message (defaults `10` / `300`)
+- `MUSIC_CHANNEL_NAME` - text channel for `/music` and its control panel, created by the bot when missing (default `voice`)
+- `YTDLP_PATH` - path to the yt-dlp binary used by `/music play` (default `yt-dlp`; the Docker image ships it)
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
@@ -231,6 +234,16 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 - `/tts say text:<text>` reads one text aloud; `/tts voice voice:<name>` (admins) picks the server voice.
 - Speech comes from `tts-service/`, a separate container running Piper (`thorsten`, default) and Kyutai Pocket TTS (`juergen`) on the CPU. Custom Piper voices go into `tts-voices/` as `<id>.onnx` + `<id>.onnx.json`.
 
+## Music and Radio
+
+- On start the bot makes sure every server has a `#voice` text channel (`MUSIC_CHANNEL_NAME`; it reuses the stored channel or one with that name, else creates it, which needs Manage Channels). It keeps one control panel message there: now playing (title, source, requester, length or live), queue, volume, current radio station, an overview of the `/music` and `/tts` commands, buttons for pause/resume, skip, stop and volume -10/+10, and a radio station picker. The panel updates itself and is posted again if someone deletes it.
+- `/music` only works in that channel. Anyone can use it from a voice channel: `play query:<YouTube link or search>`, `radio station:<name>`, `skip`, `stop`, `pause`, `resume`, `queue`, `nowplaying`, `volume level:<0-100>`. Replies are only visible to you.
+- Without a voice session the bot joins your voice channel and leaves when you leave (the same shared session as `/tts`; `/tts leave` makes it leave earlier). While it is in another voice channel, `play` and `radio` are refused. Playback controls and panel buttons need you in the bot's voice channel; server managers and `ADMIN_USER_IDS` can always use them.
+- The queue holds up to 50 tracks; videos longer than 3 hours are refused unless they are live. A radio station replaces the queue, and `play` during radio replaces the station.
+- TTS lines interrupt music: tracks pause and continue afterwards, radio and live streams keep running underneath.
+- YouTube audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp) (against YouTube's terms of service, and it breaks when YouTube changes something; rebuild the image to update yt-dlp). Radio streams are read by ffmpeg, which reconnects when a stream drops.
+- Built-in stations are in `src/features/music/stations.js`; admins can add more stations (`music.stations` in the server config) through `/setup`.
+
 ## Help
 
 - Use `/help` to open the full command guide.
@@ -252,6 +265,7 @@ docker compose up -d --build
 - `docker-compose.yml` publishes the IRC bridge port (host `8767` to container `8765`) for the Minecraft mod.
 - `docs/`, root Markdown files, `.env`, `.env.example`, `data/`, and `tts-service/` are excluded from the bot image.
 - The `tts` service builds `tts-service/`, is only reachable from the bot (`http://tts:5000`), and is limited to 3 CPUs and 3 GB RAM. Model downloads are kept in the `tts-models` volume.
+- The bot image installs the official standalone yt-dlp build for musl (checked against the release checksums). `docker compose build --no-cache xclipsen-bot` fetches the newest release; `--build-arg YTDLP_VERSION=<tag>` pins one.
 
 - The bot loads its token and optional legacy defaults from `.env`.
 - `./data` is mounted to `/app/data` so server config, the stored status message ID, and booth state survive restarts.

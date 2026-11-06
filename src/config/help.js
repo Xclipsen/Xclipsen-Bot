@@ -98,6 +98,16 @@ const helpSections = [
         adminOnly: true
       },
       {
+        command: '/music play query:<link or search> | radio station:<name>',
+        description: 'Play (or queue) a YouTube video or a lofi / chill radio station in your voice channel. Music commands only work in the #voice channel, which also has a control panel with buttons and a station picker.',
+        example: '/music radio station:Lofi (laut.fm)'
+      },
+      {
+        command: '/music skip | stop | pause | resume | queue | nowplaying | volume level:<0-100>',
+        description: 'Control playback; members in the bot voice channel and server managers can use the controls.',
+        example: '/music volume level:40'
+      },
+      {
         command: '/cata [player:<ign>] [profile:<name>]',
         description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections. Also available as /catacombs.',
         example: '/cata'

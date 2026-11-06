@@ -316,6 +316,53 @@ const ttsCommand = new SlashCommandBuilder()
       .setRequired(true)
       .setAutocomplete(true)));
 
+const musicCommand = new SlashCommandBuilder()
+  .setName('music')
+  .setDescription('Play music and radio in your voice channel (only in the music channel).')
+  .addSubcommand((subcommand) => subcommand
+    .setName('play')
+    .setDescription('Play or queue a YouTube video.')
+    .addStringOption((option) => option
+      .setName('query')
+      .setDescription('YouTube link or search text')
+      .setRequired(true)
+      .setMaxLength(300)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('radio')
+    .setDescription('Play a lofi / chill radio station.')
+    .addStringOption((option) => option
+      .setName('station')
+      .setDescription('Radio station')
+      .setRequired(true)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('skip')
+    .setDescription('Skip the current track.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('stop')
+    .setDescription('Stop playback and clear the queue.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('pause')
+    .setDescription('Pause playback.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('resume')
+    .setDescription('Resume playback.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('queue')
+    .setDescription('Show the queue.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('nowplaying')
+    .setDescription('Show what is playing.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('volume')
+    .setDescription('Set the playback volume.')
+    .addIntegerOption((option) => option
+      .setName('level')
+      .setDescription('Volume in percent')
+      .setRequired(true)
+      .setMinValue(0)
+      .setMaxValue(100)));
+
 const hideonleafCommand = new SlashCommandBuilder()
   .setName('hideonleaf')
   .setDescription('Show the Hideonleaf leaderboard for kills, shards, money, and money per hour.');
@@ -460,6 +507,7 @@ const commands = [
   nameHistoryCommand,
   gifCommand,
   ttsCommand,
+  musicCommand,
   hideonleafCommand,
   shitterCommand,
   linkCommand
@@ -489,6 +537,7 @@ module.exports = {
     namehistory: 'namehistory',
     gif: 'gif',
     tts: 'tts',
+    music: 'music',
     hideonleaf: 'hideonleaf',
     shitter: 'shitter',
     link: 'link'
