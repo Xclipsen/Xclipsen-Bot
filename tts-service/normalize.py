@@ -7,14 +7,17 @@ stretched words and characters a TTS engine cannot speak.
 
 from __future__ import annotations
 
+import logging
+import os
 import re
+from pathlib import Path
 
 from num2words import num2words
 
 # Whole-word chat abbreviations (matched case-insensitively).
 ABBREVIATIONS: dict[str, str] = {
-    "gg": "good game",
-    "ggs": "good games",
+    "gg": "dschi dschi",
+    "ggs": "dschi dschi",
     "afk": "a f k",
     "brb": "bin gleich zurück",
     "lol": "lol",
@@ -31,6 +34,49 @@ ABBREVIATIONS: dict[str, str] = {
     "irl": "im echten Leben",
     "imo": "meiner Meinung nach",
 }
+
+log = logging.getLogger("tts.normalize")
+
+PRONUNCIATION_FILES = (
+    Path(__file__).with_name("pronunciation.txt"),
+    Path(os.environ.get("TTS_PRONUNCIATION_FILE", "/voices/pronunciation.txt")),
+)
+
+
+def load_pronunciations(paths=PRONUNCIATION_FILES) -> dict[str, str]:
+    """<word or phrase> = <spelling> lines; later files override earlier ones."""
+    entries: dict[str, str] = {}
+    for path in paths:
+        if not path.is_file():
+            continue
+        for number, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
+            line = line.strip()
+            if not line or line.startswith("#"):
+                continue
+            word, sep, spelling = line.partition("=")
+            if not sep or not word.strip() or not spelling.strip():
+                log.warning("%s:%d: expected '<word> = <spelling>'", path, number)
+                continue
+            entries[" ".join(word.lower().split())] = spelling.strip()
+    return entries
+
+
+def _pronunciation_pattern(entries: dict[str, str]) -> re.Pattern[str] | None:
+    if not entries:
+        return None
+    # Longest first so "golden dragon" wins over "dragon"; spaces match any whitespace.
+    words = sorted(entries, key=len, reverse=True)
+    alternatives = "|".join(r"\s+".join(map(re.escape, word.split())) for word in words)
+    return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
+
+
+PRONUNCIATIONS = load_pronunciations()
+_PRONUNCIATION_RE = _pronunciation_pattern(PRONUNCIATIONS)
+
+
+def _pronounce(match: re.Match[str]) -> str:
+    return PRONUNCIATIONS[" ".join(match.group(0).lower().split())]
+
 
 # Symbols that have a spoken form; everything else unspeakable is dropped.
 SYMBOLS: dict[str, str] = {
@@ -103,6 +149,8 @@ def normalize(text: str) -> str:
     text = _XD_RE.sub(" iks de ", text)
     text = _LOL_RE.sub("lol", text)
     text = _WORD_RE.sub(_abbreviation, text)
+    if _PRONUNCIATION_RE is not None:
+        text = _PRONUNCIATION_RE.sub(_pronounce, text)
 
     for symbol, spoken in SYMBOLS.items():
         text = text.replace(symbol, spoken)

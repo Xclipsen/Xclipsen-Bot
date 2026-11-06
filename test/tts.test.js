@@ -66,7 +66,7 @@ function createFakeVoice() {
 function createFakeStore(initial = {}) {
   const guilds = { g1: { tts: { roleId: 'tts-role', voice: null, ...initial } } };
   return {
-    getGuildConfig: (guildId) => ({ tts: { roleId: null, voice: null, ...guilds[guildId]?.tts } }),
+    getGuildConfig: (guildId) => ({ tts: { roleId: null, voice: null, followUserIds: [], ...guilds[guildId]?.tts } }),
     setGuildConfig: (guildId, partial) => { guilds[guildId] = { ...guilds[guildId], ...partial }; },
     guilds
   };
@@ -76,7 +76,7 @@ const env = {
   TTS_ROLE_NAME: 'TTS',
   TTS_MAX_QUEUE: 10,
   TTS_MAX_CHARS: 300,
-  PRIVILEGED_USER_IDS: new Set()
+  PRIVILEGED_USER_IDS: new Set(['god'])
 };
 
 function createMember(id, { roles = [], channelId = 'vc1', manageGuild = false } = {}) {
@@ -108,7 +108,9 @@ function createInteraction(member, subcommand, options = {}) {
     inGuild: () => true,
     options: {
       getSubcommand: () => subcommand,
-      getString: (name) => options[name] ?? null
+      getString: (name) => options[name] ?? null,
+      getUser: (name) => options[name] ?? null,
+      getBoolean: (name) => options[name] ?? null
     },
     async reply(payload) { replies.push(payload); this.replied = true; },
     async followUp(payload) { replies.push(payload); },
@@ -275,4 +277,38 @@ test('/tts whisper uses the whisper voice and always announces the verb', async 
     { text: 'User owner flüstert: Psst', voiceId: 'thorsten_whisper' },
     { text: 'Normal', voiceId: 'thorsten_sleepy' }
   ]);
+});
+
+test('/tts follow is for privileged users and reads the followed user from any channel', async () => {
+  const store = createFakeStore();
+  const { feature, synthesized } = createFeature({ store });
+  const followed = createMember('followed', { channelId: null });
+
+  const admin = createInteraction(createMember('admin', { manageGuild: true }), 'follow', { user: { id: 'followed' } });
+  await feature.handleTtsCommand(admin, accessControl);
+  assert.match(admin.replies[0].content, /Only the bot owners/);
+  assert.equal(store.guilds.g1.tts.followUserIds, undefined);
+
+  await feature.handleTtsCommand(createInteraction(createMember('god'), 'follow', { user: { id: 'followed' } }), accessControl);
+  assert.deepEqual(store.guilds.g1.tts.followUserIds, ['followed']);
+
+  await feature.handleTtsCommand(createInteraction(createMember('owner', { roles: ['tts-role'] }), 'join'), accessControl);
+  const message = {
+    inGuild: () => true,
+    author: { bot: false },
+    system: false,
+    guildId: 'g1',
+    channelId: 'somewhere-else',
+    member: followed,
+    content: 'Ich bin gar nicht im Voice',
+    guild: { members: { cache: new Map() }, channels: { cache: new Map() }, roles: { cache: new Map() } },
+    react: async () => {}
+  };
+  await feature.handleMessage(message);
+  assert.deepEqual(synthesized.map((entry) => entry.text), ['User followed sagt: Ich bin gar nicht im Voice']);
+
+  await feature.handleTtsCommand(createInteraction(createMember('god'), 'follow', { user: { id: 'followed' } }), accessControl);
+  assert.deepEqual(store.guilds.g1.tts.followUserIds, []);
+  await feature.handleMessage(message);
+  assert.equal(synthesized.length, 1);
 });

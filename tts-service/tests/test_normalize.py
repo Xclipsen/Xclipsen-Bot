@@ -34,8 +34,8 @@ def test_range_dash_is_not_a_minus():
 @pytest.mark.parametrize(
     ("text", "expected"),
     [
-        ("gg", "good game"),
-        ("GG ez", "good game ez"),
+        ("gg", "dschi dschi"),
+        ("GG ez", "dschi dschi ez"),
         ("bin afk", "bin a f k"),
         ("brb", "bin gleich zurück"),
         ("idk", "keine Ahnung"),
@@ -92,5 +92,26 @@ def test_nothing_speakable(text):
 
 def test_full_sentence():
     assert normalize("gg, das waren 15 Kills in 2,5 Minuten!!!!!") == (
-        "good game, das waren fünfzehn Kills in zwei Komma fünf Minuten!!!"
+        "dschi dschi, das waren fünfzehn Kills in zwei Komma fünf Minuten!!!"
     )
+
+
+def test_pronunciation_entries_are_spelled_out():
+    assert normalize("Wer kommt mit in die Dungeons?") == "Wer kommt mit in die dandschens?"
+    assert normalize("Mein Golden  Dragon und ein dragon") == "Mein golden dräggen und ein dräggen"
+    # Only whole words: "gamesense" stays as it is.
+    assert normalize("gamesense") == "gamesense"
+
+
+def test_pronunciation_files_override_and_skip_bad_lines(tmp_path):
+    from normalize import load_pronunciations
+
+    base = tmp_path / "base.txt"
+    base.write_text("# comment\nslayer = sleier\nkaputt\n", encoding="utf-8")
+    extra = tmp_path / "extra.txt"
+    extra.write_text("Slayer = släjer\nCrimson   Isle = krimsen eil\n", encoding="utf-8")
+
+    assert load_pronunciations((base, extra, tmp_path / "missing.txt")) == {
+        "slayer": "släjer",
+        "crimson isle": "krimsen eil",
+    }

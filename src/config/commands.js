@@ -282,6 +282,17 @@ const ttsCommand = new SlashCommandBuilder()
       .setRequired(true)
       .setMaxLength(500)))
   .addSubcommand((subcommand) => subcommand
+    .setName('follow')
+    .setDescription('Bot owners only: read every message of a user aloud.')
+    .addUserOption((option) => option
+      .setName('user')
+      .setDescription('User whose messages are read')
+      .setRequired(true))
+    .addBooleanOption((option) => option
+      .setName('enabled')
+      .setDescription('On or off; toggles when left empty')
+      .setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
     .setName('voice')
     .setDescription('Choose the TTS voice for this server.')
     .addStringOption((option) => option

@@ -1,0 +1,57 @@
+# English words as German readers would spell them, so German voices say them the English way.
+# One entry per line: <word or phrase> = <spelling>. Matching ignores case; longer phrases win.
+# Extra entries can go into /voices/pronunciation.txt (tts-voices/ on the server) and override these.
+
+# Chat and gaming
+good game = gud gäim
+game = gäim
+games = gäims
+gamer = gäimer
+nice = neis
+sorry = sorri
+noob = nuub
+cringe = krindsch
+random = rändem
+team = tiem
+online = onlein
+offline = offlein
+update = apdäit
+stream = striem
+streamer = striemer
+chat = tschätt
+voice = weuss
+level = läwel
+carry = kärri
+lobby = lobbi
+discord = diskord
+minecraft = meinkräft
+hypixel = heipixel
+
+# SkyBlock
+skyblock = skeiblock
+dungeon = dandschen
+dungeons = dandschens
+slayer = sleier
+dragon = dräggen
+golden dragon = golden dräggen
+coins = keuns
+bazaar = basar
+auction = okschen
+auction house = okschen haus
+mayor = mäjor
+event = iwent
+events = iwents
+mining = meining
+fishing = fisching
+enchanted = entschäntet
+legendary = ledschendäri
+crimson isle = krimsen eil
+crystal hollows = kristel hollohs
+garden = gaarden
+fortune = fortschun
+shard = schard
+shards = schards
+damage = dämmitsch
+speed = spiet
+hyperion = heiperion
+jerry = dschärri

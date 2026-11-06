@@ -281,6 +281,26 @@ function createTtsFeature({
     await replyEphemeral(interaction, `TTS voice for this server set to \`${voiceId}\`.`);
   }
 
+  async function handleFollow(interaction) {
+    if (!env.PRIVILEGED_USER_IDS.has(String(interaction.user.id))) {
+      await replyEphemeral(interaction, 'Only the bot owners can use `/tts follow`.');
+      return;
+    }
+
+    const user = interaction.options.getUser('user', true);
+    const config = getTtsConfig(interaction.guildId);
+    const following = config.followUserIds.includes(user.id);
+    const enabled = interaction.options.getBoolean('enabled') ?? !following;
+    const followUserIds = enabled
+      ? [...new Set([...config.followUserIds, user.id])]
+      : config.followUserIds.filter((id) => id !== user.id);
+
+    store.setGuildConfig(interaction.guildId, { tts: { ...config, followUserIds } });
+    await replyEphemeral(interaction, enabled
+      ? `Every message from <@${user.id}> is read aloud while I'm in a voice channel.`
+      : `Stopped reading every message from <@${user.id}>.`);
+  }
+
   async function handleTtsCommand(interaction, accessControl) {
     if (!interaction.inGuild() || !interaction.guild) {
       await replyEphemeral(interaction, 'TTS only works inside a server.');
@@ -296,6 +316,11 @@ function createTtsFeature({
       ? interaction.member
       : await interaction.guild.members.fetch(interaction.user.id);
     const subcommand = interaction.options.getSubcommand();
+
+    if (subcommand === 'follow') {
+      await handleFollow(interaction);
+      return;
+    }
 
     if (subcommand === 'voice') {
       if (await accessControl.ensureSetupAccess(interaction, 'TTS voice setting')) {
@@ -335,13 +360,20 @@ function createTtsFeature({
   }
 
   // Reads messages from the channel where /tts join ran and from the voice channel's own chat.
+  // Followed users (/tts follow) are read from every channel, wherever they are.
   async function handleMessage(message) {
     if (!message.inGuild() || message.author.bot || message.system) return;
     const session = sessions.get(message.guildId);
-    if (!session || (message.channelId !== session.textChannelId && message.channelId !== session.channelId)) return;
+    if (!session) return;
 
     const member = message.member;
-    if (!member || member.voice?.channelId !== session.channelId || !hasTtsAccess(member)) return;
+    if (!member) return;
+
+    const followed = getTtsConfig(message.guildId).followUserIds.includes(member.id);
+    if (!followed) {
+      if (message.channelId !== session.textChannelId && message.channelId !== session.channelId) return;
+      if (member.voice?.channelId !== session.channelId || !hasTtsAccess(member)) return;
+    }
 
     const text = toSpeechText(message.content, createResolvers(message.guild));
     if (!text) return;

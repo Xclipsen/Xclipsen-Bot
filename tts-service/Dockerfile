@@ -25,7 +25,7 @@ RUN useradd --create-home --uid 10001 tts \
     && chown -R tts:tts /models /voices \
     && chmod 755 /opt/piper
 
-COPY --chown=tts:tts *.py ./
+COPY --chown=tts:tts *.py pronunciation.txt ./
 
 USER tts
 

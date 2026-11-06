@@ -82,6 +82,12 @@ const helpSections = [
         adminOnly: true
       },
       {
+        command: '/tts follow user:<user> [enabled:<true|false>]',
+        description: 'Bot owners only: while the bot is in a voice channel, read every message of that user from any channel.',
+        example: '/tts follow user:@someone',
+        adminOnly: true
+      },
+      {
         command: '/cata [player:<ign>] [profile:<name>]',
         description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections. Also available as /catacombs.',
         example: '/cata'

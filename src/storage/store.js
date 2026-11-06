@@ -60,7 +60,9 @@ function normalizeGuildConfig(config) {
     modUpdates: normalizeModUpdateConfig(config?.modUpdates),
     tts: {
       roleId: config?.tts?.roleId || null,
-      voice: config?.tts?.voice || null
+      voice: config?.tts?.voice || null,
+      // Set by privileged bot users with /tts follow: read everything these users write.
+      followUserIds: normalizeSnowflakeList(config?.tts?.followUserIds)
     },
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),
