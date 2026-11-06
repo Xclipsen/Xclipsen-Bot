@@ -7,6 +7,7 @@ const test = require('node:test');
 const {
   MAX_PLAYLISTS_PER_USER,
   MAX_PLAYLIST_TRACKS,
+  MAX_PLAYLISTS_PER_GUILD,
   createPlaylistStore,
   normalizePlaylistData,
   toPlaylistTrack
@@ -275,4 +276,68 @@ test('Spotify tracks are valid playlist and snapshot items, with or without a Yo
   assert.equal(snapshot.current.url, null);
   assert.deepEqual(snapshot.queue[0].artists, ['Daft Punk']);
   assert.equal(snapshot.queue[0].spotifyUrl, spotifyUrl);
+});
+
+test('playlists.json is compact, "last played" is not written right away, 500 playlists per server', async () => {
+  const saves = [];
+  const store = createPlaylistStore({
+    filePath: '/virtual/playlists.json',
+    load: () => ({ guilds: {} }),
+    save: (filePath, data, options) => saves.push({ data: JSON.parse(JSON.stringify(data)), options }),
+    flushDelayMs: 20
+  });
+  const playlist = store.create('g1', owner, 'Chill');
+  assert.equal(saves.length, 1);
+  assert.deepEqual(saves[0].options, { compact: true });
+
+  store.markUsed('g1', playlist.id);
+  store.markUsed('g1', playlist.id);
+  assert.equal(saves.length, 1, 'markUsed alone does not write');
+  assert.ok(store.listPublic('g1').length === 0 && store.listVisible('g1', owner)[0].lastUsedAt, 'kept in memory');
+  await new Promise((resolve) => setTimeout(resolve, 40));
+  assert.equal(saves.length, 2, 'written after the flush delay');
+  assert.ok(saves[1].data.guilds.g1[0].lastUsedAt);
+
+  store.markUsed('g1', playlist.id);
+  store.flush();
+  assert.equal(saves.length, 3, 'flush() writes pending changes (shutdown)');
+  store.flush();
+  assert.equal(saves.length, 3, 'nothing pending, nothing written');
+
+  // The real file is written without indentation.
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'playlists-compact-'));
+  try {
+    const filePath = path.join(dir, 'playlists.json');
+    createPlaylistStore({ filePath }).create('g1', owner, 'A');
+    assert.doesNotMatch(fs.readFileSync(filePath, 'utf8'), /\n/);
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
+
+  const full = createStore();
+  for (let user = 0; user < MAX_PLAYLISTS_PER_GUILD / MAX_PLAYLISTS_PER_USER; user += 1) {
+    for (let index = 0; index < MAX_PLAYLISTS_PER_USER; index += 1) full.create('g1', { id: `u${user}` }, `L${index}`);
+  }
+  assert.throws(() => full.create('g1', { id: 'late' }, 'One'), /already has 500 playlists/);
+  assert.equal(full.create('g2', { id: 'late' }, 'One').name, 'One');
+});
+
+test('resume snapshots drop invalid items and keep the album', () => {
+  const resume = createResumeStore();
+  resume.set('g1', {
+    current: { kind: 'radio', title: 'Lofi', url: 'http://10.0.0.1/', stationKey: 'lautfm-lofi' },
+    queue: [
+      track('ok1', { album: 'Record' }),
+      { kind: 'track', title: 'Bad', url: 'file:///etc/passwd' },
+      { kind: 'radio', title: 'Gone', url: 'https://x.example/', stationKey: 'no-such-station' },
+      { kind: 'spotify', title: 'S', spotifyUrl: 'https://open.spotify.com/album/4cOdK2wGLETKBW3PvgPWqT', url: null },
+      { kind: 'spotify', title: 'T', spotifyUrl: 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT', url: 'https://evil.example/x', artists: ['A'] }
+    ]
+  });
+  const snapshot = resume.get('g1');
+  assert.equal(snapshot.current.stationKey, 'lautfm-lofi');
+  assert.equal(snapshot.current.url, null, 'radio URLs are looked up again on continue');
+  assert.deepEqual(snapshot.queue.map((item) => item.title), ['Song ok1', 'T']);
+  assert.equal(snapshot.queue[0].album, 'Record');
+  assert.equal(snapshot.queue[1].url, null, 'a non-YouTube URL on a Spotify item is dropped');
 });

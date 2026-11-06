@@ -13,6 +13,9 @@ const { parseSpotifyLink } = require('./spotify');
 const MAX_NAME_LENGTH = 50;
 const MAX_PLAYLISTS_PER_USER = 25;
 const MAX_PLAYLIST_TRACKS = 200;
+const MAX_PLAYLISTS_PER_GUILD = 500;
+// "Last played" changes are only kept in memory and written with the next real change or after this.
+const USE_FLUSH_MS = 5 * 60_000;
 const VISIBILITIES = ['private', 'public'];
 // Autocomplete values for playlists of other members: "#<id>".
 const ID_PREFIX = '#';
@@ -106,23 +109,50 @@ function byRecentUse(a, b) {
 }
 
 // `load`/`save` default to the store.js JSON helpers; without a file path the data stays in memory.
-function createPlaylistStore({ filePath = null, load, save, now = () => new Date().toISOString(), createId = () => randomBytes(4).toString('hex') } = {}) {
+// The file is written compact (no indentation).
+function createPlaylistStore({
+  filePath = null,
+  load,
+  save,
+  now = () => new Date().toISOString(),
+  createId = () => randomBytes(4).toString('hex'),
+  flushDelayMs = USE_FLUSH_MS
+} = {}) {
   const jsonFiles = filePath && (!load || !save) ? require('../../storage/store') : null;
   const loadFile = load || jsonFiles?.loadJsonFile;
   const saveFile = save || jsonFiles?.saveJsonFile;
   let data = normalizePlaylistData(filePath ? loadFile(filePath, { guilds: {} }) : { guilds: {} });
+  let flushTimer = null;
 
   function persist() {
-    if (filePath) saveFile(filePath, data);
+    clearTimeout(flushTimer);
+    flushTimer = null;
+    if (filePath) saveFile(filePath, data, { compact: true });
+  }
+
+  // Writes pending "last played" changes now (e.g. on shutdown).
+  function flush() {
+    if (flushTimer) persist();
   }
 
   function getAll(guildId) {
     return data.guilds[guildId] || [];
   }
 
-  function setAll(guildId, list) {
+  function setAll(guildId, list, { write = true } = {}) {
     data = { ...data, guilds: { ...data.guilds, [guildId]: list } };
-    persist();
+    if (write) {
+      persist();
+    } else if (filePath && !flushTimer) {
+      flushTimer = setTimeout(() => {
+        try {
+          persist();
+        } catch (error) {
+          console.error('Could not save the playlists:', error.message);
+        }
+      }, flushDelayMs);
+      flushTimer.unref?.();
+    }
   }
 
   function findOwn(guildId, ownerId, name) {
@@ -174,13 +204,13 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
     return playlist;
   }
 
-  function update(guildId, id, patch) {
+  function update(guildId, id, patch, options) {
     let updated = null;
     setAll(guildId, getAll(guildId).map((playlist) => {
       if (playlist.id !== id) return playlist;
       updated = { ...playlist, ...patch };
       return updated;
-    }));
+    }), options);
     return updated;
   }
 
@@ -190,6 +220,9 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
     if (findOwn(guildId, actor.id, name)) throw new MusicError(`You already have a playlist called **${name}**.`);
     if (getAll(guildId).filter((playlist) => isOwner(playlist, actor)).length >= MAX_PLAYLISTS_PER_USER) {
       throw new MusicError(`You already have ${MAX_PLAYLISTS_PER_USER} playlists. Delete one first.`);
+    }
+    if (getAll(guildId).length >= MAX_PLAYLISTS_PER_GUILD) {
+      throw new MusicError(`This server already has ${MAX_PLAYLISTS_PER_GUILD} playlists. Ask someone to delete old ones first.`);
     }
     return name;
   }
@@ -272,8 +305,9 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
     return { playlist: update(guildId, existing.id, { tracks: kept, updatedAt: now() }), created: false, dropped: tracks.length - kept.length };
   }
 
+  // Only in memory until the next real change (or USE_FLUSH_MS).
   function markUsed(guildId, id) {
-    return update(guildId, id, { lastUsedAt: now() });
+    return update(guildId, id, { lastUsedAt: now() }, { write: false });
   }
 
   // Remembers the YouTube match of a Spotify track in every playlist of the server that has it unresolved.
@@ -302,6 +336,7 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
   }
 
   return {
+    flush,
     findById,
     findOwn,
     assertCanCreate,
@@ -328,6 +363,7 @@ module.exports = {
   MAX_NAME_LENGTH,
   MAX_PLAYLISTS_PER_USER,
   MAX_PLAYLIST_TRACKS,
+  MAX_PLAYLISTS_PER_GUILD,
   createPlaylistStore,
   normalizePlaylistData,
   toPlaylistTrack,

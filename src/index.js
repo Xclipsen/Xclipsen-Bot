@@ -113,12 +113,14 @@ const pestFarmingProfit = createPestFarmingProfitFeature({ store, hypixelApi });
 const gif = createGifFeature();
 const voiceSessions = createVoiceSessions({ client });
 const tts = createTtsFeature({ client, env, store, voiceSessions });
+// Saved playlists; "last played" times are written lazily, so they are flushed on shutdown.
+const musicPlaylists = createPlaylistStore({ filePath: env.PLAYLISTS_FILE_PATH });
 const music = createMusicFeature({
   client,
   env,
   store,
   voiceSessions,
-  playlists: createPlaylistStore({ filePath: env.PLAYLISTS_FILE_PATH }),
+  playlists: musicPlaylists,
   resumeStore: createResumeStore({ filePath: env.MUSIC_RESUME_FILE_PATH })
 });
 const help = createHelpFeature();
@@ -454,10 +456,12 @@ void loginWithRetry().catch((error) => {
 
 process.on('SIGINT', () => {
   voiceSessions.destroyAll();
+  musicPlaylists.flush();
   void ircBridge.stop().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
   voiceSessions.destroyAll();
+  musicPlaylists.flush();
   void ircBridge.stop().finally(() => process.exit(0));
 });

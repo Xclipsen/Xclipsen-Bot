@@ -4,17 +4,36 @@
 // `position` is where the current track was, in seconds. Snapshots expire after 24 hours.
 const RESUME_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RESUME_QUEUE = 100;
-const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId', 'spotifyUrl', 'artists'];
-const KINDS = new Set(['track', 'radio', 'spotify']);
+const { isYouTubeVideoUrl } = require('./sources');
+const { parseSpotifyLink } = require('./spotify');
+const { findStation } = require('./stations');
 
-// Spotify items may have no YouTube URL yet; they are matched when they play.
-function normalizeItem(item) {
+const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'album', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId', 'spotifyUrl', 'artists'];
+
+// The file could have been edited by hand: tracks must be single YouTube videos, Spotify items
+// Spotify track links (their YouTube URL may still be missing), radio items a station that exists.
+// Radio URLs are never used from here; /music continue looks the station up (and checks custom
+// station URLs) again.
+function validItem(item) {
   if (!item || typeof item.title !== 'string') return null;
-  const kind = KINDS.has(item.kind) ? item.kind : 'track';
-  if (typeof item.url !== 'string' && !(kind === 'spotify' && typeof item.spotifyUrl === 'string')) return null;
+  if (item.kind === 'spotify') {
+    if (parseSpotifyLink(item.spotifyUrl)?.type !== 'track') return null;
+    return { url: isYouTubeVideoUrl(item.url) ? item.url : null };
+  }
+  if (item.kind === 'radio') {
+    const key = String(item.stationKey || '');
+    return key.startsWith('custom:') || findStation(key) ? { url: null } : null;
+  }
+  return isYouTubeVideoUrl(item.url) ? { url: item.url } : null;
+}
+
+function normalizeItem(item) {
+  const valid = validItem(item);
+  if (!valid) return null;
   const clean = Object.fromEntries(ITEM_KEYS.filter((key) => item[key] !== undefined).map((key) => [key, item[key]]));
-  clean.kind = kind;
-  if (kind === 'spotify') clean.url = typeof item.url === 'string' ? item.url : null;
+  clean.kind = ['radio', 'spotify'].includes(item.kind) ? item.kind : 'track';
+  clean.url = valid.url;
+  if (clean.artists !== undefined) clean.artists = (Array.isArray(clean.artists) ? clean.artists : []).map(String).slice(0, 10);
   return clean;
 }
 

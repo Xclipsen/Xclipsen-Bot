@@ -312,3 +312,45 @@ test('pickBestMatch prefers the official studio upload and respects duration', (
   assert.equal(pickBestMatch(track, [{ title: 'Minecraft speedrun world record', uploader: 'Gamer', duration: 1200, url: 'x' }]), null);
   assert.equal(pickBestMatch(track, []), null);
 });
+
+test('embed artists split on comma plus no-break space; http short links are fetched over https', async () => {
+  const entity = {
+    type: 'playlist',
+    name: 'Duets',
+    subtitle: 'me',
+    trackList: [{ uri: `spotify:track:${TRACK_ID}`, title: 'Duet', subtitle: 'Alice, Bob, Carol', duration: 180_000 }]
+  };
+  const { fetchImpl, calls } = createFakeFetch([
+    ['https://open.spotify.com/embed/playlist/', () => embedResponse({ props: { pageProps: { state: { data: { entity } } } } })],
+    ['https://spotify.link/plain', () => new Response(null, { status: 302, headers: { location: `https://open.spotify.com/track/${TRACK_ID}` } })]
+  ]);
+  const resolver = createSpotifyResolver({ fetchImpl });
+  const result = await resolver.resolve(`https://open.spotify.com/playlist/${PLAYLIST_ID}`);
+  assert.deepEqual(result.tracks[0].artists, ['Alice', 'Bob', 'Carol']);
+
+  assert.deepEqual(await resolver.parseSpotifyUrl('http://spotify.link/plain'), { type: 'track', id: TRACK_ID });
+  assert.equal(calls.at(-1).url, 'https://spotify.link/plain');
+});
+
+test('oversized pages are refused and an empty Web API result is an error', async () => {
+  // A valid embed page, only too big: without the size cap it would resolve.
+  const entity = { type: 'playlist', name: 'Big', trackList: [{ uri: `spotify:track:${TRACK_ID}`, title: 'Song', subtitle: 'Band', duration: 1000 }] };
+  const page = `<script id="__NEXT_DATA__" type="application/json">${JSON.stringify({ props: { pageProps: { state: { data: { entity } } } } })}</script>`;
+  const big = new Response(page + ' '.repeat(5 * 1024 * 1024), { status: 200, headers: { 'content-type': 'text/html' } });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    const { fetchImpl } = createFakeFetch([['https://open.spotify.com/embed/playlist/', () => big]]);
+    await assert.rejects(createSpotifyResolver({ fetchImpl }).resolve(`https://open.spotify.com/playlist/${PLAYLIST_ID}`), SpotifyError);
+  } finally {
+    console.error = originalError;
+  }
+
+  const { fetchImpl, calls } = createFakeFetch([
+    tokenRoute(),
+    ['https://api.spotify.com/v1/albums/', () => jsonResponse({ name: 'Empty', artists: [], tracks: { items: [], next: null } })]
+  ]);
+  const resolver = createSpotifyResolver({ clientId: 'id', clientSecret: 'secret', fetchImpl });
+  await assert.rejects(resolver.resolve('https://open.spotify.com/album/0ETFjACtuP2ADo6LFhL6HN'), { message: /no playable tracks/ });
+  assert.ok(!calls.some((call) => call.url.includes('/embed/')), 'no embed fallback for an empty album');
+});

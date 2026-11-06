@@ -26,8 +26,9 @@ function loadJsonFile(filePath, fallbackValue) {
 }
 
 // Writes to a temp file in the same directory and renames it, so a crash never leaves a half-written file.
-function saveJsonFile(filePath, value) {
-  const json = JSON.stringify(value, null, 2);
+// `compact` skips the indentation (large files such as playlists.json).
+function saveJsonFile(filePath, value, { compact = false } = {}) {
+  const json = compact ? JSON.stringify(value) : JSON.stringify(value, null, 2);
   const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   try {

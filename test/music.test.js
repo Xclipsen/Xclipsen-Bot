@@ -171,16 +171,19 @@ function createTextChannel(id, name = 'voice') {
       return result;
     },
     // A message from someone else, e.g. chat in the music channel; `ageMs` back-dates it.
-    addMessage({ content = 'hi', ageMs = null, undeletable = false } = {}) {
-      const message = channel.createMessage({ content });
+    addMessage({ content = 'hi', ageMs = null, undeletable = false, pinned = false, authorId = 'someone' } = {}) {
+      const message = channel.createMessage({ content }, authorId);
       if (ageMs !== null) message.createdTimestamp = Date.now() - ageMs;
       message.undeletable = undeletable;
+      message.pinned = pinned;
       return message;
     },
-    createMessage(payload) {
+    createMessage(payload, authorId = 'bot') {
       const message = {
         id: `m${nextId++}`,
         payload,
+        author: { id: authorId },
+        pinned: false,
         createdTimestamp: (clock += 1000),
         edit: async (next) => { message.payload = next; channel.edits.push(next); },
         delete: async () => {
@@ -193,6 +196,9 @@ function createTextChannel(id, name = 'voice') {
       return message;
     },
     messageIds: () => [...messages.keys()],
+    // The bot's permissions here; `canManage = false` takes away Manage Messages.
+    canManage: true,
+    permissionsFor: () => ({ has: (flag) => flag !== PermissionsBitField.Flags.ManageMessages || channel.canManage }),
     bulkDeletes: [],
     sent: [],
     edits: [],
@@ -287,11 +293,11 @@ function createInteraction(guild, member, subcommand, options = {}, { channelId 
       getFocused: () => options.focused ?? ''
     },
     async reply(payload) { replies.push(payload); this.replied = true; },
-    async followUp(payload) { replies.push(payload); },
+    async followUp(payload) { replies.push(payload); this.followedUp = true; },
     async deferReply(payload) { this.deferred = true; this.deferPayload = payload; },
-    async editReply(payload) { replies.push(payload); },
+    async editReply(payload) { replies.push(payload); this.editedReply = true; },
     async deleteReply() { this.deletedReply = true; },
-    async deferUpdate() { this.deferredUpdate = true; },
+    async deferUpdate() { this.deferredUpdate = true; this.deferred = true; },
     async update(payload) { this.updated = payload; },
     lastReply() { return replies[replies.length - 1]; }
   };
@@ -306,7 +312,8 @@ function createFeature({
   resumeStore = createResumeStore(),
   cleanupDelayMs = 60_000,
   random = Math.random,
-  spotify = undefined
+  spotify = undefined,
+  sourcesPatch = {}
 } = {}) {
   const voice = createFakeVoice();
   const client = {
@@ -315,7 +322,7 @@ function createFeature({
     channels: { cache: new Map() }
   };
   const voiceSessions = createVoiceSessions({ client, voice });
-  const sources = createMusicSources({ spawn });
+  const sources = { ...createMusicSources({ spawn }), ...sourcesPatch };
   const feature = createMusicFeature({ client, env, store, voiceSessions, voice, sources, lookup, playlists, resumeStore, random, panelDelayMs: 0, cleanupDelayMs, lookupRetryMs: 5, ...(spotify && { spotify }) });
   const musicPlayer = () => voiceSessions.get('g1')?.musicPlayer;
   const channel = guild.channels.cache.get(CONTROL_CHANNEL_ID);
@@ -591,7 +598,7 @@ test('the panel embed shows playback, queue, volume, station and the command ove
   assert.match(field('Commands'), /\/tts join/);
 
   const [buttons, extras, select] = message.components.map((row) => row.toJSON().components);
-  assert.deepEqual(buttons.map((button) => button.custom_id), [PANEL_IDS.pause, PANEL_IDS.skip, PANEL_IDS.stop, PANEL_IDS.shuffle, PANEL_IDS.loop]);
+  assert.deepEqual(buttons.map((button) => button.custom_id), [PANEL_IDS.pause, `${PANEL_IDS.skip}:0`, PANEL_IDS.stop, PANEL_IDS.shuffle, PANEL_IDS.loop]);
   assert.deepEqual(extras.map((button) => button.custom_id), [PANEL_IDS.volumeDown, PANEL_IDS.volumeUp, PANEL_IDS.queue]);
   assert.equal(buttons[3].disabled, true, 'one queued track cannot be shuffled');
   assert.equal(buttons[0].label, 'Resume');
@@ -970,12 +977,22 @@ test('loop modes: track repeats, queue cycles, failed tracks are not retried for
   assert.equal(currentTitle(musicPlayer), 'Third Song');
   musicPlayer().finish();
   assert.equal(currentTitle(musicPlayer), 'Fourth Song');
-  // A failing track drops out of the loop, so a queue of broken videos ends.
-  musicPlayer().resource.playbackDuration = 0;
+  // A failing track gets one more try in the next round, then drops out, so broken videos end.
+  const failCurrent = () => {
+    musicPlayer().resource.playbackDuration = 0;
+    musicPlayer().finish();
+  };
+  failCurrent();
+  assert.equal(currentTitle(musicPlayer), 'Third Song');
+  failCurrent();
+  assert.equal(currentTitle(musicPlayer), 'Fourth Song', 'retried once');
   musicPlayer().finish();
   assert.equal(currentTitle(musicPlayer), 'Third Song');
-  musicPlayer().resource.playbackDuration = 0;
-  musicPlayer().finish();
+  failCurrent();
+  assert.equal(currentTitle(musicPlayer), 'Fourth Song', 'Third failed twice in a row and is gone');
+  failCurrent();
+  assert.equal(currentTitle(musicPlayer), 'Fourth Song', 'Fourth played fine before, so it gets its retry');
+  failCurrent();
   assert.equal(musicPlayer().status, 'idle');
 
   // The panel button cycles the mode (queue → off) and answers with the public message only.
@@ -1014,7 +1031,8 @@ test('/music play keeps the 50 track limit, playlists fill the queue up to 100',
   playlists.create('g1', actor, 'Bigger', tracks.slice(60));
 
   await feature.handlePlaylistCommand(createInteraction(guild, member, 'play', { name: 'Big' }));
-  assert.equal(channel.lastAnnouncement(), '📃 **User owner** queued playlist **Big** (60 tracks)');
+  // Private playlists are announced without their name.
+  assert.equal(channel.lastAnnouncement(), '📃 **User owner** queued a private playlist (60 tracks)');
   assert.equal(currentTitle(musicPlayer), 'Song 1');
 
   const full = createInteraction(guild, member, 'play', { query: 'second song' });
@@ -1022,7 +1040,7 @@ test('/music play keeps the 50 track limit, playlists fill the queue up to 100',
   assert.match(full.lastReply().content, /queue is full \(50 tracks\)/);
 
   await feature.handlePlaylistCommand(createInteraction(guild, member, 'play', { name: 'bigger' }));
-  assert.equal(channel.lastAnnouncement(), '📃 **User owner** queued playlist **Bigger** (41 tracks) — the queue is limited to 100 tracks, 19 not queued');
+  assert.equal(channel.lastAnnouncement(), '📃 **User owner** queued a private playlist (41 tracks) — the queue is limited to 100 tracks, 19 not queued');
   const again = createInteraction(guild, member, 'play', { name: 'Big' });
   await feature.handlePlaylistCommand(again);
   assert.match(again.lastReply().content, /queue is full \(100 tracks\)/);
@@ -1451,7 +1469,7 @@ test('Spotify playlists queue lazy items that are matched one at a time when the
   musicPlayer().finish();
   await tick();
   await tick();
-  assert.ok(channel.announcements().includes('⚠️ Skipped **Nobody - Nowhere Song**: no YouTube match found.'));
+  assert.ok(channel.announcements().includes('⚠️ Skipped **Nobody - Nowhere Song**: no good YouTube match.'));
   assert.equal(searches(spawn).length, 3);
   assert.equal(currentTitle(musicPlayer), 'Get Lucky');
   assert.equal(streamedUrls(spawn).at(-1), 'https://www.youtube.com/watch?v=gl000001');
@@ -1552,4 +1570,278 @@ test('snapshots keep Spotify items, matched or not, and continue plays them', as
   } finally {
     fs.rmSync(dir, { recursive: true, force: true });
   }
+});
+
+// --- review fixes --------------------------------------------------------------------------------
+
+// Like createFakeSpawn, but YouTube searches ("ytsearch5:…") only answer on release().
+function createHeldSpawn(videos) {
+  const base = createFakeSpawn(videos);
+  const pending = [];
+  function spawn(command, args, options = {}) {
+    const target = String(args[args.length - 1]);
+    if (!target.startsWith('ytsearch5:')) return base(command, args, options);
+    const child = new EventEmitter();
+    child.stdout = new PassThrough();
+    child.stderr = new PassThrough();
+    child.signals = [];
+    child.kill = (signal) => {
+      child.signals.push(signal);
+      child.emit('close', null, signal);
+      return true;
+    };
+    base.calls.push({ command, args, options, child });
+    pending.push(() => {
+      if (child.signals.length) return;
+      child.stdout.write(JSON.stringify(videos[target] || { entries: [] }));
+      child.emit('close', 0);
+    });
+    return child;
+  }
+  spawn.calls = base.calls;
+  spawn.release = () => pending.shift()?.();
+  return spawn;
+}
+
+async function ticks(count = 4) {
+  for (let index = 0; index < count; index += 1) await tick();
+}
+
+test('cleanup in a channel an admin picked only deletes the bot\'s own messages', async () => {
+  const general = createTextChannel('general', 'general');
+  const { feature, guild, store } = createFeature({ store: createFakeStore({ controlChannelId: 'general', autoSetupDone: true }), guild: createGuild({ channels: [general] }) });
+  const chat = general.addMessage({ content: 'important history', ageMs: 30 * 24 * 60 * 60 * 1000 });
+  const recentChat = general.addMessage({ content: 'hello' });
+  const own = await general.send({ content: '🎵 old announcement', allowedMentions: { parse: [] } });
+
+  await feature.ensureControlChannel(guild);
+  assert.ok(general.messageIds().includes(chat.id));
+  assert.ok(general.messageIds().includes(recentChat.id));
+  assert.ok(!general.messageIds().includes(own.id));
+  assert.ok(general.messageIds().includes(store.guilds.g1.music.panelMessageId));
+  assert.ok(general.bulkDeletes.every((ids) => !ids.includes(chat.id) && !ids.includes(recentChat.id)));
+});
+
+test('cleanup needs Manage Messages for others\' messages, keeps pins and caps old deletes', async () => {
+  const { feature, guild, channel } = createFeature();
+  await feature.refreshPanel('g1');
+  channel.canManage = false;
+  const chat = channel.addMessage({ content: 'chat' });
+  const own = await channel.send({ content: 'announcement' });
+  await feature.ensureControlChannel(guild);
+  assert.ok(channel.messageIds().includes(chat.id), 'without Manage Messages others\' messages stay');
+  assert.ok(!channel.messageIds().includes(own.id));
+  assert.equal(channel.bulkDeletes.length, 0, 'bulk delete needs Manage Messages');
+
+  channel.canManage = true;
+  const pinned = channel.addMessage({ content: 'rules', pinned: true });
+  const old = Array.from({ length: 25 }, (_, index) => channel.addMessage({ content: `old ${index}`, ageMs: (20 + index) * 24 * 60 * 60 * 1000 }));
+  await feature.ensureControlChannel(guild);
+  assert.ok(channel.messageIds().includes(pinned.id), 'pinned messages are never deleted');
+  assert.ok(!channel.messageIds().includes(chat.id));
+  assert.equal(old.filter((message) => channel.messageIds().includes(message.id)).length, 5, 'at most 20 single deletes per run');
+});
+
+test('cleanup stops when playback starts and never delays panel updates', async () => {
+  const { feature, guild, channel } = createFeature({ cleanupDelayMs: 0 });
+  await feature.refreshPanel('g1');
+  const old = Array.from({ length: 5 }, (_, index) => channel.addMessage({ content: `old ${index}`, ageMs: (20 + index) * 24 * 60 * 60 * 1000 }));
+  // The first delete (newest first) starts playback; the rest must stay.
+  const firstDelete = old[0].delete;
+  old[0].delete = async () => {
+    await feature.handleMusicCommand(createInteraction(guild, createMember('owner'), 'play', { query: 'lofi beats' }));
+    return firstDelete();
+  };
+  await feature.ensureControlChannel(guild);
+  assert.equal(old.filter((message) => channel.messageIds().includes(message.id)).length, 4);
+  await feature.handleMusicCommand(createInteraction(guild, createMember('owner'), 'stop'));
+
+  // A cleanup that hangs on fetching history does not hold up the panel.
+  let release;
+  const gate = new Promise((resolve) => { release = resolve; });
+  const fetch = channel.messages.fetch;
+  channel.messages.fetch = async (query) => {
+    if (query && typeof query === 'object') await gate;
+    return fetch(query);
+  };
+  await feature.handleMessageCreate({ id: 'x', guildId: 'g1', channelId: CONTROL_CHANNEL_ID });
+  await tick();
+  const edits = channel.edits.length;
+  const done = await Promise.race([feature.refreshPanel('g1').then(() => 'panel'), new Promise((resolve) => setTimeout(() => resolve('timeout'), 200))]);
+  assert.equal(done, 'panel');
+  assert.equal(channel.edits.length, edits + 1);
+  release();
+});
+
+test('background Spotify matches use their own lookup slot and skip kills the search', async () => {
+  const spawn = createHeldSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn, spotify: createFakeSpotify() });
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.playlist }));
+  await tick();
+  const [search] = searches(spawn);
+  assert.ok(search, 'the first track is being matched');
+
+  // A command lookup is not refused while the background match runs.
+  const play = createInteraction(guild, member, 'play', { query: 'lofi beats' });
+  await feature.handleMusicCommand(play);
+  assert.equal(play.deletedReply, true);
+  assert.equal(channel.lastAnnouncement(), '🎵 **User owner** added **Lofi Beats** (3:05) — position 3');
+
+  await feature.handleMusicCommand(createInteraction(guild, member, 'skip'));
+  assert.deepEqual(search.child.signals, ['SIGKILL'], 'the yt-dlp search of the skipped track is killed');
+  await tick();
+  assert.equal(searches(spawn).length, 2, 'the next Spotify track is matched');
+  spawn.release(); // the killed search: nothing happens
+  spawn.release(); // Nowhere Song: no match
+  await ticks();
+  spawn.release(); // Get Lucky
+  await ticks();
+  assert.ok(!streamedUrls(spawn).includes('https://www.youtube.com/watch?v=atw00001'));
+  assert.ok(channel.announcements().some((text) => text.includes('Skipped **Nobody - Nowhere Song**')));
+  assert.equal(currentTitle(musicPlayer), 'Get Lucky');
+});
+
+test('pause pressed while a Spotify track is matched applies once it plays', async () => {
+  const spawn = createHeldSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, musicPlayer } = createFeature({ spawn, spotify: createFakeSpotify() });
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.playlist }));
+  await tick();
+  const pause = createInteraction(guild, member, 'pause');
+  await feature.handleMusicCommand(pause);
+  assert.match(pause.lastReply().content, /Paused/);
+  spawn.release();
+  await ticks();
+  assert.equal(currentTitle(musicPlayer), 'Around the World');
+  assert.equal(musicPlayer().status, 'paused');
+});
+
+test('panel buttons are acknowledged first; answers are follow-ups, never edits of the panel', async () => {
+  const { feature, guild, channel } = createFeature();
+  await feature.handleMusicCommand(createInteraction(guild, createMember('owner'), 'play', { query: 'lofi beats' }));
+  const outsider = createInteraction(guild, createMember('x', { channelId: null }), null, {}, { customId: PANEL_IDS.stop });
+  await feature.handlePanelInteraction(outsider);
+  assert.equal(outsider.deferredUpdate, true);
+  assert.equal(outsider.followedUp, true);
+  assert.equal(outsider.editedReply, undefined);
+  assert.match(outsider.lastReply().content, /Join <#vc1>/);
+  assert.equal(outsider.lastReply().flags, MessageFlags.Ephemeral);
+
+  const stop = createInteraction(guild, createMember('owner'), null, {}, { customId: PANEL_IDS.stop });
+  await feature.handlePanelInteraction(stop);
+  assert.equal(stop.deferredUpdate, true);
+  assert.equal(stop.replies.length, 0);
+  assert.match(channel.lastAnnouncement(), /stopped playback/);
+});
+
+test('a double press on Skip skips only one track', async () => {
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn: createFakeSpawn(MORE_VIDEOS) });
+  const member = createMember('owner');
+  await playAll(feature, guild, member, ['lofi beats', 'second song', 'third song']);
+  await tick();
+  const skipId = componentsOf(latestPanel(channel)).find((component) => component.custom_id.startsWith(`${PANEL_IDS.skip}:`)).custom_id;
+  const first = createInteraction(guild, member, null, {}, { customId: skipId });
+  const second = createInteraction(guild, member, null, {}, { customId: skipId });
+  await feature.handlePanelInteraction(first);
+  await feature.handlePanelInteraction(second);
+  assert.equal(currentTitle(musicPlayer), 'Second Song');
+  assert.match(second.lastReply().content, /already changed/);
+});
+
+test('after three failed Spotify matches in a row the rest is skipped with one summary', async () => {
+  const broken = Array.from({ length: 4 }, (_, index) => spotifyTrack(`ddddddddddddddddddddd${index}`, `Lost ${index}`, 'Ghost', 200));
+  const videos = { ...SPOTIFY_VIDEOS, ...Object.fromEntries(broken.map((track) => [`ytsearch5:${toSearchQuery(track)}`, { entries: [] }])) };
+  const spotify = createFakeSpotify({ [SPOTIFY.album]: { kind: 'album', name: 'Lost', tracks: broken, truncated: false, source: 'embed' } });
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn: createFakeSpawn(videos), spotify });
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.album }));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'second song' }));
+  await ticks(12);
+  const warnings = channel.announcements().filter((text) => text.startsWith('⚠️'));
+  assert.deepEqual(warnings, [
+    '⚠️ Skipped **Ghost - Lost 0**: no good YouTube match.',
+    '⚠️ Skipped **Ghost - Lost 1**: no good YouTube match.',
+    '⚠️ Skipped 2 Spotify tracks after 3 failed matches in a row (no good YouTube match). Going on with the next playable track.'
+  ]);
+  assert.equal(currentTitle(musicPlayer), 'Second Song');
+});
+
+test('weak YouTube results are not used for Spotify tracks', async () => {
+  const videos = { ...SPOTIFY_VIDEOS, [`ytsearch5:${toSearchQuery(ONE_MORE_TIME)}`]: { entries: [{ id: 'weak00001', title: 'Cat compilation', channel: 'Cats', duration: 30 }] } };
+  const { feature, guild, spawn, musicPlayer } = createFeature({ spawn: createFakeSpawn(videos), spotify: createFakeSpotify() });
+  const play = createInteraction(guild, createMember('owner'), 'play', { query: SPOTIFY.track });
+  await feature.handleMusicCommand(play);
+  assert.match(play.lastReply().content, /No good YouTube match for \*\*Daft Punk - One More Time\*\*/);
+  assert.equal(streamedUrls(spawn).length, 0);
+  assert.equal(musicPlayer(), undefined);
+});
+
+test('failure notes name the real reason; a failed playlist save does not skip a matched track', async () => {
+  const timeout = createFeature({
+    spotify: createFakeSpotify(),
+    sourcesPatch: { searchCandidates: async () => { throw Object.assign(new (require('../src/features/music/sources').MusicError)('took too long'), { code: 'TIMEOUT' }); } }
+  });
+  await timeout.feature.handleMusicCommand(createInteraction(timeout.guild, createMember('owner'), 'play', { query: SPOTIFY.album }));
+  await ticks();
+  assert.ok(timeout.channel.announcements().includes('⚠️ Skipped **Daft Punk - One More Time**: the YouTube search timed out.'));
+
+  const offline = createFeature({ spotify: createFakeSpotify(), sourcesPatch: { searchCandidates: async () => { throw Object.assign(new Error('ECONNRESET'), {}); } } });
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    await offline.feature.handleMusicCommand(createInteraction(offline.guild, createMember('owner'), 'play', { query: SPOTIFY.album }));
+    await ticks();
+  } finally {
+    console.error = originalError;
+  }
+  assert.ok(offline.channel.announcements().includes('⚠️ Skipped **Daft Punk - One More Time**: YouTube was unreachable.'));
+
+  const playlists = createPlaylistStore();
+  playlists.cacheResolvedUrl = () => { throw new Error('disk full'); };
+  const saving = createFeature({ spawn: createFakeSpawn(SPOTIFY_VIDEOS), spotify: createFakeSpotify(), playlists });
+  console.error = () => {};
+  try {
+    await saving.feature.handleMusicCommand(createInteraction(saving.guild, createMember('owner'), 'play', { query: SPOTIFY.album }));
+    await ticks();
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(currentTitle(saving.musicPlayer), 'One More Time');
+});
+
+test('private playlists are never announced with name or owner', async () => {
+  const { feature, guild, channel, playlists } = createFeature();
+  playlists.create('g1', { id: 'owner' }, 'Secret Crush Songs', [{ kind: 'track', title: 'A', url: 'https://www.youtube.com/watch?v=a', duration: 60 }]);
+  // A manager may play someone's private playlist; the announcement still hides it.
+  await feature.handlePlaylistCommand(createInteraction(guild, createMember('admin', { manageGuild: true }), 'play', { name: 'Secret Crush Songs', user: 'owner' }));
+  assert.equal(channel.lastAnnouncement(), '📃 **User admin** queued a private playlist (1 track)');
+});
+
+test('playlist autocomplete keeps the manager view of a real GuildMember', async () => {
+  const { feature, guild, playlists } = createFeature();
+  playlists.create('g1', { id: 'someone' }, 'Their Private');
+  // Like discord.js: permissions is a getter on the prototype, lost when the member is spread.
+  class GuildMemberLike {
+    constructor(id) { this.id = id; }
+    get permissions() { return new PermissionsBitField(PermissionsBitField.Flags.ManageGuild); }
+  }
+  let choices = null;
+  const interaction = createInteraction(guild, createMember('admin'), 'delete', { focused: '' });
+  interaction.member = new GuildMemberLike('admin');
+  interaction.respond = async (value) => { choices = value; };
+  await feature.handlePlaylistAutocomplete(interaction);
+  assert.deepEqual(choices.map((choice) => choice.name), ['Their Private — by someone']);
+});
+
+test('new playback replaces an old stopped session', async () => {
+  const { feature, guild, resumeStore, musicPlayer } = createFeature();
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'lofi beats' }));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'stop'));
+  assert.ok(resumeStore.get('g1'));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'second song' }));
+  assert.equal(resumeStore.get('g1'), null);
+  musicPlayer().finish();
+  assert.equal(resumeStore.get('g1'), null, 'a queue that finished leaves nothing to continue');
 });

@@ -20,6 +20,8 @@ const REQUEST_TIMEOUT_MS = 10_000;
 const EMBED_TRACK_CAP = 100;
 const MAX_LIMIT = 500;
 const MAX_SHORT_LINK_HOPS = 3;
+// Short link and embed pages are read up to this size.
+const MAX_PAGE_BYTES = 5 * 1024 * 1024;
 const TYPES = new Set(['track', 'album', 'playlist', 'artist']);
 const OPEN_HOSTS = new Set(['open.spotify.com', 'play.spotify.com']);
 const SHORT_HOSTS = new Set(['spotify.link', 'spotify.app.link']);
@@ -215,6 +217,31 @@ function clampLimit(limit) {
 
 const NOUNS = { track: 'track', album: 'album', playlist: 'playlist', artist: 'artist' };
 
+// Reads a response body as text, at most `maxBytes` (larger pages are refused).
+async function readLimitedText(response, maxBytes = MAX_PAGE_BYTES) {
+  const declared = Number(response.headers?.get?.('content-length'));
+  if (Number.isFinite(declared) && declared > maxBytes) throw new Error(`Page is too large (${declared} bytes)`);
+  const reader = response.body?.getReader?.();
+  if (!reader) {
+    const text = await response.text();
+    if (Buffer.byteLength(text) > maxBytes) throw new Error('Page is too large');
+    return text;
+  }
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error('Page is too large');
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
 function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now = Date.now } = {}) {
   const hasCredentials = Boolean(clientId && clientSecret);
   let token = null;
@@ -230,6 +257,8 @@ function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now 
     if (direct || !isShortLink(input)) return direct;
 
     let url = toUrl(input);
+    // Short links are always fetched over https.
+    if (url.protocol === 'http:') url.protocol = 'https:';
     for (let hop = 0; hop < MAX_SHORT_LINK_HOPS; hop += 1) {
       let response;
       try {
@@ -254,7 +283,7 @@ function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now 
       }
       // spotify.app.link sometimes answers with an HTML page that redirects in JavaScript.
       if (response.ok) {
-        const body = await response.text().catch(() => '');
+        const body = await readLimitedText(response).catch(() => '');
         const target = body.match(/https:\/\/open\.spotify\.com\/(?:intl-[a-z-]+\/)?(?:track|album|playlist|artist)\/[A-Za-z0-9]{22}/i);
         return target ? parseSpotifyLink(target[0]) : null;
       }
@@ -386,7 +415,7 @@ function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now 
     }
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`Spotify embed page answered ${response.status}`);
-    const data = readEmbedData(await response.text());
+    const data = readEmbedData(await readLimitedText(response));
     const pageProps = data?.props?.pageProps;
     if (pageProps?.status === 404) return null;
     const entity = pageProps?.state?.data?.entity;
@@ -411,8 +440,9 @@ function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now 
       .filter((item) => (item.entityType || 'track') === 'track' && idFromUri(item.uri)?.type === 'track')
       .map((item) => ({
         title: String(item.title || 'Unknown title'),
-        // The embed joins artists with ", "; names that contain a comma get split, which search tolerates.
-        artists: String(item.subtitle || '').split(', ').map((artist) => artist.trim()).filter(Boolean),
+        // The embed joins artists with "," and a (non-breaking) space; names that contain a comma get
+        // split, which search tolerates.
+        artists: String(item.subtitle || '').split(/,\s*/u).map((artist) => artist.trim()).filter(Boolean),
         ...(type === 'album' && { album: name }),
         durationMs: Number(item.duration) || 0,
         spotifyUrl: spotifyUrlFor('track', idFromUri(item.uri).id)
@@ -452,8 +482,11 @@ function createSpotifyResolver({ clientId, clientSecret, fetchImpl = fetch, now 
     let apiError = null;
     if (hasCredentials) {
       try {
-        return { ...(await resolveWithApi(type, id, max)), source: 'api' };
+        const result = await resolveWithApi(type, id, max);
+        if (!result.tracks.length) throw new SpotifyError(`That Spotify ${NOUNS[type]} has no playable tracks.`);
+        return { ...result, source: 'api' };
       } catch (error) {
+        if (error instanceof SpotifyError) throw error;
         apiError = error;
         console.warn(`Spotify Web API could not read ${type} ${id}, trying the embed page:`, error.message);
       }

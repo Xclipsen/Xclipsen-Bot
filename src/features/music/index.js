@@ -29,16 +29,42 @@ const MAX_QUEUE = 50;
 // Playlists (and /music continue) may fill the queue further.
 const MAX_PLAYLIST_QUEUE = 100;
 const VOLUME_STEP = 10;
-// yt-dlp lookups: one per server at a time, a few across all servers.
+// yt-dlp lookups from commands: one per server at a time, three across all servers. Background
+// Spotify matches use their own slots (one per server, two overall) so they never block commands.
 const MAX_LOOKUPS = 3;
+const MAX_BACKGROUND_LOOKUPS = 2;
+// After this many Spotify tracks in a row without a match the rest of such a run is skipped at once.
+const MAX_MATCH_FAILURES = 3;
 // A track that ended this quickly failed (or was removed); loops skip it instead of retrying forever.
 const MIN_LOOP_PLAY_MS = 3_000;
 // Channel cleanup: bulk delete only works for messages younger than 14 days.
 const BULK_DELETE_MAX_AGE_MS = (14 * 24 * 60 - 60) * 60_000;
 const CLEANUP_MAX_PAGES = 5;
+// Messages older than 14 days are deleted one by one; at most this many per cleanup.
+const MAX_SINGLE_DELETES = 20;
 const UNKNOWN_MESSAGE = 10008;
 const UNKNOWN_CHANNEL = 10003;
 const PANEL_CUSTOM_IDS = new Set(Object.values(PANEL_IDS));
+// The skip button carries the play token of the track it was shown for: music-panel:skip:<token>.
+const SKIP_PREFIX = `${PANEL_IDS.skip}:`;
+
+// A Spotify track without a usable YouTube match; `reason` is no-match or busy.
+class MatchError extends MusicError {
+  constructor(message, reason) {
+    super(message);
+    this.reason = reason;
+  }
+}
+
+// The track was skipped or stopped while it was being matched.
+class MatchCancelled extends Error {}
+
+function matchFailureReason(error) {
+  if (error?.reason === 'no-match') return 'no good YouTube match';
+  if (error?.reason === 'busy') return 'too many lookups were running';
+  if (error?.code === 'TIMEOUT') return 'the YouTube search timed out';
+  return 'YouTube was unreachable';
+}
 
 function normalizeName(value) {
   return String(value || '').trim().toLowerCase();
@@ -73,6 +99,10 @@ function createMusicFeature({
   const cleanupTimers = new Map();
   const panelChains = new Map();
   const lookupGuilds = new Set();
+  const backgroundGuilds = new Set();
+  const cleanupRuns = new Map();
+  // Interactions answered with deferUpdate(); their replies must be follow-ups, not edits of the panel.
+  const updateDeferred = new WeakSet();
 
   voiceSessions.onEnd((session, reason) => {
     const state = states.get(session.guildId);
@@ -130,8 +160,11 @@ function createMusicFeature({
   }
 
   function stopProcess(state) {
-    // The player itself tears down the old audio pipeline; this ends the processes feeding it.
+    // The player itself tears down the old audio pipeline; this ends the processes feeding it
+    // (and a running Spotify match).
     state.pending = null;
+    state.matchAbort?.abort();
+    state.matchAbort = null;
     state.child?.kill('SIGKILL');
     state.child = null;
     state.resource = null;
@@ -174,77 +207,114 @@ function createMusicFeature({
       ? voice.NoSubscriberBehavior.Play
       : voice.NoSubscriberBehavior.Pause;
 
+    // `paused` is kept: a pause pressed while a Spotify track was matched applies once it plays.
+    if (state.current !== item) state.playToken = (state.playToken || 0) + 1;
     state.current = item;
     state.pending = null;
     state.child = child;
     state.resource = resource;
     state.offset = seek;
     state.failed = false;
-    state.paused = false;
+    state.matchFailures = 0;
     cancelCleanup(state.session.guildId);
     state.session.musicPlayer.play(resource);
     schedulePanel(state.session.guildId);
   }
 
-  // Finds the YouTube match of a Spotify track: one flat yt-dlp search, the best scored result
-  // (or the first one when none scores well enough).
-  async function findYouTubeMatch(track) {
+  // Finds the YouTube match of a Spotify track: one flat yt-dlp search and the best scored result.
+  // Weak results are not used (and never saved), the track is skipped instead.
+  async function findYouTubeMatch(track, signal = null) {
     const query = spotify.toSearchQuery({ title: track.title, artists: track.artists || [] });
-    const candidates = await sources.searchCandidates(query, 5);
+    const candidates = await sources.searchCandidates(query, 5, { signal });
     const durationMs = Number.isFinite(track.duration) ? track.duration * 1000 : track.durationMs || 0;
-    const best = spotify.pickBestMatch({ title: track.title, artists: track.artists || [], album: track.album, durationMs }, candidates) || candidates[0];
-    if (!best) throw new MusicError(`No YouTube match for **${escapeMarkdown(displayTitle(track))}**.`);
+    const best = spotify.pickBestMatch({ title: track.title, artists: track.artists || [], album: track.album, durationMs }, candidates);
+    if (!best) throw new MatchError(`No good YouTube match for **${escapeMarkdown(shorten(displayTitle(track), 100))}**.`, 'no-match');
     return best;
   }
 
-  // Like withLookup, but waits for a free slot (lazy Spotify matches must not fail just because
-  // someone else is looking something up).
-  async function withLookupWhenFree(guildId, task, attempts = 60) {
-    for (let attempt = 0; lookupGuilds.has(guildId) || lookupGuilds.size >= MAX_LOOKUPS; attempt += 1) {
-      if (attempt >= attempts) throw new MusicError('⏳ Too many lookups are running.');
+  // Background lookup that waits for a free background slot; stops waiting once `isCancelled()`.
+  async function withLookupWhenFree(guildId, task, isCancelled, attempts = 60) {
+    for (let attempt = 0; !hasFreeSlot(guildId, true); attempt += 1) {
+      if (isCancelled()) throw new MatchCancelled();
+      if (attempt >= attempts) throw new MatchError('Too many lookups are running.', 'busy');
       await new Promise((resolve) => setTimeout(resolve, lookupRetryMs));
     }
-    return withLookup(guildId, task);
+    if (isCancelled()) throw new MatchCancelled();
+    return withLookup(guildId, task, { background: true });
   }
 
-  // Starts an item; a Spotify track without a YouTube URL is matched first (lazily, right before
+  // Keeps the match on the item and in saved playlists; a failed save must not stop playback.
+  function applyMatch(guildId, item, match) {
+    item.url = match.url;
+    if (!Number.isFinite(item.duration) && Number.isFinite(match.duration)) item.duration = match.duration;
+    try {
+      playlists.cacheResolvedUrl(guildId, item.spotifyUrl, match.url);
+    } catch (error) {
+      console.error(`Could not save a Spotify match in guild ${guildId}:`, error.message);
+    }
+  }
+
+  // Starts a new item; a Spotify track without a YouTube URL is matched first (lazily, right before
   // it plays). The URL is kept on the item, so loops, /music continue and saved playlists reuse it.
   function beginItem(state, item, options = {}) {
+    state.paused = false;
     if (item.kind !== 'spotify' || item.url) {
       startItem(state, item, options);
       return;
     }
     stopProcess(state);
     state.session.musicPlayer.stop(true);
+    state.playToken = (state.playToken || 0) + 1;
     state.current = item;
-    state.paused = false;
     state.offset = 0;
     cancelCleanup(state.session.guildId);
     schedulePanel(state.session.guildId);
     const token = {};
+    const abort = new AbortController();
     state.pending = token;
-    void matchAndStart(state, item, options, token);
+    state.matchAbort = abort;
+    void matchAndStart(state, item, options, token, abort.signal);
   }
 
-  async function matchAndStart(state, item, options, token) {
+  async function matchAndStart(state, item, options, token, signal) {
     const { guildId } = state.session;
+    // False once the track was skipped or stopped, or the bot left.
+    const wanted = () => isActive(state) && state.current === item && state.pending === token;
+    let match = null;
     let error = null;
     try {
-      const match = await withLookupWhenFree(guildId, () => findYouTubeMatch(item));
-      item.url = match.url;
-      if (!Number.isFinite(item.duration) && Number.isFinite(match.duration)) item.duration = match.duration;
-      playlists.cacheResolvedUrl(guildId, item.spotifyUrl, match.url);
+      match = await withLookupWhenFree(guildId, () => findYouTubeMatch(item, signal), () => !wanted());
     } catch (caught) {
       error = caught;
-      if (!(caught instanceof MusicError)) console.error(`Spotify match failed in guild ${guildId}:`, caught);
     }
-    // Skipped, stopped or left while searching.
-    if (!isActive(state) || state.current !== item || state.pending !== token) return;
-    if (!error) {
+    if (match) applyMatch(guildId, item, match);
+    if (!wanted()) return;
+    if (match) {
       startItem(state, item, options);
       return;
     }
-    await announceIn(guildId, `⚠️ Skipped **${escapeMarkdown(shorten(displayTitle(item), 100))}**: no YouTube match found.`);
+    if (!(error instanceof MusicError)) console.error(`Spotify match failed in guild ${guildId}:`, error);
+    await skipFailedMatch(state, item, token, error);
+  }
+
+  // One note per failed track; after MAX_MATCH_FAILURES in a row the following unmatched Spotify
+  // tracks are skipped at once with a single summary.
+  async function skipFailedMatch(state, item, token, error) {
+    const { guildId } = state.session;
+    const reason = matchFailureReason(error);
+    state.matchFailures = (state.matchFailures || 0) + 1;
+    if (state.matchFailures < MAX_MATCH_FAILURES) {
+      await announceIn(guildId, `⚠️ Skipped **${escapeMarkdown(shorten(displayTitle(item), 100))}**: ${reason}.`);
+    } else {
+      let dropped = 0;
+      while (state.queue[0]?.kind === 'spotify' && !state.queue[0].url) {
+        state.queue.shift();
+        dropped += 1;
+      }
+      const rest = state.queue.length ? 'Going on with the next playable track.' : 'Nothing playable is left.';
+      await announceIn(guildId, `⚠️ Skipped ${plural(dropped + 1, 'Spotify track')} after ${MAX_MATCH_FAILURES} failed matches in a row (${reason}). ${rest}`);
+      state.matchFailures = 0;
+    }
     if (isActive(state) && state.current === item && state.pending === token) playNext(state, { failed: true });
   }
 
@@ -253,15 +323,17 @@ function createMusicFeature({
   function playNext(state, { skipped = false, failed: failedToStart = false } = {}) {
     const finished = state.current;
     const failed = failedToStart || (!skipped && (state.failed || (state.resource?.playbackDuration || 0) < MIN_LOOP_PLAY_MS));
-    const loopable = (finished?.kind === 'track' || finished?.kind === 'spotify') && !finished.isLive && !failed;
+    const repeatable = (finished?.kind === 'track' || finished?.kind === 'spotify') && !finished.isLive;
+    // A track that failed gets one more try in the next loop round; failing again drops it.
+    if (repeatable) finished.loopFailures = failed ? (finished.loopFailures || 0) + 1 : 0;
     stopProcess(state);
     state.current = null;
     state.paused = false;
-    if (isActive(state) && loopable && !skipped && state.loop === 'track') {
+    if (isActive(state) && repeatable && !failed && !skipped && state.loop === 'track') {
       startItem(state, finished);
       return;
     }
-    if (loopable && state.loop === 'queue') state.queue.push(finished);
+    if (repeatable && finished.loopFailures <= 1 && state.loop === 'queue') state.queue.push(finished);
     const next = state.queue.shift();
     if (next && isActive(state)) {
       beginItem(state, next);
@@ -300,6 +372,7 @@ function createMusicFeature({
       queue: state?.queue || [],
       paused: Boolean(state?.paused),
       loop: state?.loop || 'off',
+      playToken: state?.playToken || 0,
       volume: config.volume,
       channelId: session?.channelId || null,
       stations: listStations(config.stations),
@@ -355,7 +428,7 @@ function createMusicFeature({
     updateMusicConfig(guildId, { panelMessageId: posted.id });
   }
 
-  // Panel writes and cleanups per guild run one after another so a deleted panel is only re-posted once.
+  // Panel writes per guild run one after another so a deleted panel is only re-posted once.
   function enqueue(guildId, task, label) {
     const previous = panelChains.get(guildId) || Promise.resolve();
     const next = previous
@@ -393,53 +466,81 @@ function createMusicFeature({
     return messages;
   }
 
-  // Deletes every message of the control channel except the panel while nothing plays. Failures
-  // are ignored. If an older message survives, the panel is posted again unless it already is the newest.
+  function canManageMessages(guild, channel) {
+    const me = guild.members?.me;
+    const permissions = me ? channel.permissionsFor?.(me) : null;
+    return permissions?.has?.(PermissionsBitField.Flags.ManageMessages) === true;
+  }
+
+  async function deleteOne(message) {
+    return message.delete().then(() => true, () => false);
+  }
+
+  // While nothing plays: in the bot's own channel (and with Manage Messages) every message except
+  // the panel and pinned ones is deleted; in a channel an admin picked only the bot's own messages
+  // are. Stops as soon as playback starts again; failures are ignored. If messages before and after
+  // the panel survive in the bot's channel, the panel is posted again so it is the newest message.
   async function cleanChannel(guildId) {
     if (!isIdle(guildId)) return;
     const guild = client.guilds.cache.get(guildId);
     const channel = guild ? await fetchChannel(guild, getMusicConfig(guildId).controlChannelId) : null;
     if (!channel?.messages?.fetch) return;
 
+    const canManage = canManageMessages(guild, channel);
+    const everything = canManage && isManagedChannel(channel);
     const messages = await fetchRecentMessages(channel);
     if (!isIdle(guildId)) return;
     const { panelMessageId } = getMusicConfig(guildId);
     const panel = messages.find((message) => message.id === panelMessageId) || null;
     const others = messages.filter((message) => message.id !== panelMessageId);
+    const targets = others.filter((message) => !message.pinned && (everything || message.author?.id === client.user?.id));
     const cutoff = now() - BULK_DELETE_MAX_AGE_MS;
-    const recent = others.filter((message) => message.createdTimestamp > cutoff);
-    const old = others.filter((message) => message.createdTimestamp <= cutoff);
+    // Bulk delete needs Manage Messages; without it own messages go one by one (capped below).
+    const bulk = canManage ? targets.filter((message) => message.createdTimestamp > cutoff) : [];
+    const single = targets.filter((message) => !bulk.includes(message)).slice(0, MAX_SINGLE_DELETES);
     const deleted = new Set();
 
-    for (let index = 0; index < recent.length; index += 100) {
-      const chunk = recent.slice(index, index + 100);
+    for (let index = 0; index < bulk.length && isIdle(guildId); index += 100) {
+      const chunk = bulk.slice(index, index + 100);
       if (chunk.length === 1 || !channel.bulkDelete) {
-        for (const message of chunk) {
-          if (await message.delete().then(() => true, () => false)) deleted.add(message.id);
-        }
+        for (const message of chunk) if (await deleteOne(message)) deleted.add(message.id);
         continue;
       }
       try {
         const result = await channel.bulkDelete(chunk.map((message) => message.id));
         for (const id of result?.keys?.() || []) deleted.add(id);
       } catch {
-        // Missing Manage Messages or already deleted: leave them.
+        // Already deleted or missing permissions: leave them.
       }
     }
-    for (const message of old) {
-      if (await message.delete().then(() => true, () => false)) deleted.add(message.id);
+    for (const message of single) {
+      if (!isIdle(guildId)) return;
+      if (await deleteOne(message)) deleted.add(message.id);
     }
+    if (!isIdle(guildId)) return;
 
-    const remaining = others.filter((message) => !deleted.has(message.id));
-    const olderLeft = panel && remaining.some((message) => message.createdTimestamp < panel.createdTimestamp);
-    const newerLeft = panel && remaining.some((message) => message.createdTimestamp > panel.createdTimestamp);
-    if (!panel || (olderLeft && newerLeft)) {
-      if (panel) {
-        updateMusicConfig(guildId, { panelMessageId: null });
-        await panel.delete().catch(() => {});
-      }
-      await writePanel(guildId);
+    if (!panel) {
+      await refreshPanel(guildId);
+      return;
     }
+    const remaining = others.filter((message) => !deleted.has(message.id));
+    const olderLeft = remaining.some((message) => message.createdTimestamp < panel.createdTimestamp);
+    const newerLeft = remaining.some((message) => message.createdTimestamp > panel.createdTimestamp);
+    if (everything && olderLeft && newerLeft) {
+      updateMusicConfig(guildId, { panelMessageId: null });
+      await panel.delete().catch(() => {});
+      await refreshPanel(guildId);
+    }
+  }
+
+  // One cleanup per guild at a time, outside the panel queue so it never delays panel updates.
+  function runCleanup(guildId) {
+    if (cleanupRuns.has(guildId)) return cleanupRuns.get(guildId);
+    const run = cleanChannel(guildId)
+      .catch((error) => console.error(`Music channel cleanup failed in guild ${guildId}:`, error.message))
+      .finally(() => cleanupRuns.delete(guildId));
+    cleanupRuns.set(guildId, run);
+    return run;
   }
 
   function cancelCleanup(guildId) {
@@ -452,7 +553,7 @@ function createMusicFeature({
     cancelCleanup(guildId);
     const timer = setTimeout(() => {
       cleanupTimers.delete(guildId);
-      if (isIdle(guildId)) void enqueue(guildId, () => cleanChannel(guildId), 'Music channel cleanup');
+      if (isIdle(guildId)) void runCleanup(guildId);
     }, cleanupDelayMs);
     timer.unref?.();
     cleanupTimers.set(guildId, timer);
@@ -460,7 +561,7 @@ function createMusicFeature({
 
   async function refreshAndClean(guildId) {
     await refreshPanel(guildId);
-    if (isIdle(guildId)) await enqueue(guildId, () => cleanChannel(guildId), 'Music channel cleanup');
+    if (isIdle(guildId)) await runCleanup(guildId);
   }
 
   // --- control channel and role setup --------------------------------------------------------
@@ -658,16 +759,23 @@ function createMusicFeature({
     }
   }
 
-  // Runs one yt-dlp lookup with the per-server and global limits.
-  async function withLookup(guildId, task) {
-    if (lookupGuilds.has(guildId) || lookupGuilds.size >= MAX_LOOKUPS) {
+  function hasFreeSlot(guildId, background = false) {
+    const [slots, max] = background ? [backgroundGuilds, MAX_BACKGROUND_LOOKUPS] : [lookupGuilds, MAX_LOOKUPS];
+    return !slots.has(guildId) && slots.size < max;
+  }
+
+  // Runs one yt-dlp lookup with the per-server and global limits (commands and background
+  // Spotify matches have separate slots).
+  async function withLookup(guildId, task, { background = false } = {}) {
+    if (!hasFreeSlot(guildId, background)) {
       throw new MusicError('⏳ I am busy looking up another track. Try again in a moment.');
     }
-    lookupGuilds.add(guildId);
+    const slots = background ? backgroundGuilds : lookupGuilds;
+    slots.add(guildId);
     try {
       return await task();
     } finally {
-      lookupGuilds.delete(guildId);
+      slots.delete(guildId);
     }
   }
 
@@ -699,8 +807,14 @@ function createMusicFeature({
     return { kind: 'track', ...track, source: 'YouTube', author: null, thumbnail: null, requesterId };
   }
 
+  // New playback after a stopped session replaces its snapshot (Continue then offers nothing old).
+  function startFresh(state) {
+    if (!state.current) resumeStore.clear(state.session.guildId);
+  }
+
   // Starts the first item when nothing (or only radio) plays and queues the rest up to `limit`.
   function enqueueItems(state, items, { next = false, limit = MAX_PLAYLIST_QUEUE } = {}) {
+    startFresh(state);
     const rest = [...items];
     const first = !state.current || state.current.kind === 'radio' ? rest.shift() : null;
     const room = Math.max(0, limit - state.queue.length);
@@ -750,7 +864,8 @@ function createMusicFeature({
     const label = `${titleOf(item)} (${describeLength(item)})`;
     if (!state.current || state.current.kind === 'radio') {
       const replacedRadio = state.current?.kind === 'radio';
-      startItem(state, item);
+      startFresh(state);
+      beginItem(state, item);
       return { announce: `▶️ ${who(ctx)} started ${label}${replacedRadio ? ' and stopped the radio' : ''}` };
     }
     if (state.queue.length >= MAX_QUEUE) throw new MusicError(`The queue is full (${MAX_QUEUE} tracks).`);
@@ -782,7 +897,8 @@ function createMusicFeature({
     const state = getState(await ensureSession(ctx));
     const dropped = state.queue.length;
     state.queue = [];
-    startItem(state, radioItem(station, url, ctx.member.id));
+    startFresh(state);
+    beginItem(state, radioItem(station, url, ctx.member.id));
     return { announce: `📻 ${who(ctx)} switched to **${escapeMarkdown(station.name)}**${dropped ? ` and cleared ${plural(dropped, 'queued track')}` : ''}` };
   }
 
@@ -817,8 +933,10 @@ function createMusicFeature({
     return { announce: `⏯️ ${who(ctx)} continued the last session (${plural(count, 'track')}) with ${titleOf(first)}${at}` };
   }
 
-  function skip(ctx) {
+  // `token` (from the panel button) must still be the current track's, so a double press skips once.
+  function skip(ctx, token = null) {
     const state = requireControl(ctx);
+    if (token !== null && token !== String(state.playToken || 0)) return 'That track already changed.';
     const skipped = state.current;
     playNext(state, { skipped: true });
     return { announce: `⏭️ ${who(ctx)} skipped ${titleOf(skipped)}${state.current ? ` · now playing ${titleOf(state.current)}` : ''}` };
@@ -942,10 +1060,10 @@ function createMusicFeature({
     playlists.markUsed(ctx.guild.id, playlist.id);
     schedulePanel(ctx.guild.id);
 
+    const details = `(${plural(count, 'track')}${shuffle ? ', shuffled' : ''})${limitNote(dropped)}`;
+    if (playlist.visibility !== 'public') return { announce: `📃 ${who(ctx)} queued a private playlist ${details}` };
     const by = playlist.ownerId !== String(ctx.member.id) ? ` by <@${playlist.ownerId}>` : '';
-    return {
-      announce: `📃 ${who(ctx)} queued playlist **${escapeMarkdown(playlist.name)}**${by} (${plural(count, 'track')}${shuffle ? ', shuffled' : ''})${limitNote(dropped)}`
-    };
+    return { announce: `📃 ${who(ctx)} queued playlist **${escapeMarkdown(playlist.name)}**${by} ${details}` };
   }
 
   async function addToPlaylist(ctx, name, query) {
@@ -1074,13 +1192,15 @@ function createMusicFeature({
 
   async function respond(interaction, content) {
     const payload = { content: String(content).slice(0, 2000), allowedMentions: { parse: [] } };
-    if (interaction.deferred) await interaction.editReply(payload);
+    if (updateDeferred.has(interaction)) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
+    else if (interaction.deferred) await interaction.editReply(payload);
     else if (interaction.replied) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
     else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
   }
 
   async function respondView(interaction, payload) {
-    if (interaction.deferred) await interaction.editReply({ content: null, ...payload });
+    if (updateDeferred.has(interaction)) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
+    else if (interaction.deferred) await interaction.editReply({ content: null, ...payload });
     else if (interaction.replied) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
     else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
   }
@@ -1108,6 +1228,7 @@ function createMusicFeature({
 
   // After a public announcement the interaction needs no visible answer of its own.
   async function acknowledge(interaction) {
+    if (updateDeferred.has(interaction)) return;
     if (interaction.deferred || interaction.replied) await interaction.deleteReply().catch(() => {});
     else if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) await interaction.deferUpdate();
     else await interaction.reply({ content: '✅ Done.', flags: MessageFlags.Ephemeral });
@@ -1215,8 +1336,11 @@ function createMusicFeature({
       return;
     }
     const subcommand = interaction.options.getSubcommand();
-    const member = interaction.member || { id: interaction.user.id };
-    const actor = { id: String(interaction.user.id), isManager: isManager({ ...member, id: interaction.user.id }) };
+    // memberPermissions/member.permissions are getters on the prototype; never copy the member.
+    const manager = env.PRIVILEGED_USER_IDS.has(String(interaction.user.id))
+      || interaction.memberPermissions?.has?.(PermissionsBitField.Flags.ManageGuild) === true
+      || interaction.member?.permissions?.has?.(PermissionsBitField.Flags.ManageGuild) === true;
+    const actor = { id: String(interaction.user.id), isManager: manager };
     const ownerId = interaction.options.get?.('user')?.value || null;
     let suggestions = playlists.suggest(interaction.guildId, actor, interaction.options.getFocused(), { editable: EDITING_SUBCOMMANDS.has(subcommand) });
     // save/import name the actor's own playlist; play/show/copy may filter by owner.
@@ -1255,7 +1379,8 @@ function createMusicFeature({
   async function handlePanelInteraction(interaction) {
     const isComponent = interaction.isButton?.() || interaction.isStringSelectMenu?.();
     const isPage = interaction.isButton?.() && String(interaction.customId).startsWith(PAGE_PREFIX);
-    if (!isComponent || (!PANEL_CUSTOM_IDS.has(interaction.customId) && !isPage)) return false;
+    const isSkip = interaction.isButton?.() && String(interaction.customId).startsWith(SKIP_PREFIX);
+    if (!isComponent || (!PANEL_CUSTOM_IDS.has(interaction.customId) && !isPage && !isSkip)) return false;
     const ctx = await getContext(interaction);
     if (!ctx) return true;
     if (isPage) {
@@ -1276,9 +1401,13 @@ function createMusicFeature({
       return true;
     }
 
+    // Acknowledge first (within Discord's 3 seconds); answers then come as ephemeral follow-ups.
+    await interaction.deferUpdate();
+    updateDeferred.add(interaction);
     await run(ctx, interaction, () => {
       if (customId === PANEL_IDS.pause) return states.get(ctx.guild.id)?.paused ? resume(ctx) : pause(ctx);
       if (customId === PANEL_IDS.skip) return skip(ctx);
+      if (customId.startsWith(SKIP_PREFIX)) return skip(ctx, customId.slice(SKIP_PREFIX.length));
       if (customId === PANEL_IDS.stop) return stop(ctx);
       if (customId === PANEL_IDS.shuffle) return shuffleQueue(ctx);
       if (customId === PANEL_IDS.loop) return setLoop(ctx);

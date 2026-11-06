@@ -167,7 +167,8 @@ function buildPlaylistListView(playlists, ownerId = null, page = 0) {
 
 // panelState: { current, queue, paused, loop, volume, channelId, stations, playlists, resumable }
 // `resumable` is the size of the last interrupted session (0 = none); it adds a Continue button while idle.
-function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', volume = 50, channelId = null, stations = [], playlists = [], resumable = 0 }) {
+// `playToken` identifies the current track; the skip button carries it so a double press skips once.
+function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', volume = 50, channelId = null, stations = [], playlists = [], resumable = 0, playToken = 0 }) {
   const nowPlaying = current
     ? [
       describeItem(current),
@@ -202,7 +203,7 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
       .setEmoji(paused ? '▶️' : '⏸️')
       .setStyle(ButtonStyle.Primary)
       .setDisabled(!current),
-    new ButtonBuilder().setCustomId(PANEL_IDS.skip).setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary).setDisabled(!current),
+    new ButtonBuilder().setCustomId(`${PANEL_IDS.skip}:${playToken}`).setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary).setDisabled(!current),
     new ButtonBuilder().setCustomId(PANEL_IDS.stop).setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(!current),
     new ButtonBuilder().setCustomId(PANEL_IDS.shuffle).setLabel('Shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary).setDisabled(!current || queue.length < 2),
     new ButtonBuilder()

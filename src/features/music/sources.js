@@ -48,15 +48,27 @@ function getYouTubePlaylistId(value) {
 }
 
 function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn = childProcess.spawn } = {}) {
-  function run(command, args, timeoutMs, timeoutMessage = 'Looking up that video took too long. Please try again.') {
+  // Errors carry a `code`: TIMEOUT, ABORTED (the signal fired) or the process error.
+  function run(command, args, timeoutMs, timeoutMessage = 'Looking up that video took too long. Please try again.', signal = null) {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(Object.assign(new MusicError('The lookup was cancelled.'), { code: 'ABORTED' }));
+        return;
+      }
       const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new MusicError(timeoutMessage));
+        reject(Object.assign(new MusicError(timeoutMessage), { code: 'TIMEOUT' }));
       }, timeoutMs);
+      const onAbort = () => {
+        clearTimeout(timer);
+        child.kill('SIGKILL');
+        reject(Object.assign(new MusicError('The lookup was cancelled.'), { code: 'ABORTED' }));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      child.on('close', () => signal?.removeEventListener('abort', onAbort));
       child.stdout.on('data', (chunk) => { stdout += chunk; });
       child.stderr.on('data', (chunk) => { stderr += chunk; });
       child.on('error', (error) => {
@@ -173,17 +185,18 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
 
   // The first `count` YouTube search results as { title, uploader, duration, url } (one flat lookup),
   // for matching Spotify tracks. Live streams and videos over 3 hours are left out.
-  async function searchCandidates(query, count = 5) {
+  // `signal` aborts the search and kills yt-dlp (skip/stop while a Spotify track is matched).
+  async function searchCandidates(query, count = 5, { signal = null } = {}) {
     const text = String(query || '').trim();
     if (!text) throw new MusicError('Nothing to search for.');
     let output;
     try {
       output = await run(ytdlpPath, ['--flat-playlist', '--dump-single-json', '--no-warnings', '--js-runtimes', 'node', '--', `ytsearch${count}:${text}`], RESOLVE_TIMEOUT_MS,
-        'Searching YouTube took too long. Please try again.');
+        'Searching YouTube took too long. Please try again.', signal);
     } catch (error) {
       if (error instanceof MusicError) throw error;
       console.error('yt-dlp search failed:', error.message.slice(0, 500));
-      throw new MusicError('Could not search YouTube.');
+      throw Object.assign(new MusicError('Could not search YouTube.'), { code: 'YOUTUBE' });
     }
     let info;
     try {
