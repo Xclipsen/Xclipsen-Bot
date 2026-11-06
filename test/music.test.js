@@ -1,4 +1,7 @@
 const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
 const { EventEmitter } = require('node:events');
 const { PassThrough } = require('node:stream');
 const test = require('node:test');
@@ -302,7 +305,8 @@ function createFeature({
   playlists = createPlaylistStore(),
   resumeStore = createResumeStore(),
   cleanupDelayMs = 60_000,
-  random = Math.random
+  random = Math.random,
+  spotify = undefined
 } = {}) {
   const voice = createFakeVoice();
   const client = {
@@ -312,7 +316,7 @@ function createFeature({
   };
   const voiceSessions = createVoiceSessions({ client, voice });
   const sources = createMusicSources({ spawn });
-  const feature = createMusicFeature({ client, env, store, voiceSessions, voice, sources, lookup, playlists, resumeStore, random, panelDelayMs: 0, cleanupDelayMs });
+  const feature = createMusicFeature({ client, env, store, voiceSessions, voice, sources, lookup, playlists, resumeStore, random, panelDelayMs: 0, cleanupDelayMs, lookupRetryMs: 5, ...(spotify && { spotify }) });
   const musicPlayer = () => voiceSessions.get('g1')?.musicPlayer;
   const channel = guild.channels.cache.get(CONTROL_CHANNEL_ID);
   return { feature, voiceSessions, voice, store, guild, spawn, musicPlayer, playlists, resumeStore, channel };
@@ -1320,4 +1324,232 @@ test('playlist autocomplete lists own playlists first, then public ones by owner
   const show = createInteraction(guild, createMember('max'), 'show', { name: play[1].value });
   await feature.handlePlaylistCommand(show);
   assert.match(show.lastReply().embeds[0].toJSON().title, /Chill Public/);
+});
+
+// --- Spotify links -------------------------------------------------------------------------------
+
+const { toSearchQuery, pickBestMatch, SpotifyError } = require('../src/features/music/spotify');
+
+const SPOTIFY = {
+  track: 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT',
+  playlist: 'https://open.spotify.com/playlist/aaaaaaaaaaaaaaaaaaaaa1',
+  album: 'https://open.spotify.com/album/bbbbbbbbbbbbbbbbbbbbb2'
+};
+
+function spotifyTrack(id, title, artist, seconds) {
+  return { title, artists: [artist], durationMs: seconds * 1000, spotifyUrl: `https://open.spotify.com/track/${id}` };
+}
+
+const ONE_MORE_TIME = spotifyTrack('4cOdK2wGLETKBW3PvgPWqT', 'One More Time', 'Daft Punk', 320);
+const MIX_TRACKS = [
+  spotifyTrack('ccccccccccccccccccccc1', 'Around the World', 'Daft Punk', 429),
+  spotifyTrack('ccccccccccccccccccccc2', 'Nowhere Song', 'Nobody', 200),
+  spotifyTrack('ccccccccccccccccccccc3', 'Get Lucky', 'Daft Punk', 369)
+];
+
+// Fake yt-dlp flat search results ("ytsearch5:<query>"), keyed like the yt-dlp fake above.
+function searchResults(track, id, extra = []) {
+  return {
+    [`ytsearch5:${toSearchQuery(track)}`]: {
+      entries: [
+        { id: `${id}live`, title: `${track.title} (Live in Paris)`, channel: 'Fan Uploads', duration: 600 },
+        { id, title: `${track.artists[0]} - ${track.title} (Official Audio)`, channel: `${track.artists[0]} - Topic`, duration: track.durationMs / 1000 },
+        ...extra
+      ]
+    }
+  };
+}
+
+const SPOTIFY_VIDEOS = {
+  ...VIDEOS,
+  ...searchResults(ONE_MORE_TIME, 'omt00001'),
+  ...searchResults(MIX_TRACKS[0], 'atw00001'),
+  [`ytsearch5:${toSearchQuery(MIX_TRACKS[1])}`]: { entries: [] },
+  ...searchResults(MIX_TRACKS[2], 'gl000001')
+};
+
+function createFakeSpotify(results = {
+  [SPOTIFY.track]: { kind: 'track', name: 'One More Time', tracks: [ONE_MORE_TIME], truncated: false, source: 'embed' },
+  [SPOTIFY.playlist]: { kind: 'playlist', name: 'Mix', owner: 'someone', tracks: MIX_TRACKS, truncated: false, source: 'embed' },
+  [SPOTIFY.album]: { kind: 'album', name: 'Discovery', owner: 'Daft Punk', tracks: [ONE_MORE_TIME, MIX_TRACKS[2]], truncated: false, source: 'embed' }
+}) {
+  const calls = [];
+  return {
+    calls,
+    async resolve(url, options) {
+      calls.push({ url, options });
+      if (!results[url]) throw new SpotifyError('That Spotify playlist doesn\'t exist or is private.');
+      return structuredClone(results[url]);
+    },
+    toSearchQuery,
+    pickBestMatch
+  };
+}
+
+function searches(spawn) {
+  return spawn.calls.filter((call) => call.args.some((arg) => String(arg).startsWith('ytsearch5:')));
+}
+
+function streamedUrls(spawn) {
+  return spawn.calls.filter((call) => call.command === 'yt-dlp' && call.args.includes('-o')).map((call) => call.args.at(-1));
+}
+
+test('a Spotify track link plays its best YouTube match and shows the Spotify title', async () => {
+  const spotify = createFakeSpotify();
+  const spawn = createFakeSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn, spotify });
+  const member = createMember('owner');
+
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.track }));
+  assert.equal(channel.lastAnnouncement(), '▶️ **User owner** started **Daft Punk - One More Time** (5:20)');
+  const [search] = searches(spawn);
+  assert.ok(search.args.includes('--flat-playlist'));
+  assert.equal(search.args.at(-1), 'ytsearch5:Daft Punk - One More Time');
+  // The live version scores worse than the Topic upload with the right length.
+  assert.deepEqual(streamedUrls(spawn), ['https://www.youtube.com/watch?v=omt00001']);
+  const item = musicPlayer().resource.options.metadata;
+  assert.equal(item.kind, 'spotify');
+  assert.equal(item.spotifyUrl, ONE_MORE_TIME.spotifyUrl);
+
+  await tick();
+  const panel = latestPanel(channel).embeds[0].toJSON();
+  assert.match(panel.fields[0].value, /🟢 \[Daft Punk - One More Time\]\(https:\/\/open\.spotify\.com\/track\/4cOdK2wGLETKBW3PvgPWqT\)/);
+  assert.match(panel.fields[0].value, /Source: Spotify \(played from YouTube\)/);
+
+  const now = createInteraction(guild, member, 'nowplaying');
+  await feature.handleMusicCommand(now);
+  assert.match(now.lastReply().content, /Daft Punk - One More Time/);
+
+  // Bad links are refused before joining.
+  const bad = createInteraction(guild, member, 'playnext', { query: 'https://open.spotify.com/playlist/zzzzzzzzzzzzzzzzzzzzz9' });
+  await feature.handleMusicCommand(bad);
+  assert.match(bad.lastReply().content, /doesn't exist or is private/);
+});
+
+test('Spotify playlists queue lazy items that are matched one at a time when they start', async () => {
+  const spotify = createFakeSpotify();
+  const spawn = createFakeSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn, spotify });
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'radio', { station: BUILT_IN_STATIONS[0].id }));
+
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.playlist }));
+  assert.equal(channel.lastAnnouncement(), '📃 **User owner** queued Spotify playlist **Mix** (3 tracks)');
+  assert.deepEqual(spotify.calls.map((call) => call.options.limit), [100]);
+  await tick();
+  // Only the first track was searched; it replaced the radio.
+  assert.equal(searches(spawn).length, 1);
+  assert.equal(currentTitle(musicPlayer), 'Around the World');
+  assert.deepEqual(streamedUrls(spawn), ['https://www.youtube.com/watch?v=atw00001']);
+
+  const queue = createInteraction(guild, member, 'queue');
+  await feature.handleMusicCommand(queue);
+  const description = queue.lastReply().embeds[0].toJSON().description;
+  assert.match(description, /`1\.` 🟢 \[Nobody - Nowhere Song\]\(https:\/\/open\.spotify\.com\/track\/ccccccccccccccccccccc2\) · 3:20/);
+
+  // The second track has no YouTube match: it is skipped with a public note, the third plays.
+  musicPlayer().finish();
+  await tick();
+  await tick();
+  assert.ok(channel.announcements().includes('⚠️ Skipped **Nobody - Nowhere Song**: no YouTube match found.'));
+  assert.equal(searches(spawn).length, 3);
+  assert.equal(currentTitle(musicPlayer), 'Get Lucky');
+  assert.equal(streamedUrls(spawn).at(-1), 'https://www.youtube.com/watch?v=gl000001');
+
+  // Loops reuse the cached match instead of searching again.
+  await feature.handleMusicCommand(createInteraction(guild, member, 'loop', { mode: 'track' }));
+  musicPlayer().finish();
+  assert.equal(searches(spawn).length, 3);
+  assert.equal(streamedUrls(spawn).at(-1), 'https://www.youtube.com/watch?v=gl000001');
+});
+
+test('skipping a Spotify item while it is being matched does not start it later', async () => {
+  const spotify = createFakeSpotify();
+  const spawn = createFakeSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, musicPlayer } = createFeature({ spawn, spotify });
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'lofi beats' }));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: SPOTIFY.album }));
+  assert.equal(searches(spawn).length, 0, 'nothing is searched while another track plays');
+
+  musicPlayer().finish();
+  // The match for "One More Time" is running; skip right away.
+  await feature.handleMusicCommand(createInteraction(guild, member, 'skip'));
+  await tick();
+  await tick();
+  assert.equal(currentTitle(musicPlayer), 'Get Lucky');
+  assert.ok(!streamedUrls(spawn).includes('https://www.youtube.com/watch?v=omt00001'));
+});
+
+test('/playlist add and import take Spotify links; matches are cached in the playlist', async () => {
+  const spotify = createFakeSpotify();
+  const spawn = createFakeSpawn(SPOTIFY_VIDEOS);
+  const { feature, guild, playlists, musicPlayer } = createFeature({ spawn, spotify });
+  const owner = createMember('owner');
+  const actor = { id: 'owner' };
+
+  await feature.handlePlaylistCommand(createInteraction(guild, owner, 'create', { name: 'Daft' }));
+  const add = createInteraction(guild, owner, 'add', { name: 'Daft', query: SPOTIFY.track });
+  await feature.handlePlaylistCommand(add);
+  assert.match(add.lastReply().content, /Added \*\*Daft Punk - One More Time\*\* to \*\*Daft\*\* \(1 track\)/);
+  assert.equal(searches(spawn).length, 0, 'saving needs no YouTube search');
+
+  const importing = createInteraction(guild, owner, 'import', { name: 'Daft', url: SPOTIFY.playlist });
+  await feature.handlePlaylistCommand(importing);
+  assert.match(importing.lastReply().content, /Imported \*\*Spotify playlist Mix\*\* into your playlist \*\*Daft\*\*: 3 tracks/);
+
+  const stored = playlists.resolve('g1', actor, 'Daft').tracks;
+  assert.equal(stored.length, 4);
+  assert.deepEqual(stored[0], { title: 'One More Time', url: null, duration: 320, isLive: false, source: 'spotify', spotifyUrl: ONE_MORE_TIME.spotifyUrl, artists: ['Daft Punk'] });
+
+  const show = createInteraction(guild, owner, 'show', { name: 'Daft' });
+  await feature.handlePlaylistCommand(show);
+  assert.match(show.lastReply().embeds[0].toJSON().description, /`1\.` 🟢 \[Daft Punk - One More Time\]/);
+
+  await feature.handlePlaylistCommand(createInteraction(guild, owner, 'play', { name: 'Daft' }));
+  await tick();
+  assert.equal(currentTitle(musicPlayer), 'One More Time');
+  assert.equal(playlists.resolve('g1', actor, 'Daft').tracks[0].url, 'https://www.youtube.com/watch?v=omt00001');
+
+  // A YouTube playlist link still works for import.
+  const youtube = createInteraction(guild, owner, 'import', { name: 'Tube', url: 'https://www.youtube.com/playlist?list=PLchill' });
+  const feature2 = createFeature({ spawn: createFakeSpawn(MORE_VIDEOS), spotify });
+  await feature2.feature.handlePlaylistCommand(youtube);
+  assert.match(youtube.lastReply().content, /Imported \*\*Chill Mix\*\*/);
+});
+
+test('snapshots keep Spotify items, matched or not, and continue plays them', async () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'music-resume-'));
+  const filePath = path.join(dir, 'music-resume.json');
+  try {
+    const spotify = createFakeSpotify();
+    const spawn = createFakeSpawn(SPOTIFY_VIDEOS);
+    const first = createFeature({ spawn, spotify, resumeStore: createResumeStore({ filePath }) });
+    const member = createMember('owner');
+    await first.feature.handleMusicCommand(createInteraction(first.guild, member, 'play', { query: SPOTIFY.album }));
+    await tick();
+    assert.equal(currentTitle(first.musicPlayer), 'One More Time');
+    first.voiceSessions.leave('g1', 'owner left the voice channel');
+
+    // A new feature (as after a restart) reads the snapshot from the file.
+    const second = createFeature({ spawn, spotify, resumeStore: createResumeStore({ filePath }) });
+    const snapshot = JSON.parse(fs.readFileSync(filePath, 'utf8')).guilds.g1;
+    assert.equal(snapshot.current.kind, 'spotify');
+    assert.equal(snapshot.current.url, 'https://www.youtube.com/watch?v=omt00001');
+    assert.deepEqual(snapshot.current.artists, ['Daft Punk']);
+    assert.equal(snapshot.queue[0].kind, 'spotify');
+    assert.equal(snapshot.queue[0].url, null);
+
+    await second.feature.handleMusicCommand(createInteraction(second.guild, member, 'continue'));
+    const ffmpeg = spawn.calls.at(-1);
+    assert.deepEqual(ffmpeg.args.slice(ffmpeg.args.indexOf('-ss'), ffmpeg.args.indexOf('-ss') + 2), ['-ss', '65']);
+    assert.equal(streamedUrls(spawn).at(-1), 'https://www.youtube.com/watch?v=omt00001');
+    const before = searches(spawn).length;
+    second.musicPlayer().finish();
+    await tick();
+    assert.equal(searches(spawn).length, before + 1);
+    assert.equal(currentTitle(second.musicPlayer), 'Get Lucky');
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });

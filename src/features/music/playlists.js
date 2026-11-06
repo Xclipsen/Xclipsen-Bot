@@ -1,9 +1,11 @@
 const { randomBytes } = require('node:crypto');
 
 const { MusicError, isYouTubeVideoUrl } = require('./sources');
+const { parseSpotifyLink } = require('./spotify');
 
 // Saved playlists per server and owner (data/playlists.json):
-// { guilds: { <guildId>: [{ id, name, ownerId, visibility, createdAt, updatedAt, lastUsedAt, tracks: [{ title, url, duration, isLive }] }] } }
+// { guilds: { <guildId>: [{ id, name, ownerId, visibility, createdAt, updatedAt, lastUsedAt, tracks: [{ title, url, duration, isLive, source?, spotifyUrl?, artists? }] }] } }
+// (Spotify tracks have source 'spotify' and `url` null until their YouTube match is known.)
 // Names are unique per owner (case-insensitive). Private playlists are only for their owner; public
 // ones can be listed, shown and played by everyone. Only the owner changes a playlist; managers
 // (`actor.isManager`: ManageGuild or PRIVILEGED_USER_IDS) may see and change every playlist.
@@ -31,9 +33,27 @@ function validateName(value) {
   return name;
 }
 
-// A playlist entry: only single YouTube videos, never radio stations.
+function isSpotifyItem(item) {
+  return item?.kind === 'spotify' || item?.source === 'spotify';
+}
+
+// A playlist entry: single YouTube videos or Spotify tracks, never radio stations. Spotify tracks
+// keep { source: 'spotify', spotifyUrl, artists }; their `url` is the YouTube match once known.
 function toPlaylistTrack(item) {
-  if (!item || item.kind === 'radio' || !isYouTubeVideoUrl(item.url)) return null;
+  if (!item || item.kind === 'radio') return null;
+  if (isSpotifyItem(item)) {
+    if (parseSpotifyLink(item.spotifyUrl)?.type !== 'track') return null;
+    return {
+      title: String(item.title || 'Unknown title').slice(0, 200),
+      url: isYouTubeVideoUrl(item.url) ? item.url : null,
+      duration: Number.isFinite(item.duration) ? Math.round(item.duration) : null,
+      isLive: false,
+      source: 'spotify',
+      spotifyUrl: item.spotifyUrl,
+      artists: (Array.isArray(item.artists) ? item.artists : []).map((name) => String(name).slice(0, 100)).filter(Boolean).slice(0, 10)
+    };
+  }
+  if (!isYouTubeVideoUrl(item.url)) return null;
   return {
     title: String(item.title || 'Unknown title').slice(0, 200),
     url: item.url,
@@ -223,7 +243,7 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
   function addTracks(guildId, actor, name, items) {
     const playlist = resolveEditable(guildId, actor, name);
     const tracks = items.map(toPlaylistTrack).filter(Boolean);
-    if (!tracks.length) throw new MusicError('Only single YouTube videos can be saved in a playlist.');
+    if (!tracks.length) throw new MusicError('Only single YouTube videos and Spotify tracks can be saved in a playlist.');
     const room = MAX_PLAYLIST_TRACKS - playlist.tracks.length;
     if (room <= 0) throw new MusicError(`**${playlist.name}** is full (${MAX_PLAYLIST_TRACKS} tracks).`);
     const added = tracks.slice(0, room);
@@ -245,7 +265,7 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
   // Returns { playlist, created, dropped }.
   function saveTracks(guildId, actor, rawName, items) {
     const tracks = items.map(toPlaylistTrack).filter(Boolean);
-    if (!tracks.length) throw new MusicError('There are no YouTube tracks to save.');
+    if (!tracks.length) throw new MusicError('There are no YouTube or Spotify tracks to save.');
     const kept = tracks.slice(0, MAX_PLAYLIST_TRACKS);
     const existing = findOwn(guildId, actor.id, validateName(rawName));
     if (!existing) return { playlist: create(guildId, actor, rawName, kept), created: true, dropped: tracks.length - kept.length };
@@ -254,6 +274,19 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
 
   function markUsed(guildId, id) {
     return update(guildId, id, { lastUsedAt: now() });
+  }
+
+  // Remembers the YouTube match of a Spotify track in every playlist of the server that has it unresolved.
+  function cacheResolvedUrl(guildId, spotifyUrl, url) {
+    if (!spotifyUrl || !isYouTubeVideoUrl(url)) return 0;
+    let changed = 0;
+    const list = getAll(guildId).map((playlist) => {
+      if (!playlist.tracks.some((track) => track.spotifyUrl === spotifyUrl && !track.url)) return playlist;
+      changed += 1;
+      return { ...playlist, tracks: playlist.tracks.map((track) => (track.spotifyUrl === spotifyUrl && !track.url ? { ...track, url } : track)) };
+    });
+    if (changed) setAll(guildId, list);
+    return changed;
   }
 
   // Autocomplete: own playlists first (value = name), then other public ones (value = "#<id>").
@@ -286,6 +319,7 @@ function createPlaylistStore({ filePath = null, load, save, now = () => new Date
     removeTrack,
     saveTracks,
     markUsed,
+    cacheResolvedUrl,
     suggest
   };
 }

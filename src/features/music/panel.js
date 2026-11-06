@@ -29,7 +29,7 @@ const LIST_TITLE_LENGTH = 80;
 const LOOP_LABELS = { off: 'Loop: off', track: 'Loop: track', queue: 'Loop: queue' };
 
 const COMMAND_OVERVIEW = [
-  '`/music play query:<link or search>` play or queue a YouTube video',
+  '`/music play query:<link or search>` play or queue YouTube or a Spotify link',
   '`/music playnext query:<…>` play it right after the current track',
   '`/music radio station:<name>` play a lofi / chill radio station',
   '`/music skip` · `stop` · `pause` · `resume` · `nowplaying` · `volume`',
@@ -65,10 +65,30 @@ function describeLength(item) {
   return item.isLive ? '🔴 Live' : formatDuration(item.duration);
 }
 
+function isSpotifyItem(item) {
+  return item?.kind === 'spotify' || item?.source === 'spotify';
+}
+
+// Plain title; Spotify tracks as "Artist, Artist - Title".
+function displayTitle(item) {
+  const artists = isSpotifyItem(item) && Array.isArray(item.artists) ? item.artists.slice(0, 3).join(', ') : '';
+  return artists ? `${artists} - ${item.title}` : String(item.title);
+}
+
+// Spotify tracks link to Spotify and carry a small marker; they play their YouTube match.
 function describeItem(item, { maxTitle = 200 } = {}) {
-  const name = escapeMarkdown(shorten(item.title, maxTitle));
-  const title = item.kind === 'radio' ? `📻 ${name}` : `[${name}](${item.url})`;
+  const name = escapeMarkdown(shorten(displayTitle(item), maxTitle));
+  let title;
+  if (item.kind === 'radio') title = `📻 ${name}`;
+  else if (isSpotifyItem(item)) title = `🟢 [${name}](${item.spotifyUrl || item.url})`;
+  else title = `[${name}](${item.url})`;
   return `${title} · ${describeLength(item)}`;
+}
+
+function describeSource(item) {
+  if (item.kind === 'radio') return 'Radio';
+  if (isSpotifyItem(item)) return item.url ? 'Spotify (played from YouTube)' : 'Spotify (looking for it on YouTube…)';
+  return escapeMarkdown(item.author ? `YouTube · ${item.author}` : 'YouTube');
 }
 
 // "1:23:45", plus a note for items without a length (live streams).
@@ -151,7 +171,7 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
   const nowPlaying = current
     ? [
       describeItem(current),
-      `Source: ${current.kind === 'radio' ? 'Radio' : escapeMarkdown(current.author ? `YouTube · ${current.author}` : 'YouTube')}`,
+      `Source: ${describeSource(current)}`,
       `Requested by <@${current.requesterId}>${paused ? ' · ⏸️ paused' : ''}`
     ].join('\n')
     : 'Nothing is playing.';
@@ -244,6 +264,9 @@ module.exports = {
   buildPlaylistView,
   buildPlaylistListView,
   describeItem,
+  describeSource,
+  displayTitle,
+  isSpotifyItem,
   describeLength,
   escapeMarkdown,
   formatDuration,

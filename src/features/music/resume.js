@@ -4,12 +4,17 @@
 // `position` is where the current track was, in seconds. Snapshots expire after 24 hours.
 const RESUME_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RESUME_QUEUE = 100;
-const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId'];
+const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId', 'spotifyUrl', 'artists'];
+const KINDS = new Set(['track', 'radio', 'spotify']);
 
+// Spotify items may have no YouTube URL yet; they are matched when they play.
 function normalizeItem(item) {
-  if (!item || typeof item.url !== 'string' || typeof item.title !== 'string') return null;
+  if (!item || typeof item.title !== 'string') return null;
+  const kind = KINDS.has(item.kind) ? item.kind : 'track';
+  if (typeof item.url !== 'string' && !(kind === 'spotify' && typeof item.spotifyUrl === 'string')) return null;
   const clean = Object.fromEntries(ITEM_KEYS.filter((key) => item[key] !== undefined).map((key) => [key, item[key]]));
-  clean.kind = item.kind === 'radio' ? 'radio' : 'track';
+  clean.kind = kind;
+  if (kind === 'spotify') clean.url = typeof item.url === 'string' ? item.url : null;
   return clean;
 }
 

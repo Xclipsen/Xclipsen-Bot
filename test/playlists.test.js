@@ -135,7 +135,7 @@ test('save replaces your own playlist of that name, copy makes a private copy', 
   assert.equal(second.created, false);
   assert.equal(second.playlist.id, first.playlist.id);
   assert.deepEqual(second.playlist.tracks.map((entry) => entry.title), ['Song c1']);
-  assert.throws(() => store.saveTracks('g1', owner, 'Empty', [{ kind: 'radio', title: 'R', url: 'https://r.example/' }]), /no YouTube tracks/);
+  assert.throws(() => store.saveTracks('g1', owner, 'Empty', [{ kind: 'radio', title: 'R', url: 'https://r.example/' }]), /no YouTube or Spotify tracks/);
 
   assert.throws(() => store.copy('g1', other, 'Queue', 'owner', 'Mine'), /no public playlist/);
   store.setVisibility('g1', owner, 'Queue', 'public');
@@ -250,4 +250,29 @@ test('playlist import lists one flat page of up to 100 entries', async () => {
   assert.equal(result.tracks[0].url, 'https://www.youtube.com/watch?v=video0000');
 
   await assert.rejects(sources.resolvePlaylist('https://www.youtube.com/watch?v=abc'), /link to a YouTube playlist/);
+});
+
+test('Spotify tracks are valid playlist and snapshot items, with or without a YouTube match', () => {
+  const spotifyUrl = 'https://open.spotify.com/track/4cOdK2wGLETKBW3PvgPWqT';
+  const item = { kind: 'spotify', title: 'One More Time', artists: ['Daft Punk'], duration: 320, spotifyUrl, url: null, requesterId: 'x' };
+  assert.deepEqual(toPlaylistTrack(item), { title: 'One More Time', url: null, duration: 320, isLive: false, source: 'spotify', spotifyUrl, artists: ['Daft Punk'] });
+  assert.equal(toPlaylistTrack({ ...item, url: 'https://www.youtube.com/watch?v=abc' }).url, 'https://www.youtube.com/watch?v=abc');
+  assert.equal(toPlaylistTrack({ ...item, url: 'https://evil.example/x' }).url, null, 'only YouTube video URLs are kept');
+  assert.equal(toPlaylistTrack({ ...item, spotifyUrl: 'https://open.spotify.com/album/4cOdK2wGLETKBW3PvgPWqT' }), null);
+  assert.equal(toPlaylistTrack({ ...item, spotifyUrl: 'https://example.com/track/1' }), null);
+
+  const store = createStore();
+  store.create('g1', owner, 'A', [item]);
+  store.create('g1', other, 'B', [item, track('y1')], { visibility: 'public' });
+  assert.equal(store.cacheResolvedUrl('g1', spotifyUrl, 'https://www.youtube.com/watch?v=omt'), 2);
+  assert.equal(store.resolve('g1', owner, 'A').tracks[0].url, 'https://www.youtube.com/watch?v=omt');
+  assert.equal(store.cacheResolvedUrl('g1', spotifyUrl, 'https://www.youtube.com/watch?v=other'), 0, 'a known match is kept');
+
+  const resume = createResumeStore();
+  resume.set('g1', { current: item, position: 10, queue: [{ ...item, url: undefined }], loop: 'off' });
+  const snapshot = resume.get('g1');
+  assert.equal(snapshot.current.kind, 'spotify');
+  assert.equal(snapshot.current.url, null);
+  assert.deepEqual(snapshot.queue[0].artists, ['Daft Punk']);
+  assert.equal(snapshot.queue[0].spotifyUrl, spotifyUrl);
 });

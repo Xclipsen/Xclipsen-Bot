@@ -321,10 +321,10 @@ const musicCommand = new SlashCommandBuilder()
   .setDescription('Play music and radio in your voice channel (only in the music channel).')
   .addSubcommand((subcommand) => subcommand
     .setName('play')
-    .setDescription('Play or queue a YouTube video.')
+    .setDescription('Play or queue a YouTube video or a Spotify track, album or playlist.')
     .addStringOption((option) => option
       .setName('query')
-      .setDescription('YouTube link or search text')
+      .setDescription('YouTube or Spotify link, or search text')
       .setRequired(true)
       .setMaxLength(300)))
   .addSubcommand((subcommand) => subcommand
@@ -367,7 +367,7 @@ const musicCommand = new SlashCommandBuilder()
     .setDescription('Play a YouTube video right after the current track.')
     .addStringOption((option) => option
       .setName('query')
-      .setDescription('YouTube link or search text')
+      .setDescription('YouTube or Spotify link, or search text')
       .setRequired(true)
       .setMaxLength(300)))
   .addSubcommand((subcommand) => subcommand
@@ -444,7 +444,7 @@ const playlistCommand = new SlashCommandBuilder()
     .setName('add')
     .setDescription('Add a YouTube video to one of your playlists.')
     .addStringOption((option) => playlistNameOption(option))
-    .addStringOption((option) => option.setName('query').setDescription('YouTube link or search text; empty adds the current track').setRequired(false).setMaxLength(300)))
+    .addStringOption((option) => option.setName('query').setDescription('YouTube or Spotify link or search; empty adds the current track').setRequired(false).setMaxLength(300)))
   .addSubcommand((subcommand) => subcommand
     .setName('remove')
     .setDescription('Remove a track from one of your playlists.')
@@ -471,9 +471,9 @@ const playlistCommand = new SlashCommandBuilder()
     .addStringOption((option) => playlistNameOption(option)))
   .addSubcommand((subcommand) => subcommand
     .setName('import')
-    .setDescription('Import up to 100 videos of a YouTube playlist into your playlist.')
+    .setDescription('Import up to 100 tracks of a YouTube or Spotify playlist into your playlist.')
     .addStringOption((option) => playlistNameOption(option))
-    .addStringOption((option) => option.setName('url').setDescription('YouTube playlist link').setRequired(true).setMaxLength(300)))
+    .addStringOption((option) => option.setName('url').setDescription('YouTube playlist or Spotify playlist, album or artist link').setRequired(true).setMaxLength(300)))
   .addSubcommand((subcommand) => subcommand
     .setName('copy')
     .setDescription('Copy a public playlist of someone into your own playlists.')

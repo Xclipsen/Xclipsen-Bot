@@ -2,7 +2,7 @@ const { ChannelType, MessageFlags, PermissionsBitField } = require('discord.js')
 
 const dns = require('node:dns');
 
-const { createMusicSources, MusicError } = require('./sources');
+const { createMusicSources, MusicError, MAX_IMPORT_TRACKS } = require('./sources');
 const { listStations, findStation } = require('./stations');
 const {
   PANEL_IDS,
@@ -13,6 +13,8 @@ const {
   buildPlaylistListView,
   describeItem,
   describeLength,
+  describeSource,
+  displayTitle,
   escapeMarkdown,
   formatDuration,
   shorten
@@ -21,6 +23,7 @@ const { assertPublicStationUrl } = require('./urlSafety');
 const { nextLoopMode, shuffled, removeAt, moveItem, LOOP_MODES } = require('./queue');
 const { createPlaylistStore, canRead, MAX_PLAYLIST_TRACKS } = require('./playlists');
 const { createResumeStore } = require('./resume');
+const { createSpotifyResolver, isSpotifyLink } = require('./spotify');
 
 const MAX_QUEUE = 50;
 // Playlists (and /music continue) may fill the queue further.
@@ -54,7 +57,10 @@ function createMusicFeature({
   sources = createMusicSources({ ytdlpPath: env.YTDLP_PATH }),
   playlists = createPlaylistStore({ filePath: env.PLAYLISTS_FILE_PATH || null }),
   resumeStore = createResumeStore({ filePath: env.MUSIC_RESUME_FILE_PATH || null }),
+  spotify = createSpotifyResolver({ clientId: env.SPOTIFY_CLIENT_ID, clientSecret: env.SPOTIFY_CLIENT_SECRET }),
   lookup = dns.promises.lookup,
+  // Spotify tracks wait this long between tries while another lookup of the server runs.
+  lookupRetryMs = 1_000,
   panelDelayMs = 2_000,
   cleanupDelayMs = 30_000,
   now = Date.now,
@@ -125,6 +131,7 @@ function createMusicFeature({
 
   function stopProcess(state) {
     // The player itself tears down the old audio pipeline; this ends the processes feeding it.
+    state.pending = null;
     state.child?.kill('SIGKILL');
     state.child = null;
     state.resource = null;
@@ -151,7 +158,7 @@ function createMusicFeature({
 
   function startItem(state, item, { startAt = 0 } = {}) {
     stopProcess(state);
-    const seek = item.kind === 'track' && !item.isLive && startAt > 0 ? Math.floor(startAt) : 0;
+    const seek = item.kind !== 'radio' && !item.isLive && startAt > 0 ? Math.floor(startAt) : 0;
     const child = item.kind === 'radio'
       ? sources.spawnRadio(item.url)
       : seek ? sources.spawnTrack(item.url, { startAt: seek }) : sources.spawnTrack(item.url);
@@ -168,6 +175,7 @@ function createMusicFeature({
       : voice.NoSubscriberBehavior.Pause;
 
     state.current = item;
+    state.pending = null;
     state.child = child;
     state.resource = resource;
     state.offset = seek;
@@ -178,11 +186,74 @@ function createMusicFeature({
     schedulePanel(state.session.guildId);
   }
 
+  // Finds the YouTube match of a Spotify track: one flat yt-dlp search, the best scored result
+  // (or the first one when none scores well enough).
+  async function findYouTubeMatch(track) {
+    const query = spotify.toSearchQuery({ title: track.title, artists: track.artists || [] });
+    const candidates = await sources.searchCandidates(query, 5);
+    const durationMs = Number.isFinite(track.duration) ? track.duration * 1000 : track.durationMs || 0;
+    const best = spotify.pickBestMatch({ title: track.title, artists: track.artists || [], album: track.album, durationMs }, candidates) || candidates[0];
+    if (!best) throw new MusicError(`No YouTube match for **${escapeMarkdown(displayTitle(track))}**.`);
+    return best;
+  }
+
+  // Like withLookup, but waits for a free slot (lazy Spotify matches must not fail just because
+  // someone else is looking something up).
+  async function withLookupWhenFree(guildId, task, attempts = 60) {
+    for (let attempt = 0; lookupGuilds.has(guildId) || lookupGuilds.size >= MAX_LOOKUPS; attempt += 1) {
+      if (attempt >= attempts) throw new MusicError('⏳ Too many lookups are running.');
+      await new Promise((resolve) => setTimeout(resolve, lookupRetryMs));
+    }
+    return withLookup(guildId, task);
+  }
+
+  // Starts an item; a Spotify track without a YouTube URL is matched first (lazily, right before
+  // it plays). The URL is kept on the item, so loops, /music continue and saved playlists reuse it.
+  function beginItem(state, item, options = {}) {
+    if (item.kind !== 'spotify' || item.url) {
+      startItem(state, item, options);
+      return;
+    }
+    stopProcess(state);
+    state.session.musicPlayer.stop(true);
+    state.current = item;
+    state.paused = false;
+    state.offset = 0;
+    cancelCleanup(state.session.guildId);
+    schedulePanel(state.session.guildId);
+    const token = {};
+    state.pending = token;
+    void matchAndStart(state, item, options, token);
+  }
+
+  async function matchAndStart(state, item, options, token) {
+    const { guildId } = state.session;
+    let error = null;
+    try {
+      const match = await withLookupWhenFree(guildId, () => findYouTubeMatch(item));
+      item.url = match.url;
+      if (!Number.isFinite(item.duration) && Number.isFinite(match.duration)) item.duration = match.duration;
+      playlists.cacheResolvedUrl(guildId, item.spotifyUrl, match.url);
+    } catch (caught) {
+      error = caught;
+      if (!(caught instanceof MusicError)) console.error(`Spotify match failed in guild ${guildId}:`, caught);
+    }
+    // Skipped, stopped or left while searching.
+    if (!isActive(state) || state.current !== item || state.pending !== token) return;
+    if (!error) {
+      startItem(state, item, options);
+      return;
+    }
+    await announceIn(guildId, `⚠️ Skipped **${escapeMarkdown(shorten(displayTitle(item), 100))}**: no YouTube match found.`);
+    if (isActive(state) && state.current === item && state.pending === token) playNext(state, { failed: true });
+  }
+
   // Next item after the current one ended (or was skipped), following the loop mode.
-  function playNext(state, { skipped = false } = {}) {
+  // `failed` marks an item that could not play at all (it never loops).
+  function playNext(state, { skipped = false, failed: failedToStart = false } = {}) {
     const finished = state.current;
-    const failed = !skipped && (state.failed || (state.resource?.playbackDuration || 0) < MIN_LOOP_PLAY_MS);
-    const loopable = finished?.kind === 'track' && !finished.isLive && !failed;
+    const failed = failedToStart || (!skipped && (state.failed || (state.resource?.playbackDuration || 0) < MIN_LOOP_PLAY_MS));
+    const loopable = (finished?.kind === 'track' || finished?.kind === 'spotify') && !finished.isLive && !failed;
     stopProcess(state);
     state.current = null;
     state.paused = false;
@@ -193,7 +264,7 @@ function createMusicFeature({
     if (loopable && state.loop === 'queue') state.queue.push(finished);
     const next = state.queue.shift();
     if (next && isActive(state)) {
-      startItem(state, next);
+      beginItem(state, next);
       return;
     }
     state.session.musicPlayer.stop(true);
@@ -545,7 +616,7 @@ function createMusicFeature({
   }
 
   function titleOf(item) {
-    return `**${escapeMarkdown(shorten(item.title, 100))}**`;
+    return `**${escapeMarkdown(shorten(displayTitle(item), 100))}**`;
   }
 
   function plural(count, word) {
@@ -604,13 +675,79 @@ function createMusicFeature({
     return withLookup(guildId, () => sources.resolveTrack(query));
   }
 
+  // Spotify metadata as a queue item; `url` (the YouTube match) stays null until it plays.
+  function spotifyItem(track, requesterId = null) {
+    return {
+      kind: 'spotify',
+      source: 'spotify',
+      title: String(track.title || 'Unknown title').slice(0, 200),
+      artists: track.artists || [],
+      ...(track.album && { album: track.album }),
+      duration: track.durationMs ? Math.round(track.durationMs / 1000) : (Number.isFinite(track.duration) ? track.duration : null),
+      isLive: false,
+      spotifyUrl: track.spotifyUrl,
+      url: track.url || null,
+      author: null,
+      thumbnail: null,
+      requesterId
+    };
+  }
+
+  // A saved playlist track as a queue item.
+  function storedItem(track, requesterId) {
+    if (track.source === 'spotify') return { ...spotifyItem(track, requesterId), url: track.url || null };
+    return { kind: 'track', ...track, source: 'YouTube', author: null, thumbnail: null, requesterId };
+  }
+
+  // Starts the first item when nothing (or only radio) plays and queues the rest up to `limit`.
+  function enqueueItems(state, items, { next = false, limit = MAX_PLAYLIST_QUEUE } = {}) {
+    const rest = [...items];
+    const first = !state.current || state.current.kind === 'radio' ? rest.shift() : null;
+    const room = Math.max(0, limit - state.queue.length);
+    if (!first && !room) throw new MusicError(`The queue is full (${limit} tracks).`);
+    const queued = rest.slice(0, room);
+    if (next) state.queue.unshift(...queued);
+    else state.queue.push(...queued);
+    if (first) beginItem(state, first);
+    else schedulePanel(state.session.guildId);
+    return { count: queued.length + (first ? 1 : 0), dropped: rest.length - queued.length };
+  }
+
+  function limitNote(dropped) {
+    return dropped ? ` — the queue is limited to ${MAX_PLAYLIST_QUEUE} tracks, ${dropped} not queued` : '';
+  }
+
+  // Spotify links: a track is matched on YouTube right away; albums, playlists and artists are
+  // queued as Spotify items that are matched one by one when they play.
+  async function playSpotify(ctx, link, { next = false } = {}) {
+    checkVoiceChannel(ctx);
+    const { resolved, item } = await withLookup(ctx.guild.id, async () => {
+      const result = await spotify.resolve(link, { limit: MAX_PLAYLIST_QUEUE });
+      if (result.kind !== 'track') return { resolved: result };
+      const single = spotifyItem(result.tracks[0], ctx.member.id);
+      const match = await findYouTubeMatch(single);
+      single.url = match.url;
+      if (!Number.isFinite(single.duration)) single.duration = match.duration;
+      return { resolved: result, item: single };
+    });
+    const state = getState(await ensureSession(ctx));
+    if (item) return queueSingle(ctx, state, item, { next });
+
+    const { count, dropped } = enqueueItems(state, resolved.tracks.map((track) => spotifyItem(track, ctx.member.id)), { next });
+    const cut = resolved.truncated ? ' (Spotify only lists the first 100)' : '';
+    return { announce: `📃 ${who(ctx)} queued Spotify ${resolved.kind} **${escapeMarkdown(shorten(resolved.name, 100))}** (${plural(count, 'track')})${cut}${limitNote(dropped)}` };
+  }
+
   async function play(ctx, query, { next = false } = {}) {
+    if (isSpotifyLink(query)) return playSpotify(ctx, query, { next });
     checkVoiceChannel(ctx);
     const track = await lookupTrack(ctx.guild.id, query);
     const state = getState(await ensureSession(ctx));
-    const item = { ...track, requesterId: ctx.member.id };
-    const label = `${titleOf(item)} (${describeLength(item)})`;
+    return queueSingle(ctx, state, { ...track, requesterId: ctx.member.id }, { next });
+  }
 
+  function queueSingle(ctx, state, item, { next = false } = {}) {
+    const label = `${titleOf(item)} (${describeLength(item)})`;
     if (!state.current || state.current.kind === 'radio') {
       const replacedRadio = state.current?.kind === 'radio';
       startItem(state, item);
@@ -672,7 +809,7 @@ function createMusicFeature({
       startAt = 0;
     }
     if (!first) throw new MusicError('There is nothing left to continue.');
-    startItem(state, { ...first }, { startAt });
+    beginItem(state, { ...first }, { startAt });
     // Used up; if this session is interrupted again, that saves a new snapshot.
     resumeStore.clear(ctx.guild.id);
     const count = 1 + state.queue.length;
@@ -784,7 +921,7 @@ function createMusicFeature({
     const position = current.isLive ? '🔴 Live' : `${formatDuration(elapsed)} / ${formatDuration(current.duration)}`;
     return [
       `${paused ? '⏸️' : '▶️'} ${describeItem(current)}`,
-      `${current.kind === 'radio' ? 'Radio station' : `YouTube${current.author ? ` · ${escapeMarkdown(current.author)}` : ''}`} · ${position}`,
+      `${current.kind === 'radio' ? 'Radio station' : describeSource(current)} · ${position}`,
       `Requested by <@${current.requesterId}>`
     ].join('\n');
   }
@@ -800,47 +937,42 @@ function createMusicFeature({
     if (!playlist.tracks.length) throw new MusicError(`**${escapeMarkdown(playlist.name)}** is empty.`);
     checkVoiceChannel(ctx);
     const state = getState(await ensureSession(ctx));
-    const items = (shuffle ? shuffled(playlist.tracks, random) : playlist.tracks).map((track) => ({
-      kind: 'track',
-      ...track,
-      source: 'YouTube',
-      author: null,
-      thumbnail: null,
-      requesterId: ctx.member.id
-    }));
-    const startNow = !state.current || state.current.kind === 'radio';
-    const first = startNow ? items.shift() : null;
-    const room = Math.max(0, MAX_PLAYLIST_QUEUE - state.queue.length);
-    if (!first && !room) throw new MusicError(`The queue is full (${MAX_PLAYLIST_QUEUE} tracks).`);
-    const queued = items.slice(0, room);
-    const dropped = items.length - queued.length;
-    state.queue.push(...queued);
-    if (first) startItem(state, first);
-    else schedulePanel(ctx.guild.id);
+    const items = (shuffle ? shuffled(playlist.tracks, random) : playlist.tracks).map((track) => storedItem(track, ctx.member.id));
+    const { count, dropped } = enqueueItems(state, items);
     playlists.markUsed(ctx.guild.id, playlist.id);
     schedulePanel(ctx.guild.id);
 
-    const count = queued.length + (first ? 1 : 0);
     const by = playlist.ownerId !== String(ctx.member.id) ? ` by <@${playlist.ownerId}>` : '';
     return {
-      announce: `📃 ${who(ctx)} queued playlist **${escapeMarkdown(playlist.name)}**${by} (${plural(count, 'track')}${shuffle ? ', shuffled' : ''})`
-        + (dropped ? ` — the queue is limited to ${MAX_PLAYLIST_QUEUE} tracks, ${dropped} not queued` : '')
+      announce: `📃 ${who(ctx)} queued playlist **${escapeMarkdown(playlist.name)}**${by} (${plural(count, 'track')}${shuffle ? ', shuffled' : ''})${limitNote(dropped)}`
     };
   }
 
   async function addToPlaylist(ctx, name, query) {
     const actor = actorOf(ctx);
     playlists.resolveEditable(ctx.guild.id, actor, name);
+    if (query && isSpotifyLink(query)) {
+      // Spotify tracks are saved without a YouTube match; it is found the first time they play.
+      const resolved = await withLookup(ctx.guild.id, () => spotify.resolve(query, { limit: MAX_PLAYLIST_TRACKS }));
+      const tracks = resolved.tracks.map((track) => spotifyItem(track));
+      const { playlist, added, dropped } = playlists.addTracks(ctx.guild.id, actor, name, tracks);
+      const what = resolved.kind === 'track'
+        ? titleOf(tracks[0])
+        : `${plural(added, 'track')} of Spotify ${resolved.kind} **${escapeMarkdown(shorten(resolved.name, 100))}**`;
+      const note = dropped ? ` (${dropped} over the ${MAX_PLAYLIST_TRACKS}-track limit left out)` : '';
+      return playlistResult(playlist,
+        `➕ ${who(ctx)} added ${what} to playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')})${note}`,
+        `➕ Added ${what} to **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')})${note}.`);
+    }
     let track;
     if (query) {
       track = await lookupTrack(ctx.guild.id, query);
     } else {
       track = activeState(ctx.guild.id)?.current;
-      if (!track) throw new MusicError('Nothing is playing. Give me a YouTube link or search text to add.');
+      if (!track) throw new MusicError('Nothing is playing. Give me a YouTube or Spotify link or search text to add.');
       if (track.kind === 'radio') throw new MusicError('Radio stations cannot be saved in playlists.');
     }
-    const { playlist, added } = playlists.addTracks(ctx.guild.id, actor, name, [track]);
-    if (!added) throw new MusicError('Only single YouTube videos can be saved in a playlist.');
+    const { playlist } = playlists.addTracks(ctx.guild.id, actor, name, [track]);
     return playlistResult(playlist,
       `➕ ${who(ctx)} added ${titleOf(track)} to playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')})`,
       `➕ Added ${describeItem(track)} to **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')}).`);
@@ -863,7 +995,11 @@ function createMusicFeature({
     const existing = playlists.findOwn(ctx.guild.id, actor.id, name);
     // Name and limits are checked before the slow lookup.
     if (!existing) playlists.assertCanCreate(ctx.guild.id, actor, name);
-    const imported = await withLookup(ctx.guild.id, () => sources.resolvePlaylist(url));
+    const imported = await withLookup(ctx.guild.id, async () => {
+      if (!isSpotifyLink(url)) return sources.resolvePlaylist(url);
+      const resolved = await spotify.resolve(url, { limit: MAX_IMPORT_TRACKS });
+      return { title: `Spotify ${resolved.kind} ${resolved.name}`, tracks: resolved.tracks.map((track) => spotifyItem(track)), skipped: 0 };
+    });
     let playlist;
     let added;
     let dropped;
@@ -950,16 +1086,24 @@ function createMusicFeature({
   }
 
   // Posts a public message in the control channel; false when that is not possible.
-  async function announce(ctx, content) {
+  async function announceTo(guild, content) {
     try {
-      const channel = await fetchChannel(ctx.guild, getMusicConfig(ctx.guild.id).controlChannelId);
+      const channel = guild ? await fetchChannel(guild, getMusicConfig(guild.id).controlChannelId) : null;
       if (!channel?.send) return false;
       await channel.send({ content: String(content).slice(0, 2000), allowedMentions: { parse: [] } });
       return true;
     } catch (error) {
-      console.error(`Could not post a music announcement in guild ${ctx.guild.id}:`, error.message);
+      console.error(`Could not post a music announcement in guild ${guild.id}:`, error.message);
       return false;
     }
+  }
+
+  function announce(ctx, content) {
+    return announceTo(ctx.guild, content);
+  }
+
+  function announceIn(guildId, content) {
+    return announceTo(client.guilds.cache.get(guildId), content);
   }
 
   // After a public announcement the interaction needs no visible answer of its own.

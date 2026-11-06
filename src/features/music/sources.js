@@ -171,6 +171,38 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     return { title: String(info.title || 'YouTube playlist').slice(0, 200), tracks, skipped: entries.length - tracks.length };
   }
 
+  // The first `count` YouTube search results as { title, uploader, duration, url } (one flat lookup),
+  // for matching Spotify tracks. Live streams and videos over 3 hours are left out.
+  async function searchCandidates(query, count = 5) {
+    const text = String(query || '').trim();
+    if (!text) throw new MusicError('Nothing to search for.');
+    let output;
+    try {
+      output = await run(ytdlpPath, ['--flat-playlist', '--dump-single-json', '--no-warnings', '--js-runtimes', 'node', '--', `ytsearch${count}:${text}`], RESOLVE_TIMEOUT_MS,
+        'Searching YouTube took too long. Please try again.');
+    } catch (error) {
+      if (error instanceof MusicError) throw error;
+      console.error('yt-dlp search failed:', error.message.slice(0, 500));
+      throw new MusicError('Could not search YouTube.');
+    }
+    let info;
+    try {
+      info = JSON.parse(output);
+    } catch {
+      throw new MusicError('Could not read the search results from yt-dlp.');
+    }
+    return (Array.isArray(info?.entries) ? info.entries : [])
+      .filter((entry) => typeof entry?.id === 'string' && /^[\w-]{6,20}$/.test(entry.id))
+      .filter((entry) => entry.live_status !== 'is_live' && entry.live_status !== 'is_upcoming')
+      .filter((entry) => !(Number.isFinite(entry.duration) && entry.duration > MAX_TRACK_SECONDS))
+      .map((entry) => ({
+        title: String(entry.title || ''),
+        uploader: entry.channel || entry.uploader || '',
+        duration: Number.isFinite(entry.duration) ? Math.round(entry.duration) : null,
+        url: `https://www.youtube.com/watch?v=${entry.id}`
+      }));
+  }
+
   function attachLogging(child, label) {
     let stderr = '';
     child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-2000); });
@@ -238,7 +270,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     };
   }
 
-  return { resolveTrack, resolvePlaylist, spawnTrack, spawnRadio };
+  return { resolveTrack, resolvePlaylist, searchCandidates, spawnTrack, spawnRadio };
 }
 
 module.exports = { createMusicSources, isYouTubeUrl, isYouTubeVideoUrl, getYouTubePlaylistId, MusicError, MAX_TRACK_SECONDS, MAX_IMPORT_TRACKS };
