@@ -14,25 +14,24 @@ from pathlib import Path
 
 from num2words import num2words
 
-# Whole-word chat abbreviations (matched case-insensitively).
-ABBREVIATIONS: dict[str, str] = {
-    "gg": "dschi dschi",
-    "ggs": "dschi dschi",
+# English voices only get the language-neutral ones; the rest is meant for German voices.
+ABBREVIATIONS_EN: dict[str, str] = {
+    "gg": "g g",
+    "ggs": "g g s",
     "afk": "a f k",
-    "brb": "bin gleich zurück",
-    "lol": "lol",
-    "idk": "keine Ahnung",
+    "brb": "be right back",
+    "idk": "I don't know",
     "wtf": "w t f",
     "k": "okay",
     "kk": "okay",
     "ok": "okay",
-    "np": "kein Problem",
-    "ty": "danke",
-    "thx": "danke",
-    "pls": "bitte",
-    "plz": "bitte",
-    "irl": "im echten Leben",
-    "imo": "meiner Meinung nach",
+    "np": "no problem",
+    "ty": "thank you",
+    "thx": "thanks",
+    "pls": "please",
+    "plz": "please",
+    "irl": "in real life",
+    "imo": "in my opinion",
 }
 
 log = logging.getLogger("tts.normalize")
@@ -41,10 +40,14 @@ PRONUNCIATION_FILES = (
     Path(__file__).with_name("pronunciation.txt"),
     Path(os.environ.get("TTS_PRONUNCIATION_FILE", "/voices/pronunciation.txt")),
 )
+ABBREVIATION_FILES = (
+    Path(__file__).with_name("abbreviations.txt"),
+    Path(os.environ.get("TTS_ABBREVIATION_FILE", "/voices/abbreviations.txt")),
+)
 
 
-def load_pronunciations(paths=PRONUNCIATION_FILES) -> dict[str, str]:
-    """<word or phrase> = <spelling> lines; later files override earlier ones."""
+def load_word_list(paths) -> dict[str, str]:
+    """<word or phrase> = <replacement> lines; later files override earlier ones."""
     entries: dict[str, str] = {}
     for path in paths:
         try:
@@ -60,7 +63,7 @@ def load_pronunciations(paths=PRONUNCIATION_FILES) -> dict[str, str]:
                 continue
             word, sep, spelling = line.partition("=")
             if not sep or not word.strip() or not spelling.strip():
-                log.warning("%s:%d: expected '<word> = <spelling>'", path, number)
+                log.warning("%s:%d: expected '<word> = <replacement>'", path, number)
                 continue
             entries[" ".join(word.lower().split())] = spelling.strip()
     return entries
@@ -75,7 +78,9 @@ def _pronunciation_pattern(entries: dict[str, str]) -> re.Pattern[str] | None:
     return re.compile(rf"(?<!\w)(?:{alternatives})(?!\w)", re.IGNORECASE)
 
 
-PRONUNCIATIONS = load_pronunciations()
+# German chat abbreviations (abbreviations.txt); English voices use ABBREVIATIONS_EN.
+ABBREVIATIONS = load_word_list(ABBREVIATION_FILES)
+PRONUNCIATIONS = load_word_list(PRONUNCIATION_FILES)
 _PRONUNCIATION_RE = _pronunciation_pattern(PRONUNCIATIONS)
 
 
@@ -92,6 +97,16 @@ SYMBOLS: dict[str, str] = {
     "$": " Dollar ",
     "°": " Grad ",
 }
+SYMBOLS_EN: dict[str, str] = {
+    "&": " and ",
+    "+": " plus ",
+    "%": " percent ",
+    "€": " euros ",
+    "$": " dollars ",
+    "°": " degrees ",
+}
+# Words for the decimal separator per language.
+DECIMAL_WORD = {"de": "Komma", "en": "point"}
 
 # Integers with digits read as one number up to this length; longer runs
 # (IDs, phone numbers, keyboard mashing) are read digit by digit.
@@ -110,17 +125,17 @@ _SPACE_RE = re.compile(r"\s+")
 _SPACE_BEFORE_PUNCT_RE = re.compile(r"\s+([.,!?;:])")
 
 
-def _digits(digits: str) -> str:
-    return " ".join(num2words(int(d), lang="de") for d in digits)
+def _digits(digits: str, lang: str) -> str:
+    return " ".join(num2words(int(d), lang=lang) for d in digits)
 
 
-def _integer(digits: str) -> str:
+def _integer(digits: str, lang: str) -> str:
     if len(digits) > MAX_NUMBER_DIGITS:
-        return _digits(digits)
-    return num2words(int(digits), lang="de")
+        return _digits(digits, lang)
+    return num2words(int(digits), lang=lang)
 
 
-def _number(match: re.Match[str]) -> str:
+def _number(match: re.Match[str], lang: str = "de") -> str:
     sign, whole, frac = match.group(1), match.group(2), match.group(3)
     start = match.start()
     text = match.string
@@ -130,38 +145,37 @@ def _number(match: re.Match[str]) -> str:
         sign = None
     else:
         prefix = ""
-    words = _integer(whole)
+    words = _integer(whole, lang)
     if frac is not None:
-        words = f"{words} Komma {_digits(frac)}"
+        words = f"{words} {DECIMAL_WORD[lang]} {_digits(frac, lang)}"
     if sign:
         words = f"minus {words}"
     return f"{prefix} {words} "
 
 
-def _abbreviation(match: re.Match[str]) -> str:
-    word = match.group(0)
-    return ABBREVIATIONS.get(word.lower(), word)
-
-
-def normalize(text: str) -> str:
-    """Return speakable German text, or an empty string if nothing is left."""
+def normalize(text: str, language: str = "de") -> str:
+    """Return speakable text for a German ("de") or English ("en") voice, or "" if nothing is left."""
     if not text:
         return ""
+    lang = "en" if language == "en" else "de"
+    abbreviations = ABBREVIATIONS_EN if lang == "en" else ABBREVIATIONS
+    symbols = SYMBOLS_EN if lang == "en" else SYMBOLS
 
     # "jaaaaaa" -> "jaaa", "!!!!!!" -> "!!!"; digits are left alone.
     text = _REPEAT_RE.sub(lambda m: m.group(1) * 3, text)
 
-    text = _XD_RE.sub(" iks de ", text)
+    text = _XD_RE.sub(" ex dee " if lang == "en" else " iks de ", text)
     text = _LOL_RE.sub("lol", text)
-    text = _WORD_RE.sub(_abbreviation, text)
-    if _PRONUNCIATION_RE is not None:
+    text = _WORD_RE.sub(lambda m: abbreviations.get(m.group(0).lower(), m.group(0)), text)
+    # The spelling list makes German voices say English words; English voices say them anyway.
+    if lang == "de" and _PRONUNCIATION_RE is not None:
         text = _PRONUNCIATION_RE.sub(_pronounce, text)
 
-    for symbol, spoken in SYMBOLS.items():
+    for symbol, spoken in symbols.items():
         text = text.replace(symbol, spoken)
 
     text = _THOUSANDS_RE.sub(lambda m: m.group(0).replace(".", ""), text)
-    text = _NUMBER_RE.sub(_number, text)
+    text = _NUMBER_RE.sub(lambda m: _number(m, lang), text)
 
     text = _UNSPEAKABLE_RE.sub(" ", text)
     text = _SPACE_RE.sub(" ", text)

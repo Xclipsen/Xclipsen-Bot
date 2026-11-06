@@ -1,0 +1,75 @@
+# Chat abbreviations for German voices, written out before reading.
+# One entry per line: <abbreviation> = <written out>. Whole words only, case is ignored.
+# English results (e.g. "account") then go through pronunciation.txt.
+# Extra entries can go into /voices/abbreviations.txt (tts-voices/ on the server) and override these.
+
+# Gaming
+gg = dschi dschi
+ggs = dschi dschi
+gz = glückwunsch
+gratz = glückwunsch
+grats = glückwunsch
+wp = well played
+ez = easy
+gl = good luck
+hf = have fun
+glhf = good luck have fun
+afk = a f k
+brb = bin gleich zurück
+wb = willkommen zurück
+acc = account
+accs = accounts
+lvl = level
+xp = ex pe
+hp = ha pe
+dmg = damage
+inv = inventar
+bz = basar
+dc = discord
+noob = noob
+
+# Chat
+k = okay
+kk = okay
+ok = okay
+np = kein Problem
+ty = danke
+thx = danke
+sry = sorry
+pls = bitte
+plz = bitte
+idk = keine Ahnung
+ka = keine Ahnung
+kp = kein Plan
+wtf = w t f
+omg = oh mein Gott
+btw = übrigens
+nvm = egal
+irl = im echten Leben
+imo = meiner Meinung nach
+lmao = l m a o
+lol = lol
+gn = gute Nacht
+hdl = hab dich lieb
+lg = liebe Grüße
+mfg = mit freundlichen Grüßen
+pn = private Nachricht
+w8 = warte
+
+# German short forms
+vllt = vielleicht
+vlt = vielleicht
+evtl = eventuell
+bzw = beziehungsweise
+usw = und so weiter
+zb = zum Beispiel
+jz = jetzt
+jtz = jetzt
+iwie = irgendwie
+iwo = irgendwo
+iwann = irgendwann
+mom = moment
+sek = sekunde
+sec = sekunde
+min = minute
+std = stunde

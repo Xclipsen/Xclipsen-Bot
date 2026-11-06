@@ -25,12 +25,14 @@ class Engine:
     id: str
     label: str
     engine: str
+    # "de" or "en": picks the text normalization (numbers, abbreviations, spelling list).
+    language: str = "de"
 
     def synthesize(self, text: str) -> bytes:
         raise NotImplementedError
 
     def info(self) -> dict[str, str]:
-        return {"id": self.id, "label": self.label, "engine": self.engine}
+        return {"id": self.id, "label": self.label, "engine": self.engine, "language": self.language}
 
 
 def load_piper_voice(model_path: Path, threads: int):
@@ -57,6 +59,7 @@ class PiperEngine(Engine):
 
     def __init__(self, voice_id: str, voice, label: str, speaker_id: int | None = None):
         self.id = voice_id
+        self.language = "en" if str(voice.config.espeak_voice).startswith("en") else "de"
         self.label = label
         self.voice = voice
         self.speaker_id = speaker_id

@@ -34,7 +34,7 @@ log = logging.getLogger("tts")
 MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "400"))
 CACHE_SIZE = int(os.environ.get("TTS_CACHE_SIZE", "128"))
 DEFAULT_VOICE_IDS = (
-    "thorsten,juergen,thorsten_whisper,thorsten_sleepy,thorsten_drunk,thorsten_angry,"
+    "thorsten,juergen,jenny,alan,thorsten_whisper,thorsten_sleepy,thorsten_drunk,thorsten_angry,"
     "thorsten_amused,thorsten_surprised,thorsten_disgusted,thorsten_neutral"
 )
 VOICE_IDS = [v.strip() for v in os.environ.get("TTS_VOICES", DEFAULT_VOICE_IDS).split(",") if v.strip()]
@@ -46,6 +46,8 @@ POCKET_PROMPT = os.environ.get("TTS_POCKET_PROMPT", "juergen")
 
 BUILTIN_PIPER = {
     "thorsten": ("de_DE-thorsten-high.onnx", "Thorsten (Piper, German)"),
+    "jenny": ("en_GB-jenny_dioco-medium.onnx", "Jenny (Piper, English, female)"),
+    "alan": ("en_GB-alan-medium.onnx", "Alan (Piper, English, male)"),
 }
 # Speakers of the multi-speaker de_DE-thorsten_emotional-medium model, by speaker name in its .onnx.json.
 EMOTIONAL_MODEL = "de_DE-thorsten_emotional-medium.onnx"
@@ -213,7 +215,7 @@ async def synthesize(req: SynthesizeRequest):
     engine = state["voices"].get(voice_id)
     if engine is None:
         raise HTTPException(400, f"unknown voice {voice_id!r}")
-    text = normalize(req.text)
+    text = normalize(req.text, engine.language)
     if not text:
         raise HTTPException(400, "text is empty")
 

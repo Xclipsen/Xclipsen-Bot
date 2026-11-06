@@ -62,7 +62,10 @@ function normalizeGuildConfig(config) {
       roleId: config?.tts?.roleId || null,
       voice: config?.tts?.voice || null,
       // Set by privileged bot users with /tts follow: read everything these users write.
-      followUserIds: normalizeSnowflakeList(config?.tts?.followUserIds)
+      followUserIds: normalizeSnowflakeList(config?.tts?.followUserIds),
+      // userId -> voice id from /tts uservoice; wins over the server voice.
+      userVoices: Object.fromEntries(Object.entries(config?.tts?.userVoices || {})
+        .filter(([userId, voice]) => /^\d{16,20}$/.test(userId) && typeof voice === 'string' && voice))
     },
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),

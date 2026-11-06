@@ -67,13 +67,23 @@ const helpSections = [
       },
       {
         command: '/tts join | leave | say text:<text>',
-        description: 'Read messages aloud in your voice channel. Needs the TTS role; only members in the voice channel are read, and the bot leaves when whoever ran /tts join leaves.',
+        description: 'Read messages aloud in your voice channel. Only TTS role members in the voice channel (and followed users) are read, and the bot leaves when whoever ran /tts join leaves.',
         example: '/tts join'
       },
       {
         command: '/tts whisper | sleepy | drunk | angry text:<text>',
         description: 'Read one text aloud in a Thorsten mood voice; `/tts say` also takes an optional voice.',
         example: '/tts whisper text:Psst, ich bin hier'
+      },
+      {
+        command: '/tts list',
+        description: 'Show who is read aloud (TTS role and followed users) and the voices per user.',
+        example: '/tts list'
+      },
+      {
+        command: '/tts uservoice user:<user> [voice:<name>]',
+        description: 'Give yourself, or as an admin anyone, an own voice; without voice it resets to the server voice.',
+        example: '/tts uservoice user:@someone voice:alan'
       },
       {
         command: '/tts voice voice:<name>',

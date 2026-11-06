@@ -66,7 +66,7 @@ function createFakeVoice() {
 function createFakeStore(initial = {}) {
   const guilds = { g1: { tts: { roleId: 'tts-role', voice: null, ...initial } } };
   return {
-    getGuildConfig: (guildId) => ({ tts: { roleId: null, voice: null, followUserIds: [], ...guilds[guildId]?.tts } }),
+    getGuildConfig: (guildId) => ({ tts: { roleId: null, voice: null, followUserIds: [], userVoices: {}, ...guilds[guildId]?.tts } }),
     setGuildConfig: (guildId, partial) => { guilds[guildId] = { ...guilds[guildId], ...partial }; },
     guilds
   };
@@ -311,4 +311,40 @@ test('/tts follow is for privileged users and reads the followed user from any c
   assert.deepEqual(store.guilds.g1.tts.followUserIds, []);
   await feature.handleMessage(message);
   assert.equal(synthesized.length, 1);
+});
+
+test('admins without the TTS role are not read, and own voices are used', async () => {
+  const store = createFakeStore();
+  const { feature, synthesized } = createFeature({ store });
+  const owner = createMember('owner', { roles: ['tts-role'] });
+  await feature.handleTtsCommand(createInteraction(owner, 'join'), accessControl);
+
+  const message = (member, content) => ({
+    inGuild: () => true,
+    author: { bot: false },
+    system: false,
+    guildId: 'g1',
+    channelId: 'text1',
+    member,
+    content,
+    guild: { members: { cache: new Map() }, channels: { cache: new Map() }, roles: { cache: new Map() } },
+    react: async () => {}
+  });
+
+  await feature.handleMessage(message(createMember('admin', { manageGuild: true }), 'Ich bin Admin ohne Rolle'));
+  assert.equal(synthesized.length, 0);
+
+  // Others' voices need bot access; your own voice does not.
+  const foreign = createInteraction(owner, 'uservoice', { user: { id: 'someone' }, voice: 'thorsten' });
+  await feature.handleTtsCommand(foreign, { ...accessControl, hasAccess: () => false });
+  assert.match(foreign.replies[0].content, /only change your own voice/);
+
+  await feature.handleTtsCommand(createInteraction(owner, 'uservoice', { user: { id: 'owner' }, voice: 'thorsten' }), { ...accessControl, hasAccess: () => false });
+  assert.deepEqual(store.guilds.g1.tts.userVoices, { owner: 'thorsten' });
+
+  await feature.handleMessage(message(owner, 'Mit eigener Stimme'));
+  assert.deepEqual(synthesized, [{ text: 'User owner sagt: Mit eigener Stimme', voiceId: 'thorsten' }]);
+
+  await feature.handleTtsCommand(createInteraction(owner, 'uservoice', { user: { id: 'owner' } }), accessControl);
+  assert.deepEqual(store.guilds.g1.tts.userVoices, {});
 });

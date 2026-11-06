@@ -8,6 +8,7 @@ Voices:
 | ---------- | -------------------------------- | -------------------------------------- |
 | `thorsten` | Piper `de_DE-thorsten-high`      | default, loaded at startup, ~300 MB    |
 | `juergen`  | Kyutai Pocket TTS (`german`)     | loaded on first use, ~1 GB more RAM    |
+| `jenny`, `alan` | Piper `en_GB-jenny_dioco-medium`, `en_GB-alan-medium` | English voices: English numbers and abbreviations, no German spelling list |
 | `thorsten_whisper`, `_sleepy`, `_drunk`, `_angry`, `_amused`, `_surprised`, `_disgusted`, `_neutral` | Piper `de_DE-thorsten_emotional-medium` speakers | one shared model, ~80 MB for all eight |
 
 Any `<id>.onnx` + `<id>.onnx.json` Piper voice placed in `TTS_PIPER_VOICE_DIR` (`/voices`) is added automatically at startup (a file named like a built-in voice overrides it). This is where a custom trained voice goes.
@@ -28,7 +29,7 @@ Text is normalized first (`normalize.py`): numbers to German words, chat abbrevi
 
 | env                     | default             |
 | ----------------------- | ------------------- |
-| `TTS_VOICES`            | `thorsten,juergen` + the eight `thorsten_*` voices |
+| `TTS_VOICES`            | `thorsten,juergen,jenny,alan` + the eight `thorsten_*` voices |
 | `TTS_DEFAULT_VOICE`     | `thorsten`          |
 | `TTS_MAX_CHARS`         | `400`               |
 | `TTS_THREADS`           | `3`                 |

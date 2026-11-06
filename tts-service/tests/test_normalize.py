@@ -35,7 +35,7 @@ def test_range_dash_is_not_a_minus():
     ("text", "expected"),
     [
         ("gg", "dschi dschi"),
-        ("GG ez", "dschi dschi ez"),
+        ("GG ez", "dschi dschi iesi"),
         ("bin afk", "bin a f k"),
         ("brb", "bin gleich zurück"),
         ("idk", "keine Ahnung"),
@@ -104,14 +104,25 @@ def test_pronunciation_entries_are_spelled_out():
 
 
 def test_pronunciation_files_override_and_skip_bad_lines(tmp_path):
-    from normalize import load_pronunciations
+    from normalize import load_word_list
 
     base = tmp_path / "base.txt"
     base.write_text("# comment\nslayer = sleier\nkaputt\n", encoding="utf-8")
     extra = tmp_path / "extra.txt"
     extra.write_text("Slayer = släjer\nCrimson   Isle = krimsen eil\n", encoding="utf-8")
 
-    assert load_pronunciations((base, extra, tmp_path / "missing.txt")) == {
+    assert load_word_list((base, extra, tmp_path / "missing.txt")) == {
         "slayer": "släjer",
         "crimson isle": "krimsen eil",
     }
+
+
+def test_english_voices_get_english_numbers_and_no_spelling_list():
+    assert normalize("gg, 3 Dungeons for 2.5 coins & brb", "en") == (
+        "g g, three Dungeons for two point five coins and be right back"
+    )
+
+
+def test_abbreviations_are_written_out_and_pronounced():
+    assert normalize("vllt hab ich nen zweiten acc, kp") == "vielleicht hab ich nen zweiten äkaunt, kein Plan"
+    assert normalize("gl hf") == "gud lack häw fann"

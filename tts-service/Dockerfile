@@ -19,13 +19,17 @@ ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_D
 ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten/high/de_DE-thorsten-high.onnx.json /opt/piper/
 ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx /opt/piper/
 ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/de/de_DE/thorsten_emotional/medium/de_DE-thorsten_emotional-medium.onnx.json /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/jenny_dioco/medium/en_GB-jenny_dioco-medium.onnx.json /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx /opt/piper/
+ADD --chmod=644 https://huggingface.co/rhasspy/piper-voices/resolve/main/en/en_GB/alan/medium/en_GB-alan-medium.onnx.json /opt/piper/
 
 RUN useradd --create-home --uid 10001 tts \
     && mkdir -p /models/hf /voices \
     && chown -R tts:tts /models /voices \
     && chmod 755 /opt/piper
 
-COPY --chown=tts:tts *.py pronunciation.txt ./
+COPY --chown=tts:tts *.py pronunciation.txt abbreviations.txt ./
 
 USER tts
 

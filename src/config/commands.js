@@ -293,6 +293,21 @@ const ttsCommand = new SlashCommandBuilder()
       .setDescription('On or off; toggles when left empty')
       .setRequired(false)))
   .addSubcommand((subcommand) => subcommand
+    .setName('list')
+    .setDescription('Show who is read aloud, followed users and voices.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('uservoice')
+    .setDescription('Give a user their own TTS voice; leave voice empty to reset.')
+    .addUserOption((option) => option
+      .setName('user')
+      .setDescription('User to give a voice (others need bot access)')
+      .setRequired(true))
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice for this user; empty resets to the server voice')
+      .setRequired(false)
+      .setAutocomplete(true)))
+  .addSubcommand((subcommand) => subcommand
     .setName('voice')
     .setDescription('Choose the TTS voice for this server.')
     .addStringOption((option) => option

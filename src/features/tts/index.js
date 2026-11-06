@@ -34,6 +34,12 @@ function createTtsFeature({
     return store.getGuildConfig(guildId).tts;
   }
 
+  // Reading a member's messages needs the role itself; admins can use the commands without it.
+  function hasTtsRole(member) {
+    const { roleId } = getTtsConfig(member.guild.id);
+    return Boolean(roleId) && member.roles?.cache?.has(roleId) === true;
+  }
+
   function hasTtsAccess(member) {
     if (!member) return false;
     if (env.PRIVILEGED_USER_IDS.has(String(member.id))) return true;
@@ -129,7 +135,8 @@ function createTtsFeature({
     const spoken = verb || session.lastSpeakerId !== member.id ? `${speakerName} ${verb || 'sagt'}: ${text}` : text;
     session.lastSpeakerId = member.id;
 
-    const audio = ttsClient.synthesize(spoken, voiceId || getTtsConfig(session.guildId).voice);
+    const config = getTtsConfig(session.guildId);
+    const audio = ttsClient.synthesize(spoken, voiceId || config.userVoices[member.id] || config.voice);
     audio.catch(() => {});
     session.queue.push({ audio });
     playNext(session);
@@ -301,6 +308,56 @@ function createTtsFeature({
       : `Stopped reading every message from <@${user.id}>.`);
   }
 
+  async function handleUserVoice(interaction, member, accessControl) {
+    const user = interaction.options.getUser('user', true);
+    const voiceId = interaction.options.getString('voice');
+
+    if (user.id !== member.id && !accessControl.hasAccess(interaction)) {
+      await replyEphemeral(interaction, 'You can only change your own voice. Admins can set voices for others.');
+      return;
+    }
+
+    if (voiceId) {
+      const voices = await ttsClient.listVoices().catch(() => null);
+      if (voices && !voices.some((entry) => entry.id === voiceId)) {
+        await replyEphemeral(interaction, `Unknown voice \`${voiceId}\`. Pick one from the list.`);
+        return;
+      }
+    }
+
+    const config = getTtsConfig(interaction.guildId);
+    const userVoices = { ...config.userVoices };
+    if (voiceId) userVoices[user.id] = voiceId;
+    else delete userVoices[user.id];
+
+    store.setGuildConfig(interaction.guildId, { tts: { ...config, userVoices } });
+    await replyEphemeral(interaction, voiceId
+      ? `<@${user.id}> now speaks with \`${voiceId}\`.`
+      : `<@${user.id}> uses the server voice again.`);
+  }
+
+  async function handleList(interaction) {
+    const config = getTtsConfig(interaction.guildId);
+    const session = sessions.get(interaction.guildId);
+    const role = config.roleId ? interaction.guild.roles.cache.get(config.roleId) : null;
+    // Role members are only complete once all members are fetched; small servers, so fetch them.
+    await interaction.guild.members.fetch().catch(() => null);
+    const roleMembers = role ? [...role.members.values()].map((entry) => `<@${entry.id}>`) : [];
+    const followed = config.followUserIds.map((id) => `<@${id}>`);
+    const userVoices = Object.entries(config.userVoices).map(([id, voiceId]) => `<@${id}> → \`${voiceId}\``);
+
+    const lines = [
+      session
+        ? `🔊 In <#${session.channelId}>, reading <#${session.textChannelId}> and the voice chat; leaves with <@${session.ownerId}>.`
+        : '🔇 Not in a voice channel.',
+      `**Read when in the voice channel** (${role ? `<@&${role.id}>` : 'no TTS role'}): ${roleMembers.join(', ') || 'nobody'}`,
+      `**Followed, read from every channel:** ${followed.join(', ') || 'nobody'}`,
+      `**Server voice:** \`${config.voice || 'default'}\``,
+      `**Own voices:** ${userVoices.join(', ') || 'none'}`
+    ];
+    await replyEphemeral(interaction, lines.join('\n').slice(0, 2000));
+  }
+
   async function handleTtsCommand(interaction, accessControl) {
     if (!interaction.inGuild() || !interaction.guild) {
       await replyEphemeral(interaction, 'TTS only works inside a server.');
@@ -322,6 +379,11 @@ function createTtsFeature({
       return;
     }
 
+    if (subcommand === 'list') {
+      await handleList(interaction);
+      return;
+    }
+
     if (subcommand === 'voice') {
       if (await accessControl.ensureSetupAccess(interaction, 'TTS voice setting')) {
         await handleVoice(interaction);
@@ -338,6 +400,7 @@ function createTtsFeature({
     if (subcommand === 'join') await handleJoin(interaction, member);
     else if (subcommand === 'leave') await handleLeave(interaction, member);
     else if (subcommand === 'say') await handleSay(interaction, member);
+    else if (subcommand === 'uservoice') await handleUserVoice(interaction, member, accessControl);
     else if (Object.hasOwn(MOOD_SUBCOMMANDS, subcommand)) await handleSay(interaction, member, MOOD_SUBCOMMANDS[subcommand]);
   }
 
@@ -372,7 +435,7 @@ function createTtsFeature({
     const followed = getTtsConfig(message.guildId).followUserIds.includes(member.id);
     if (!followed) {
       if (message.channelId !== session.textChannelId && message.channelId !== session.channelId) return;
-      if (member.voice?.channelId !== session.channelId || !hasTtsAccess(member)) return;
+      if (member.voice?.channelId !== session.channelId || !hasTtsRole(member)) return;
     }
 
     const text = toSpeechText(message.content, createResolvers(message.guild));
