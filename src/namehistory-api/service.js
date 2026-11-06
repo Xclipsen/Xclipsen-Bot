@@ -98,39 +98,19 @@ function createStorage(cacheFilePath) {
       ? profile : null;
   }
 
-  function getProfileByName(name) {
-    const mappedUuid = state.nameIndex[normalizeName(name)];
-    return mappedUuid ? getProfileByUuid(mappedUuid) : null;
-  }
-
-  function deleteProfileByUuid(uuid) {
-    const formattedUuid = formatUuid(uuid);
-    if (!state.profiles[formattedUuid]) {
-      return null;
-    }
-
-    const existing = state.profiles[formattedUuid];
-    delete state.profiles[formattedUuid];
-    removeNameMappingsForUuid(formattedUuid);
-    save();
-    return existing;
-  }
-
-  function deleteProfileByName(name) {
-    const existing = getProfileByName(name);
-    if (!existing) {
-      return null;
-    }
-
-    return deleteProfileByUuid(existing.uuid);
+  // Other cached accounts whose recorded history contains this name.
+  function findProfilesWithName(name) {
+    const normalized = normalizeName(name);
+    return Object.values(state.profiles).filter((profile) => isValidUuid(profile?.uuid)
+      && isValidUsername(profile?.current_name) && Array.isArray(profile.history)
+      && profile.history.some((entry) => entry?.censored !== true
+        && isValidUsername(entry?.name) && normalizeName(entry.name) === normalized));
   }
 
   return {
     indexProfile,
     getProfileByUuid,
-    getProfileByName,
-    deleteProfileByUuid,
-    deleteProfileByName
+    findProfilesWithName
   };
 }
 
@@ -159,6 +139,7 @@ function createNameHistoryApiService(config) {
   const providerRetryAt = new Map();
   const historyRetryAt = new Map();
   const pendingRefreshes = new Map();
+  const nameOwnerCache = new Map();
   const defaultHeaders = {
     'User-Agent': config.userAgent
   };
@@ -175,23 +156,7 @@ function createNameHistoryApiService(config) {
   }
 
   function defaultStatusName(status) {
-    switch (status) {
-      case 400:
-        return 'Bad Request';
-      case 401:
-        return 'Unauthorized';
-      case 404:
-        return 'Not Found';
-      case 405:
-        return 'Method Not Allowed';
-      case 429:
-        return 'Too Many Requests';
-      case 503:
-        return 'Service Unavailable';
-      case 500:
-      default:
-        return 'Internal Server Error';
-    }
+    return { 400: 'Bad Request', 404: 'Not Found', 503: 'Service Unavailable' }[status] || 'Internal Server Error';
   }
 
   function createAbortSignal() {
@@ -457,124 +422,152 @@ function createNameHistoryApiService(config) {
     return refreshByResolvedProfile(query, currentProfile, forceRefresh);
   }
 
-  async function getByUuid(uuid, { forceRefresh = false, query = null } = {}) {
-    if (!isValidUuid(uuid)) {
-      throw createError(400, 'Enter a valid Minecraft UUID.');
+  async function fetchCraftyNameOwners(name) {
+    const headers = { ...defaultHeaders };
+    if (config.craftyApiKey) {
+      headers.Authorization = `Bearer ${config.craftyApiKey}`;
     }
-    const formattedUuid = formatUuid(uuid);
-    const cached = storage.getProfileByUuid(formattedUuid);
-    let currentProfile;
-    try {
-      currentProfile = await resolveCurrentProfileByUuid(formattedUuid);
-    } catch (error) {
-      // An explicit UUID remains unambiguous even while Mojang is unavailable.
-      if (cached) {
-        return cloneProfileWithQuery(cached, query || cached.current_name, {
-          history_status: 'stale', profile_stale: true
+    const response = await requestJson(
+      `https://api.crafty.gg/api/v2/usernames/${encodeURIComponent(name)}`, headers
+    );
+    const data = response.data?.data;
+    if (!response.ok || response.data?.success !== true
+      || normalizeName(data?.username) !== normalizeName(name)
+      || !Array.isArray(data?.historical_players)) {
+      throw new Error('Crafty name owners are unavailable.');
+    }
+    const owners = [];
+    // Crafty's current player can be outdated; the caller removes Mojang's
+    // verified current owner, so a stale "current" holder becomes a past one.
+    for (const player of [data.current_player, ...data.historical_players]) {
+      if (player && isValidUuid(player.uuid) && isValidUsername(player.username)) {
+        owners.push({
+          uuid: formatUuid(player.uuid),
+          current_name: player.username.trim(),
+          changed_at: normalizeTimestamp(player.changed_at),
+          source: 'crafty'
         });
       }
-      throw error;
     }
-    if (!currentProfile) {
-      throw createError(404, 'Player not found.');
-    }
-    return refreshByResolvedProfile(query || currentProfile.name, currentProfile, forceRefresh);
+    return owners;
   }
 
-  async function updateProfiles(payload) {
-    const usernames = [];
-    const uuids = [];
-
-    if (payload?.username) {
-      usernames.push(payload.username);
+  // All known accounts that have used `name`, excluding `excludeUuid`
+  // (normally the account that currently owns it according to Mojang).
+  async function getNameOwners(name, { excludeUuid = null, withHistory = false } = {}) {
+    if (!isValidUsername(name)) {
+      throw createError(400, 'Enter a Minecraft username using 1–16 letters, numbers or underscores.');
     }
-
-    if (payload?.uuid) {
-      uuids.push(payload.uuid);
-    }
-
-    if (Array.isArray(payload?.usernames)) {
-      usernames.push(...payload.usernames);
-    }
-
-    if (Array.isArray(payload?.uuids)) {
-      uuids.push(...payload.uuids);
-    }
-
-    const updated = [];
-    const errors = [];
-
-    for (const username of usernames) {
+    const key = normalizeName(name);
+    const cachedEntry = nameOwnerCache.get(key);
+    let remote = cachedEntry && Date.now() - cachedEntry.at < (config.nameOwnersTtlMs ?? 10 * 60_000)
+      ? cachedEntry : null;
+    if (!remote) {
       try {
-        updated.push(await getByUsername(String(username), { forceRefresh: true }));
-      } catch (error) {
-        errors.push({
-          username: String(username),
-          error: error?.body?.description || error.message || 'Unknown error'
-        });
+        remote = { at: Date.now(), status: 'fresh', owners: await fetchCraftyNameOwners(name) };
+        nameOwnerCache.set(key, remote);
+      } catch {
+        remote = { status: 'unavailable', owners: [] };
       }
     }
 
-    for (const uuid of uuids) {
-      try {
-        updated.push(await getByUuid(String(uuid), { forceRefresh: true }));
-      } catch (error) {
-        errors.push({
-          uuid: formatUuid(uuid),
-          error: error?.body?.description || error.message || 'Unknown error'
-        });
+    const owners = new Map();
+    for (const owner of remote.owners) {
+      owners.set(normalizeUuid(owner.uuid), { ...owner });
+    }
+    for (const profile of storage.findProfilesWithName(name)) {
+      const uuid = normalizeUuid(profile.uuid);
+      const existing = owners.get(uuid);
+      if (existing) {
+        // The local cache reflects a fresher Mojang lookup of that account.
+        existing.current_name = profile.current_name;
+        continue;
       }
+      const entry = profile.history.find((item) => normalizeName(item?.name) === key);
+      owners.set(uuid, {
+        uuid: formatUuid(profile.uuid),
+        current_name: profile.current_name,
+        changed_at: entry?.changed_at || null,
+        source: 'cache'
+      });
+    }
+    if (excludeUuid) {
+      owners.delete(normalizeUuid(excludeUuid));
     }
 
+    const ownerList = [...owners.values()];
+    if (withHistory) {
+      // Load each account's own history to tell when it used the name.
+      const limit = config.maxOwnerHistories ?? 8;
+      await Promise.all(ownerList.slice(0, limit).map(async (owner) => {
+        const profile = await getOwnerHistory(owner);
+        if (!profile) {
+          return;
+        }
+        owner.current_name = profile.current_name;
+        owner.profile = profile;
+        owner.periods = findNamePeriods(profile.history, key);
+        if (owner.periods.length > 0) {
+          owner.changed_at = owner.periods.at(-1).from || owner.changed_at;
+        }
+      }));
+    }
+
+    const periodEnd = (owner) => {
+      const last = owner.periods?.at(-1);
+      return last ? (Date.parse(last.to) || Date.parse(last.from) || 0) : (Date.parse(owner.changed_at) || 0);
+    };
     return {
-      updated,
-      errors
+      name: name.trim(),
+      status: remote.status,
+      owners: ownerList.sort((left, right) => periodEnd(right) - periodEnd(left)
+        || left.current_name.localeCompare(right.current_name))
     };
   }
 
-  function deleteProfile({ username = null, uuid = null }) {
-    if (username) {
-      const existing = storage.deleteProfileByName(username);
-      if (!existing) {
-        throw createError(404, 'Profile not found');
-      }
-
-      return {
-        message: 'Profile deleted',
-        uuid: existing.uuid
-      };
+  async function getOwnerHistory(owner) {
+    let currentProfile;
+    try {
+      currentProfile = await resolveCurrentProfileByUuid(owner.uuid);
+    } catch {
+      const cached = storage.getProfileByUuid(owner.uuid);
+      return cached ? cloneProfileWithQuery(cached, cached.current_name, {
+        history_status: 'stale', profile_stale: true
+      }) : null;
     }
-
-    if (uuid) {
-      const existing = storage.deleteProfileByUuid(uuid);
-      if (!existing) {
-        throw createError(404, 'Profile not found');
-      }
-
-      return {
-        message: 'Profile deleted',
-        uuid: existing.uuid
-      };
+    if (!currentProfile) {
+      return null;
     }
-
-    throw createError(400, 'username or uuid required');
+    try {
+      const profile = await refreshByResolvedProfile(currentProfile.name, currentProfile, false);
+      return profile.history_status === 'unavailable' ? null : profile;
+    } catch {
+      return null;
+    }
   }
 
-  return {
-    config,
-    createError,
-    getByUsername,
-    getByUuid,
-    updateProfiles,
-    deleteProfile
-  };
+  // Periods in which a history used `normalizedName`. A period starts at the
+  // entry's change date (null: first name of the account) and ends at the next
+  // change (null: still the current name).
+  function findNamePeriods(history, normalizedName) {
+    const visible = history.filter((entry) => !entry.censored || entry.changed_at);
+    const periods = [];
+    visible.forEach((entry, index) => {
+      if (entry.censored || normalizeName(entry.name) !== normalizedName) {
+        return;
+      }
+      const next = visible.slice(index + 1).find((item) => item.changed_at);
+      periods.push({
+        from: entry.changed_at || null,
+        to: next?.changed_at || null,
+        current: index === visible.length - 1,
+        accurate: entry.accurate === true && (!next || next.accurate === true)
+      });
+    });
+    return periods;
+  }
+
+  return { getByUsername, getNameOwners };
 }
 
-module.exports = {
-  createNameHistoryApiService,
-  formatUuid,
-  isValidUsername,
-  isValidUuid,
-  normalizeName,
-  normalizeUuid
-};
+module.exports = { createNameHistoryApiService, formatUuid };

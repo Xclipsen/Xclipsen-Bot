@@ -1,0 +1,281 @@
+{
+  "cataBasic": {
+    "title": "TestPlayer's Catacombs on Apple",
+    "description": "💀 **Catacombs:** 50 (50.10) | 590M XP\n🧰 **Secrets found:** 5,321 (Per Run: 2.02)\n🏃 **Total Runs:** 2,631\n🩸 **Blood Mob Kills:** 12,345\n⭐ **Selected Class:** Mage 46\n📘 **Class Average:** 25.6 (25.55)\n██████████ (103.5% of level 50 maxed)",
+    "fields": [
+      {
+        "name": "Catacombs Floors",
+        "value": "**F0**: `    3 runs` | PB S+: `-       `\n**F1**: `   30 runs` | PB S+: `-       `\n**F2**: `   52 runs` | PB S+: `-       `\n**F3**: `  101 runs` | PB S+: `-       `\n**F4**: `   77 runs` | PB S+: `-       `\n**F5**: `  260 runs` | PB S+: `2:25.230`\n**F6**: `  501 runs` | PB S+: `2:42.001`\n**F7**: `1,200 runs` | PB S+: `4:11.999`",
+        "inline": false
+      },
+      {
+        "name": "Master Floors",
+        "value": "**M1**: `  4 runs` | PB S+: `-       `\n**M2**: `  0 runs` | PB S+: `-       `\n**M3**: `  0 runs` | PB S+: `-       `\n**M4**: `  0 runs` | PB S+: `-       `\n**M5**: ` 70 runs` | PB S+: `-       `\n**M6**: `  0 runs` | PB S+: `-       `\n**M7**: `333 runs` | PB S+: `5:01.777`",
+        "inline": false
+      }
+    ],
+    "footer": "Data from the official Hypixel API"
+  },
+  "cataSelected": {
+    "title": "TestPlayer's Catacombs on Banana",
+    "description": "💀 **Catacombs:** 6.10 | 1K XP\n🧰 **Secrets found:** 0\n🏃 **Total Runs:** 0\n🩸 **Blood Mob Kills:** 0\n⭐ **Selected Class:** Unknown 0\n📘 **Class Average:** Unknown\n█░░░░░░░░░ (0.0% of level 50 maxed)",
+    "fields": [
+      {
+        "name": "Catacombs Floors",
+        "value": "**F0**: `0 runs` | PB S+: `-`\n**F1**: `0 runs` | PB S+: `-`\n**F2**: `0 runs` | PB S+: `-`\n**F3**: `0 runs` | PB S+: `-`\n**F4**: `0 runs` | PB S+: `-`\n**F5**: `0 runs` | PB S+: `-`\n**F6**: `0 runs` | PB S+: `-`\n**F7**: `0 runs` | PB S+: `-`",
+        "inline": false
+      },
+      {
+        "name": "Master Floors",
+        "value": "**M1**: `0 runs` | PB S+: `-`\n**M2**: `0 runs` | PB S+: `-`\n**M3**: `0 runs` | PB S+: `-`\n**M4**: `0 runs` | PB S+: `-`\n**M5**: `0 runs` | PB S+: `-`\n**M6**: `0 runs` | PB S+: `-`\n**M7**: `0 runs` | PB S+: `-`",
+        "inline": false
+      }
+    ],
+    "footer": "Data from the official Hypixel API"
+  },
+  "cataUnknownProfile": "Profile `Cherry` was not found. Available profiles: `Apple`, `Banana`",
+  "cataLinkedContent": "Using linked username `LinkedName`.",
+  "fishOverview": {
+    "title": "TestPlayer's Trophy Fish on Banana",
+    "description": "Reward Status: Novice Trophy Fisher (Bronze) 3/15\nTotal Trophy Fish Caught: 4,321",
+    "fields": [
+      {
+        "name": "Blobfish",
+        "value": "Bronze: 850\nSilver: 40\nGold: 9\nDiamond: 1\nTotal: 900",
+        "inline": true
+      },
+      {
+        "name": "Sulphur Skitter",
+        "value": "Bronze: 110\nSilver: 10\nGold: ❌\nDiamond: ❌\nTotal: 120\n480 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Flyfish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Golden Fish",
+        "value": "Bronze: 2\nSilver: ❌\nGold: 1\nDiamond: ❌\nTotal: 3\n597 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Gusher",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Karate Fish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Lavahorse",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Mana Ray",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Moldfin",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Obfuscated 1",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Obfuscated 2",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Obfuscated 3",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Skeleton Fish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Slugfish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Steaming-Hot Flounder",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Soul Fish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Vanille",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      },
+      {
+        "name": "Volcanic Stonefish",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌\nTotal: 0\n600 until guaranteed Diamond!",
+        "inline": true
+      }
+    ],
+    "footer": "Data from the official Hypixel API. Fish requirements from the Hypixel Wiki."
+  },
+  "frogOverview": {
+    "title": "TestPlayer's Trophy Frogs on Banana",
+    "description": "Bronze Progress: 3/12\nSilver Progress: 3/12\nGold Progress: 2/12\nDiamond Progress: 1/12\nTotal Trophy Frogs Caught: 77",
+    "fields": [
+      {
+        "name": "Common Frog",
+        "value": "Bronze: ✅\nSilver: ✅\nGold: ✅\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Exploding Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Leap Frog",
+        "value": "Bronze: ✅\nSilver: ✅\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Wetlands Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Reality Hopper",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Blessed Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Bullfrog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Sea Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Cave Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Highlands Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Tree Frog",
+        "value": "Bronze: ❌\nSilver: ❌\nGold: ❌\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Puddle Jumper",
+        "value": "Bronze: ✅\nSilver: ✅\nGold: ✅\nDiamond: ✅",
+        "inline": true
+      }
+    ],
+    "footer": "Hypixel only exposes total frog catches plus unlocked tiers right now. Requirements from the Hypixel SkyBlock Wiki."
+  },
+  "cataBoss": {
+    "title": "TestPlayer's Boss Collections on Apple",
+    "fields": [
+      {
+        "name": "Bonzo 1",
+        "value": "🤡 30 kills\nBonzo 2 in 20 kills",
+        "inline": true
+      },
+      {
+        "name": "Scarf 2",
+        "value": "🧣 52 kills\nScarf 3 in 48 kills",
+        "inline": true
+      },
+      {
+        "name": "The Professor 3",
+        "value": "🎓 101 kills\nThe Professor 4 in 49 kills",
+        "inline": true
+      },
+      {
+        "name": "Thorn 1",
+        "value": "🦴 77 kills\nThorn 2 in 23 kills",
+        "inline": true
+      },
+      {
+        "name": "Livid 4",
+        "value": "🗡️ 260 kills\nLivid 5 in 240 kills",
+        "inline": true
+      },
+      {
+        "name": "Sadan 5",
+        "value": "🪵 501 kills\nSadan 6 in 249 kills",
+        "inline": true
+      },
+      {
+        "name": "Necron 7",
+        "value": "💎 1,200 kills\nMaxed",
+        "inline": true
+      },
+      {
+        "name": "Kuudra 2",
+        "value": "🌋 122 kills\nKuudra 3 in 378 kills",
+        "inline": true
+      }
+    ],
+    "footer": "Boss collection levels are inferred from Hypixel completion counts."
+  },
+  "fishInfo": {
+    "title": "Blobfish",
+    "description": "Chance: 25% (1 in 4 rolls)\n\nCaught everywhere on Crimson Isle lava.\n\nRequirement: No special requirement.",
+    "fields": [
+      {
+        "name": "Your Counts",
+        "value": "Bronze: 850\nSilver: 40\nGold: 9\nDiamond: 1\nTotal: 900",
+        "inline": false
+      }
+    ]
+  },
+  "frogInfo": {
+    "title": "Common Frog",
+    "description": "Chance: 25% (1 in 4 rolls)\n\nCaught everywhere on Lotus Atoll water.\n\nRequirement: No special requirement.",
+    "fields": [
+      {
+        "name": "Your Progress",
+        "value": "Bronze: ✅\nSilver: ✅\nGold: ✅\nDiamond: ❌",
+        "inline": true
+      },
+      {
+        "name": "Pity",
+        "value": "Gold guaranteed after 100 catches if still missing.\nDiamond guaranteed after 600 catches if still missing.",
+        "inline": true
+      },
+      {
+        "name": "Currently In Sack",
+        "value": "Bronze: 12\nSilver: 0\nGold: 1\nDiamond: 0",
+        "inline": false
+      }
+    ],
+    "footer": "The official Hypixel API does not expose full per-frog catch totals yet."
+  }
+}

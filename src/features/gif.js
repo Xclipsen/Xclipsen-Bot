@@ -1,5 +1,5 @@
 const path = require('node:path');
-const { AttachmentBuilder } = require('discord.js');
+const { AttachmentBuilder, MessageFlags } = require('discord.js');
 
 const {
   cleanupTempDirectory,
@@ -17,7 +17,7 @@ function createGifFeature() {
     if (!isSupportedImageAttachment(media)) {
       await interaction.reply({
         content: 'Please upload an image for `/gif`.',
-        flags: 64
+        flags: MessageFlags.Ephemeral
       });
       return;
     }

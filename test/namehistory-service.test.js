@@ -56,11 +56,13 @@ function setup(t, profile = null, config = {}) {
     if (fs.existsSync(cacheFilePath)) fs.unlinkSync(cacheFilePath);
     fs.rmdirSync(directory);
   });
+  const serviceConfig = {
+    cacheFilePath, requestTimeoutMs: 1000, staleMinutes: 1440,
+    userAgent: 'namehistory-test', ...config
+  };
   return {
-    service: createNameHistoryApiService({
-      cacheFilePath, requestTimeoutMs: 1000, staleMinutes: 1440,
-      userAgent: 'namehistory-test', ...config
-    }),
+    service: createNameHistoryApiService(serviceConfig),
+    serviceConfig,
     requests,
     cacheFilePath,
     setHandler(value) { handler = value; },
@@ -264,28 +266,6 @@ test('legacy cache remains available after outages without treating uncertain na
   assert.equal(h.requests.filter(({ url }) => !isMojang(url)).length, 2);
 });
 
-test('an explicit UUID can use a clearly stale cached profile while Mojang is unavailable', async (t) => {
-  const h = setup(t, cachedProfile());
-  h.setHandler(() => json({}, 503));
-  const result = await h.service.getByUuid(ALPHA.uuid);
-  assert.equal(result.uuid, ALPHA.uuid);
-  assert.equal(result.profile_stale, true);
-  assert.equal(result.history_status, 'stale');
-  assert.equal(h.requests.length, 2);
-});
-
-test('UUID lookup rejects a mismatching primary profile and uses the official secondary', async (t) => {
-  const h = setup(t);
-  h.setHandler((url) => {
-    if (url.includes('sessionserver.mojang.com')) return mojang(BETA);
-    return isMojang(url) ? mojang(ALPHA) : laby(ALPHA);
-  });
-  const result = await h.service.getByUuid(ALPHA.uuid.replaceAll('-', ''));
-  assert.equal(result.uuid, ALPHA.uuid);
-  assert.equal(result.profile_stale, false);
-  assert.match(h.requests[1].url, /api\.minecraftservices\.com\/minecraft\/profile\/lookup\//);
-});
-
 test('Retry-After cooldown applies across different accounts without blocking other providers', async (t) => {
   for (const retryAfter of ['120', new Date(Date.now() + 120_000).toUTCString()]) {
     await t.test(retryAfter, async (t) => {
@@ -328,7 +308,6 @@ test('concurrent history lookups share a single provider refresh', async (t) => 
 test('invalid input never makes a network request', async (t) => {
   const h = setup(t);
   await assert.rejects(h.service.getByUsername('not a name'), (error) => error.status === 400);
-  await assert.rejects(h.service.getByUuid('invalid'), (error) => error.status === 400);
   assert.equal(h.requests.length, 0);
 });
 
@@ -337,9 +316,78 @@ test('invalid top-level cache data can be replaced by a valid successful lookup'
     await t.test(JSON.stringify(value), async (t) => {
       const h = setup(t);
       fs.writeFileSync(h.cacheFilePath, JSON.stringify(value));
-      const service = createNameHistoryApiService(h.service.config);
+      const service = createNameHistoryApiService(h.serviceConfig);
       assert.equal((await service.getByUsername('Alpha')).history_status, 'fresh');
       assert.equal(h.readCache().profiles[ALPHA.uuid].history[0].name, 'BeforeAlpha');
     });
   }
+});
+
+const GAMMA = { uuid: '33333333-3333-4333-8333-333333333333', name: 'Gamma' };
+const craftyOwners = (name, current, historical = []) => json({
+  success: true,
+  data: {
+    username: name,
+    current_player: current ? { uuid: current.uuid, username: current.name } : null,
+    historical_players: historical.map((player) => ({ uuid: player.uuid, username: player.name, changed_at: player.changed_at ?? null }))
+  }
+});
+
+test('name owners combine Crafty and cached histories and exclude the verified current owner', async (t) => {
+  const h = setup(t, cachedProfile({
+    uuid: GAMMA.uuid, current_name: GAMMA.name,
+    history: [{ id: 1, name: 'Alpha', changed_at: OLD_DATE, observed_at: OLD_DATE, accurate: true, censored: false }]
+  }));
+  h.setHandler((url) => {
+    assert.equal(url, 'https://api.crafty.gg/api/v2/usernames/Alpha');
+    return craftyOwners('Alpha', ALPHA, [{ ...BETA, changed_at: '2019-01-01T00:00:00Z' }]);
+  });
+  const result = await h.service.getNameOwners('Alpha', { excludeUuid: ALPHA.uuid.replaceAll('-', '') });
+  assert.equal(result.status, 'fresh');
+  assert.deepEqual(result.owners.map((owner) => [owner.current_name, owner.source]), [['Gamma', 'cache'], ['Beta', 'crafty']]);
+
+  // Results are cached briefly; a second lookup makes no request.
+  const before = h.requests.length;
+  await h.service.getNameOwners('alpha');
+  assert.equal(h.requests.length, before);
+});
+
+test('name owners fall back to cached histories when Crafty fails and ignore hidden entries', async (t) => {
+  const h = setup(t, cachedProfile({
+    uuid: GAMMA.uuid, current_name: GAMMA.name,
+    history: [{ id: 1, name: 'Alpha', changed_at: OLD_DATE, observed_at: OLD_DATE, accurate: false, censored: true }]
+  }));
+  h.setHandler(() => json({ success: false }, 500));
+  const result = await h.service.getNameOwners('Alpha');
+  assert.equal(result.status, 'unavailable');
+  assert.deepEqual(result.owners, []);
+  await assert.rejects(h.service.getNameOwners('bad name!'), (error) => error.status === 400);
+});
+
+test('a stale Crafty current player that differs from Mojang counts as a previous owner', async (t) => {
+  const h = setup(t);
+  h.setHandler(() => craftyOwners('Alpha', BETA));
+  const result = await h.service.getNameOwners('Alpha', { excludeUuid: ALPHA.uuid });
+  assert.deepEqual(result.owners.map((owner) => owner.uuid), [BETA.uuid]);
+});
+
+test('name owners with history report the period in which each account used the name', async (t) => {
+  const h = setup(t);
+  h.setHandler((url) => {
+    const host = new URL(url).host;
+    if (host === 'api.crafty.gg') return craftyOwners('Alpha', null, [BETA]);
+    if (isMojang(url)) return mojang(BETA);
+    return laby(BETA, [
+      { name: 'First', changed_at: null, accurate: false },
+      { name: 'Alpha', changed_at: '2019-01-01T00:00:00Z', accurate: true },
+      { name: 'Beta', changed_at: '2021-01-01T00:00:00Z', accurate: true }
+    ]);
+  });
+  const result = await h.service.getNameOwners('Alpha', { withHistory: true });
+  assert.equal(result.owners.length, 1);
+  assert.equal(result.owners[0].current_name, 'Beta');
+  assert.deepEqual(result.owners[0].periods, [{
+    from: '2019-01-01T00:00:00.000Z', to: '2021-01-01T00:00:00.000Z', current: false, accurate: true
+  }]);
+  assert.ok(h.requests.some((request) => request.url.includes('sessionserver.mojang.com/session/minecraft/profile/22222222')));
 });

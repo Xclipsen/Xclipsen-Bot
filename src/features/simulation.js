@@ -1,3 +1,4 @@
+const { MessageFlags } = require('discord.js');
 const { simulatedMayors, simulatedPerkPool } = require('../config/simulationData');
 
 function createSimulationFeature({ store }) {
@@ -58,7 +59,7 @@ function createSimulationFeature({ store }) {
 
     if (subcommand === 'clear') {
       store.setMockState({ enabled: false, customData: null });
-      await interaction.reply({ content: 'Simulation cleared. The bot will use the real Hypixel API again.', flags: 64 });
+      await interaction.reply({ content: 'Simulation cleared. The bot will use the real Hypixel API again.', flags: MessageFlags.Ephemeral });
       await mayorAlerts.checkElectionState();
       await mayorAlerts.sendScheduledStatusUpdate();
       return;
@@ -73,7 +74,7 @@ function createSimulationFeature({ store }) {
     store.setMockState({ enabled: true, customData });
     await interaction.reply({
       content: `Custom simulation set to \`${mayor?.name || mayorKey}\` with ${perkCount} random perk(s)${boothOpen ? ' and an open election booth' : ''}. Triggering a fresh check now.`,
-      flags: 64
+      flags: MessageFlags.Ephemeral
     });
     await mayorAlerts.checkElectionState();
     await mayorAlerts.sendScheduledStatusUpdate();

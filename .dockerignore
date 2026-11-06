@@ -1,5 +1,9 @@
 node_modules/
 npm-debug.log*
-.git/
+.git
 .env
+.env.example
 data/
+docs/
+# Root documentation only; assets/fonts/README.md (font credits) stays with the fonts.
+*.md

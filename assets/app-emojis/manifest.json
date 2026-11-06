@@ -1,0 +1,270 @@
+{
+  "boss_bonzo": {
+    "file": "boss_bonzo.png",
+    "itemId": "BONZO_MASK",
+    "source": "https://cdn.discordapp.com/emojis/1058026187550642206.png?size=128"
+  },
+  "boss_kuudra": {
+    "file": "boss_kuudra.png",
+    "itemId": "PET_KUUDRA",
+    "source": "https://cdn.discordapp.com/emojis/1058269122569449603.png?size=128"
+  },
+  "boss_livid": {
+    "file": "boss_livid.png",
+    "itemId": "LIVID_DAGGER",
+    "source": "https://cdn.discordapp.com/emojis/1164133279423791134.png?size=128"
+  },
+  "boss_necron": {
+    "file": "boss_necron.png",
+    "itemId": "NECRON_HANDLE",
+    "source": "https://cdn.discordapp.com/emojis/1533219148224659506.png?size=128"
+  },
+  "boss_professor": {
+    "file": "boss_professor.png",
+    "itemId": "PET_GUARDIAN",
+    "source": "https://cdn.discordapp.com/emojis/1058130878166994964.png?size=128"
+  },
+  "boss_sadan": {
+    "file": "boss_sadan.png",
+    "itemId": "GIANTS_SWORD",
+    "source": "https://cdn.discordapp.com/emojis/1533124291682636070.png?size=128"
+  },
+  "boss_scarf": {
+    "file": "boss_scarf.png",
+    "itemId": "SCARF_GRIMOIRE",
+    "source": "https://cdn.discordapp.com/emojis/1533218987775623312.png?size=128"
+  },
+  "boss_thorn": {
+    "file": "boss_thorn.png",
+    "itemId": "ITEM_SPIRIT_BOW",
+    "source": "https://cdn.discordapp.com/emojis/1164147707481444453.png?size=128"
+  },
+  "dungeon_blood": {
+    "file": "dungeon_blood.png",
+    "itemId": "BLOOD_GOD_CREST",
+    "source": "https://cdn.discordapp.com/emojis/1533219152670625953.png?size=128"
+  },
+  "dungeon_catacombs": {
+    "file": "dungeon_catacombs.png",
+    "itemId": "SKULL_ITEM:1",
+    "source": "https://cdn.discordapp.com/emojis/1533219084211327317.png?size=128"
+  },
+  "dungeon_class": {
+    "file": "dungeon_class.png",
+    "itemId": "CATACOMBS_EXPERT_RING",
+    "source": "https://cdn.discordapp.com/emojis/1533124300931072000.png?size=128"
+  },
+  "dungeon_class_average": {
+    "file": "dungeon_class_average.png",
+    "itemId": "ENCHANTED_BOOK",
+    "source": "https://cdn.discordapp.com/emojis/1057341547181506730.png?size=128"
+  },
+  "dungeon_runs": {
+    "file": "dungeon_runs.png",
+    "itemId": "DUNGEON_CHEST_KEY",
+    "source": "https://cdn.discordapp.com/emojis/1533124247210164266.png?size=128"
+  },
+  "dungeon_secrets": {
+    "file": "dungeon_secrets.png",
+    "itemId": "CHEST",
+    "source": "https://cdn.discordapp.com/emojis/1057800228423618640.png?size=128"
+  },
+  "mayor_aatrox": {
+    "file": "mayor_aatrox.png",
+    "source": "https://mc-heads.net/head/c1bdf505bb8c0f1f3365a03032de1931663ff71c57e022558de312b8f1b5c445/256"
+  },
+  "mayor_cole": {
+    "file": "mayor_cole.png",
+    "source": "https://mc-heads.net/head/16422de08848952d1cbead66bbbad6f07191bdcc952f3d1036aeb0c22938f39b/256"
+  },
+  "mayor_derpy": {
+    "file": "mayor_derpy.png",
+    "source": "https://mc-heads.net/head/f450d12692886c47b078a38f4d492acfe61216e2d0237ab82433409b3046b464/256"
+  },
+  "mayor_diana": {
+    "file": "mayor_diana.png",
+    "source": "https://mc-heads.net/head/83cc1cf672a4b2540be346ead79ac2d9ed19d95b6075bf95be0b6d0da61377be/256"
+  },
+  "mayor_diaz": {
+    "file": "mayor_diaz.png",
+    "source": "https://mc-heads.net/head/9cf4737cd444b590545734a6408cbe23c182f4283f167a3e3c09532ccbef17f9/256"
+  },
+  "mayor_finnegan": {
+    "file": "mayor_finnegan.png",
+    "source": "https://mc-heads.net/head/e7747fbee9fb39be39b00d3d483eb2f88b4bae82417ab5cb1b1aa930dd7b6689/256"
+  },
+  "mayor_foxy": {
+    "file": "mayor_foxy.png",
+    "source": "https://mc-heads.net/head/3485a717fa0f51d7fadc66a5d5e9853905bef914e3b2848a2f128e63d2db87/256"
+  },
+  "mayor_jerry": {
+    "file": "mayor_jerry.png",
+    "source": "https://mc-heads.net/head/MHF_Villager/256"
+  },
+  "mayor_marina": {
+    "file": "mayor_marina.png",
+    "source": "https://mc-heads.net/head/807fc9bee8d3344e840e4031a37249a4c3c87fc80cf16432cc5c2153d1f9c53d/256"
+  },
+  "mayor_paul": {
+    "file": "mayor_paul.png",
+    "source": "https://mc-heads.net/head/1b59c43d8dbccfd7ec6e6394b6304b70d4ed315add0494ee77c733f41818c73a/256"
+  },
+  "mayor_scorpius": {
+    "file": "mayor_scorpius.png",
+    "source": "https://mc-heads.net/head/8f26fa0c47536e78e337257d898af8b1ebc87c0894503375234035ff2c7ef8f0/256"
+  },
+  "mayor_seraphine": {
+    "file": "mayor_seraphine.png",
+    "source": "https://mc-heads.net/head/cd654531816ec7200a6a461d7a03c2dadf31f449a591c85f3b31cb2a83dd7366/256"
+  },
+  "mine_better_together": {
+    "file": "mine_better_together.png",
+    "itemId": "PARTY_HAT",
+    "source": "https://cdn.discordapp.com/emojis/1533218987595403437.png?size=128"
+  },
+  "mine_crystal_hollows": {
+    "file": "mine_crystal_hollows.png",
+    "itemId": "FINE_AMETHYST_GEM",
+    "source": "https://cdn.discordapp.com/emojis/1533124269863735388.png?size=128"
+  },
+  "mine_double_powder": {
+    "file": "mine_double_powder.png",
+    "itemId": "MITHRIL_ORE",
+    "source": "https://cdn.discordapp.com/emojis/1533124300658180167.png?size=128"
+  },
+  "mine_dwarven_mines": {
+    "file": "mine_dwarven_mines.png",
+    "itemId": "MITHRIL_PICKAXE",
+    "source": "https://cdn.discordapp.com/emojis/1533124269226328294.png?size=128"
+  },
+  "mine_goblin_raid": {
+    "file": "mine_goblin_raid.png",
+    "itemId": "GOBLIN_HELMET",
+    "source": "https://cdn.discordapp.com/emojis/1533218987842863185.png?size=128"
+  },
+  "mine_gone_with_the_wind": {
+    "file": "mine_gone_with_the_wind.png",
+    "itemId": "FEATHER",
+    "source": "https://cdn.discordapp.com/emojis/1533219061184593940.png?size=128"
+  },
+  "mine_mithril_gourmand": {
+    "file": "mine_mithril_gourmand.png",
+    "itemId": "MITHRIL_GOURMAND",
+    "source": "https://cdn.discordapp.com/emojis/1057430467235811399.png?size=128"
+  },
+  "mine_raffle": {
+    "file": "mine_raffle.png",
+    "itemId": "MINING_RAFFLE_TICKET",
+    "source": "https://cdn.discordapp.com/emojis/1057112586925117460.png?size=128"
+  },
+  "sb_bank_interest": {
+    "file": "sb_bank_interest.png",
+    "itemId": "PIGGY_BANK",
+    "source": "https://cdn.discordapp.com/emojis/1533124277744963647.png?size=128"
+  },
+  "sb_cult_fallen_star": {
+    "file": "sb_cult_fallen_star.png",
+    "itemId": "STARFALL",
+    "source": "https://cdn.discordapp.com/emojis/1533124273240019016.png?size=128"
+  },
+  "sb_dark_auction": {
+    "file": "sb_dark_auction.png",
+    "itemId": "DARK_AUCTION_PORTAL",
+    "source": "https://cdn.discordapp.com/emojis/1057405300627488768.png?size=128"
+  },
+  "sb_grand_feast": {
+    "file": "sb_grand_feast.png",
+    "itemId": "FEAST_BURGER",
+    "source": "https://cdn.discordapp.com/emojis/1534264958936809623.png?size=128"
+  },
+  "sb_harvest_feast": {
+    "file": "sb_harvest_feast.png",
+    "itemId": "FEAST_FLASK",
+    "source": "https://cdn.discordapp.com/emojis/1533219130465980618.png?size=128"
+  },
+  "sb_hoppitys_hunt": {
+    "file": "sb_hoppitys_hunt.png",
+    "itemId": "PET_RABBIT",
+    "source": "https://cdn.discordapp.com/emojis/1533219097947406417.png?size=128"
+  },
+  "sb_jerrys_workshop": {
+    "file": "sb_jerrys_workshop.png",
+    "itemId": "SNOW_SNOWGLOBE",
+    "source": "https://cdn.discordapp.com/emojis/1057077690399731732.png?size=128"
+  },
+  "sb_mayor_alerts": {
+    "file": "sb_mayor_alerts.png",
+    "itemId": "LOCKED_BALLOT_BOX",
+    "source": "https://cdn.discordapp.com/emojis/1533218983434784778.png?size=128"
+  },
+  "sb_new_year": {
+    "file": "sb_new_year.png",
+    "itemId": "NEW_YEAR_CAKE",
+    "source": "https://cdn.discordapp.com/emojis/1057726688047403038.png?size=128"
+  },
+  "sb_perkpocalypse": {
+    "file": "sb_perkpocalypse.png",
+    "itemId": "JERRY_TALISMAN_GOLDEN",
+    "source": "https://cdn.discordapp.com/emojis/1533124292131422258.png?size=128"
+  },
+  "sb_season_of_jerry": {
+    "file": "sb_season_of_jerry.png",
+    "itemId": "RED_GIFT",
+    "source": "https://cdn.discordapp.com/emojis/1533124300830150858.png?size=128"
+  },
+  "sb_spider_rain": {
+    "file": "sb_spider_rain.png",
+    "itemId": "WEATHER_STICK",
+    "source": "https://cdn.discordapp.com/emojis/1533218992414789753.png?size=128"
+  },
+  "sb_spider_thunder": {
+    "file": "sb_spider_thunder.png",
+    "itemId": "THUNDER_IN_A_BOTTLE",
+    "source": "https://cdn.discordapp.com/emojis/1533124255938510959.png?size=128"
+  },
+  "sb_spooky_festival": {
+    "file": "sb_spooky_festival.png",
+    "itemId": "PUMPKIN",
+    "source": "https://cdn.discordapp.com/emojis/1057199611216920646.png?size=128"
+  },
+  "sb_spooky_fishing": {
+    "file": "sb_spooky_fishing.png",
+    "itemId": "SPOOKY_BAIT",
+    "source": "https://cdn.discordapp.com/emojis/1533219115676995864.png?size=128"
+  },
+  "sb_traveling_zoo": {
+    "file": "sb_traveling_zoo.png",
+    "itemId": "PET_ELEPHANT",
+    "source": "https://cdn.discordapp.com/emojis/1533219001558106273.png?size=128"
+  },
+  "sb_year_of_the_pig": {
+    "file": "sb_year_of_the_pig.png",
+    "itemId": "PET_PIG",
+    "source": "https://cdn.discordapp.com/emojis/1057555960396267530.png?size=128"
+  },
+  "sb_year_of_the_seal": {
+    "file": "sb_year_of_the_seal.png",
+    "itemId": "PET_SEAL",
+    "source": "https://cdn.discordapp.com/emojis/1533219024664662158.png?size=128"
+  },
+  "sb_year_of_the_witch": {
+    "file": "sb_year_of_the_witch.png",
+    "itemId": "WITCH_HAT",
+    "source": "https://cdn.discordapp.com/emojis/1057881766175719454.png?size=128"
+  },
+  "weather_clear": {
+    "file": "weather_clear.png",
+    "itemId": "SUNFLOWER_HEAD",
+    "source": "https://cdn.discordapp.com/emojis/1452682478081802496.png?size=128"
+  },
+  "weather_extreme": {
+    "file": "weather_extreme.png",
+    "itemId": "STORM_IN_A_BOTTLE",
+    "source": "https://cdn.discordapp.com/emojis/1533218974358176005.png?size=128"
+  },
+  "weather_mild": {
+    "file": "weather_mild.png",
+    "itemId": "RUNE_RAINY_DAY",
+    "source": "https://cdn.discordapp.com/emojis/1302615158056816660.png?size=128"
+  }
+}

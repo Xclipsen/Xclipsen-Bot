@@ -9,8 +9,22 @@ const {
   getReminderStatusLine,
   formatScheduleDuration
 } = require('./eventCalendar');
+const { refreshJerryRotationSafely } = require('./jerryRotation');
+const { NO_APP_EMOJIS } = require('../utils/appEmojis');
 
-function createEventRemindersService({ client, store, minecraft = null, mayorAlerts = null }) {
+// Feast reminders show the crop rotation of the matching (regular or Grand) feast.
+function matchFeast(definition, feast) {
+  return definition.feast && feast?.available && feast.grand === definition.feast.grand ? feast : null;
+}
+
+// appEmojis: item icons in the Discord ping text and as embed thumbnail. Embed titles keep the Unicode
+// emoji (they do not render custom emojis, and older reminders are found by title), and the Minecraft
+// bridge always gets plain text.
+function createEventRemindersService({ client, store, minecraft = null, mayorAlerts = null, jerryRotation = null, feastProvider = null, nowFn = Date.now, scheduleProvider = getAllEventSchedules, appEmojis = NO_APP_EMOJIS }) {
+  function updateReminderState(guildId, patch) {
+    store.updateGuildRuntimeSection(guildId, 'eventReminders', patch);
+  }
+
   async function loadElectionDataForSchedules({ logErrors = true } = {}) {
     const cachedElectionData = mayorAlerts?.getCachedElectionData?.();
     if (cachedElectionData) {
@@ -31,13 +45,22 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
     }
   }
 
-  async function checkForReminders() {
-    const now = Date.now();
-    const electionData = await loadElectionDataForSchedules();
-    const schedules = getAllEventSchedules(now, {
+  function getScheduleContext(electionData) {
+    return {
       mayor: electionData?.mayor || null,
-      mayorFetchedAt: mayorAlerts?.getCachedElectionDataFetchedAt?.() ?? null
-    });
+      mayorFetchedAt: mayorAlerts?.getCachedElectionDataFetchedAt?.() ?? null,
+      jerryRotation
+    };
+  }
+
+  async function checkForReminders() {
+    const now = nowFn();
+    const electionData = await loadElectionDataForSchedules();
+    await refreshJerryRotationSafely(jerryRotation, electionData);
+    const schedules = scheduleProvider(now, getScheduleContext(electionData));
+
+    const feastIsActive = EVENT_DEFINITIONS.some((definition) => definition.feast && schedules[definition.key]?.isActive);
+    const feast = feastIsActive ? await feastProvider?.getCurrent().catch(() => null) : null;
 
     for (const guildId of store.getEventReminderConfiguredGuildIds()) {
       try {
@@ -53,29 +76,41 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
             continue;
           }
 
-          const lastSent = store.getGuildRuntimeState(guildId).eventReminders.lastSentStarts[definition.key] ?? null;
+          const reminderState = store.getGuildRuntimeState(guildId).eventReminders;
+          const lastSent = reminderState.lastSentStarts[definition.key] ?? null;
+          const currentFeast = matchFeast(definition, feast);
+          const previous = reminderState.feastRotations?.[definition.key];
+          const signature = currentFeast ? [...currentFeast.crops].sort().join('|') : null;
+          const rememberCrops = () => {
+            if (!signature) return;
+            updateReminderState(guildId, (latest) => ({ feastRotations: { ...latest.feastRotations, [definition.key]: { signature, windowStartAt: schedule.windowStartAt } } }));
+          };
           if (lastSent === schedule.windowStartAt) {
-            continue;
+            if (!signature) continue;
+            if (!previous || previous.windowStartAt !== schedule.windowStartAt) {
+              // Upgrade existing reminders with crop data without pinging the role again.
+              const existing = await findExistingEventReminderMessage(guildId, channel, definition.key);
+              if (existing) await existing.edit({ embeds: [createEventReminderEmbed(definition, schedule, currentFeast, appEmojis)], allowedMentions: { parse: [] } });
+              rememberCrops();
+              continue;
+            }
+            if (previous.signature === signature) continue;
           }
 
-          await sendEventReminder(guildId, channel, definition, schedule, config.roles[definition.key]);
+          await sendEventReminder(guildId, channel, definition, schedule, config.roles[definition.key], { feast: currentFeast, cropsChanged: lastSent === schedule.windowStartAt });
+          rememberCrops();
           statusChanged = true;
 
-          const runtimeState = store.getGuildRuntimeState(guildId).eventReminders;
-          store.setGuildRuntimeState(guildId, {
-            ...store.getGuildRuntimeState(guildId),
-            eventReminders: {
-              ...runtimeState,
-              lastSentStarts: {
-                ...runtimeState.lastSentStarts,
-                [definition.key]: schedule.windowStartAt
-              }
+          updateReminderState(guildId, (latest) => ({
+            lastSentStarts: {
+              ...latest.lastSentStarts,
+              [definition.key]: schedule.windowStartAt
             }
-          });
+          }));
         }
 
         if (statusChanged) {
-          await mayorAlerts?.refreshStatusForGuild?.(guildId);
+          await mayorAlerts?.refreshStatusForGuild?.(guildId, electionData);
         }
       } catch (error) {
         console.error(`Event reminder failed for guild ${guildId}:`, error);
@@ -89,39 +124,37 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
       await existingMessage.delete().catch(() => null);
     }
 
-    const content = roleId
-      ? [`<@&${roleId}>`, getReminderStatusLine(definition)].join('\n')
-      : getReminderStatusLine(definition);
+    const statusLine = options.cropsChanged ? `${definition.label}: new in-season crops are available.` : getReminderStatusLine(definition, schedule);
+    const discordIcon = appEmojis.get(definition.icon, definition.emoji);
+    const discordStatusLine = options.cropsChanged
+      ? `${discordIcon} ${statusLine}`
+      : getReminderStatusLine(definition, schedule, discordIcon);
+    const content = roleId ? [`<@&${roleId}>`, discordStatusLine].join('\n') : discordStatusLine;
 
     const sentMessage = await channel.send({
       content,
-      embeds: [createEventReminderEmbed(definition, schedule)],
+      embeds: [createEventReminderEmbed(definition, schedule, options.feast, appEmojis)],
       allowedMentions: roleId ? { roles: [roleId] } : { parse: [] }
     });
 
     await minecraft?.sendEventMessage?.(
       definition.key,
       definition.label,
-      getReminderStatusLine(definition),
+      statusLine,
       { isTest: options.isTest === true }
     );
 
-    const runtimeState = store.getGuildRuntimeState(guildId).eventReminders;
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      eventReminders: {
-        ...runtimeState,
-        channelId: sentMessage.channelId,
-        messageIds: {
-          ...runtimeState.messageIds,
-          [definition.key]: sentMessage.id
-        },
-        messageExpireAts: {
-          ...runtimeState.messageExpireAts,
-          [definition.key]: getReminderDeleteAt(schedule)
-        }
+    updateReminderState(guildId, (latest) => ({
+      channelId: sentMessage.channelId,
+      messageIds: {
+        ...latest.messageIds,
+        [definition.key]: sentMessage.id
+      },
+      messageExpireAts: {
+        ...latest.messageExpireAts,
+        [definition.key]: getReminderDeleteAt(schedule)
       }
-    });
+    }));
   }
 
   async function sendTestReminder(guildId, eventKey) {
@@ -134,14 +167,12 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
     const channel = await getReminderChannel(guildId);
     const electionData = await loadElectionDataForSchedules({ logErrors: false });
     const schedule = {
-      ...definition.getSchedule(Date.now(), {
-        mayor: electionData?.mayor || null,
-        mayorFetchedAt: mayorAlerts?.getCachedElectionDataFetchedAt?.() ?? null
-      }),
+      ...definition.getSchedule(Date.now(), getScheduleContext(electionData)),
       isActive: true
     };
 
-    await sendEventReminder(guildId, channel, definition, schedule, config.roles[definition.key], { isTest: true });
+    const feast = definition.feast ? await feastProvider?.getCurrent().catch(() => null) : null;
+    await sendEventReminder(guildId, channel, definition, schedule, config.roles[definition.key], { isTest: true, feast: matchFeast(definition, feast) });
   }
 
   async function getReminderChannel(guildId) {
@@ -186,17 +217,13 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
     const [latestMessage, ...olderMessages] = [...matchingMessages.values()];
     await Promise.all(olderMessages.map((message) => message.delete().catch(() => null)));
 
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      eventReminders: {
-        ...runtimeState,
-        channelId: latestMessage.channelId,
-        messageIds: {
-          ...runtimeState.messageIds,
-          [eventKey]: latestMessage.id
-        }
+    updateReminderState(guildId, (latest) => ({
+      channelId: latestMessage.channelId,
+      messageIds: {
+        ...latest.messageIds,
+        [eventKey]: latestMessage.id
       }
-    });
+    }));
 
     return latestMessage;
   }
@@ -228,14 +255,10 @@ function createEventRemindersService({ client, store, minecraft = null, mayorAle
       return false;
     }
 
-    store.setGuildRuntimeState(guildId, {
-      ...store.getGuildRuntimeState(guildId),
-      eventReminders: {
-        ...runtimeState,
-        channelId: channel.id,
-        messageIds: nextMessageIds,
-        messageExpireAts: nextMessageExpireAts
-      }
+    updateReminderState(guildId, {
+      channelId: channel.id,
+      messageIds: nextMessageIds,
+      messageExpireAts: nextMessageExpireAts
     });
 
     return true;
@@ -252,14 +275,16 @@ function isEventReminderMessage(message, clientUserId, definition) {
     return false;
   }
 
-  if (message.embeds.some((embed) => embed.title === `${definition.emoji} ${definition.label} is ACTIVE`)) {
+  // Older reminders still carry the Unicode emoji in the title.
+  const titles = [`${definition.label} is ACTIVE`, `${definition.emoji} ${definition.label} is ACTIVE`];
+  if (message.embeds.some((embed) => titles.includes(embed.title))) {
     return true;
   }
 
   return typeof message.content === 'string' && message.content.includes(`${definition.label} is active now.`);
 }
 
-function createEventReminderEmbed(definition, schedule) {
+function createEventReminderEmbed(definition, schedule, feast = null, appEmojis = NO_APP_EMOJIS) {
   const displayStartAt = getDisplayStartAt(schedule);
   const displayEndAt = getDisplayEndAt(schedule);
   const lines = [];
@@ -285,11 +310,31 @@ function createEventReminderEmbed(definition, schedule) {
     lines.push('Schedule depends on mayor election data.');
   }
 
-  return new EmbedBuilder()
+  // Titles do not render custom emojis; the item icon is the thumbnail and leads the ping text.
+  const embed = new EmbedBuilder()
     .setColor(definition.color)
-    .setTitle(`${definition.emoji} ${definition.label} is ACTIVE`)
+    .setTitle(`${definition.label} is ACTIVE`)
     .setDescription(lines.join('\n'))
     .setTimestamp();
+  const iconUrl = definition.icon ? appEmojis.url(definition.icon) : null;
+  if (iconUrl) {
+    embed.setThumbnail(iconUrl);
+  }
+  if (typeof definition.reminderFields === 'function') {
+    const fields = definition.reminderFields(schedule);
+    if (fields.length > 0) {
+      embed.addFields(...fields);
+    }
+  }
+  if (definition.feast) {
+    if (feast?.available) {
+      embed.addFields(
+        { name: 'In-season crops', value: `${feast.crops.join(', ')}\nUntil <t:${Math.floor(feast.until / 1000)}:R>` },
+        { name: 'Upcoming crops', value: feast.upcoming.length ? feast.upcoming.map(([at, crops]) => `<t:${Math.floor(at / 1000)}:R>: ${crops.join(', ')}`).join('\n') : 'No further rotations reported yet.' }
+      ).setFooter({ text: 'EliteSkyBlock community data • New ping when confirmed crops change' });
+    } else embed.addFields({ name: 'In-season crops', value: 'No confirmed current crop data available yet.' });
+  }
+  return embed;
 }
 
 module.exports = { createEventRemindersService };

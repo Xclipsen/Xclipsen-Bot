@@ -1,35 +1,62 @@
 const fs = require('node:fs');
 const path = require('node:path');
-const crypto = require('node:crypto');
-const { EVENT_DEFINITIONS } = require('../features/eventCalendar');
-const { MINING_EVENT_DEFINITIONS } = require('../features/miningEvents');
+const { EVENT_CATALOG, FEAST_EVENT_KEYS } = require('../config/eventDefinitions');
+const { MINING_EVENT_DEFINITIONS } = require('../config/miningEventDefinitions');
+const { WEATHER_ROLE_DEFINITIONS } = require('../config/weatherDefinitions');
 
 const DEFAULT_MOD_UPDATE_REPO_URL = 'https://github.com/odtheking/Odin';
-const BRIDGE_EVENT_KEYS = EVENT_DEFINITIONS.map((definition) => definition.key);
 
+// Only a missing file falls back; unreadable or corrupt data must stop the bot instead of being overwritten.
 function loadJsonFile(filePath, fallbackValue) {
+  let raw;
   try {
-    const raw = fs.readFileSync(filePath, 'utf8');
+    raw = fs.readFileSync(filePath, 'utf8');
+  } catch (error) {
+    if (error.code === 'ENOENT') {
+      return fallbackValue;
+    }
+    throw new Error(`Could not read ${filePath}: ${error.message}`, { cause: error });
+  }
+
+  try {
     return JSON.parse(raw);
-  } catch {
-    return fallbackValue;
+  } catch (error) {
+    throw new Error(`Refusing to start: ${filePath} is not valid JSON (${error.message}).`, { cause: error });
   }
 }
 
+// Writes to a temp file in the same directory and renames it, so a crash never leaves a half-written file.
 function saveJsonFile(filePath, value) {
+  const json = JSON.stringify(value, null, 2);
+  const tempPath = `${filePath}.${process.pid}.tmp`;
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
-  fs.writeFileSync(filePath, JSON.stringify(value, null, 2));
+  try {
+    const fd = fs.openSync(tempPath, 'w');
+    try {
+      fs.writeFileSync(fd, json);
+      fs.fsyncSync(fd);
+    } finally {
+      fs.closeSync(fd);
+    }
+    fs.renameSync(tempPath, filePath);
+  } catch (error) {
+    fs.rmSync(tempPath, { force: true });
+    throw error;
+  }
 }
 
 function normalizeGuildConfig(config) {
   return {
+    botManagers: {
+      userIds: normalizeSnowflakeList(config?.botManagers?.userIds),
+      roleIds: normalizeSnowflakeList(config?.botManagers?.roleIds)
+    },
     channelId: config?.channelId || null,
     roleId: config?.roleId || null,
     mayorAlerts: normalizeMayorAlertConfig(config?.mayorAlerts),
     eventReminders: normalizeEventReminderConfig(config?.eventReminders),
     miningEvents: normalizeMiningEventConfig(config?.miningEvents),
-    cakeReminder: normalizeCakeReminderConfig(config?.cakeReminder),
-    cultReminder: normalizeCultReminderConfig(config?.cultReminder),
+    weather: normalizeWeatherConfig(config?.weather),
     modUpdates: normalizeModUpdateConfig(config?.modUpdates),
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),
@@ -58,9 +85,8 @@ function normalizeMayorAlertConfig(config) {
 function normalizeEventReminderConfig(config) {
   return {
     channelId: config?.channelId || null,
-    rolePanelChannelId: config?.rolePanelChannelId || null,
     roles: Object.fromEntries(
-      EVENT_DEFINITIONS.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
+      EVENT_CATALOG.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
     )
   };
 }
@@ -74,17 +100,12 @@ function normalizeMiningEventConfig(config) {
   };
 }
 
-function normalizeCakeReminderConfig(config) {
+function normalizeWeatherConfig(config) {
   return {
     channelId: config?.channelId || null,
-    roleId: config?.roleId || null
-  };
-}
-
-function normalizeCultReminderConfig(config) {
-  return {
-    channelId: config?.channelId || null,
-    roleId: config?.roleId || null
+    roles: Object.fromEntries(
+      WEATHER_ROLE_DEFINITIONS.map((definition) => [definition.key, config?.roles?.[definition.key] || null])
+    )
   };
 }
 
@@ -116,8 +137,7 @@ function normalizeGuildRuntimeState(state) {
     modUpdates: normalizeModUpdateRuntimeState(state?.modUpdates),
     eventReminders: normalizeEventReminderRuntimeState(state?.eventReminders),
     miningEvents: normalizeMiningEventsRuntimeState(state?.miningEvents),
-    cakeReminder: normalizeCakeReminderRuntimeState(state?.cakeReminder),
-    cultReminder: normalizeCultReminderRuntimeState(state?.cultReminder)
+    weather: normalizeWeatherRuntimeState(state?.weather)
   };
 }
 
@@ -165,6 +185,7 @@ function normalizeEventReminderRuntimeState(state) {
     : {};
 
   return {
+    feastRotations: Object.fromEntries(FEAST_EVENT_KEYS.filter(key => typeof state?.feastRotations?.[key]?.signature === 'string' && Number.isFinite(state.feastRotations[key].windowStartAt)).map(key => [key, { signature: state.feastRotations[key].signature, windowStartAt: state.feastRotations[key].windowStartAt }])),
     lastSentStarts,
     messageIds,
     messageExpireAts,
@@ -208,70 +229,33 @@ function normalizeMiningEventsRuntimeState(state) {
     pingMessageIds,
     pingChannelId: state?.pingChannelId ?? null,
     dashboardMessageId: state?.dashboardMessageId ?? null,
-    oldPingsSwept: state?.oldPingsSwept === true,
     rolePanelChannelId: state?.rolePanelChannelId ?? null,
     dwarvenRolePanelMessageId: state?.dwarvenRolePanelMessageId ?? null,
     crystalRolePanelMessageId: state?.crystalRolePanelMessageId ?? null
   };
 }
 
-function normalizeCakeReminderRuntimeState(state) {
+function normalizeWeatherRuntimeState(state) {
   return {
-    lastSentWindowStart: state?.lastSentWindowStart ?? null,
-    messageId: state?.messageId ?? null,
-    channelId: state?.channelId ?? null
+    channelId: state?.channelId ?? null,
+    dashboardMessageId: state?.dashboardMessageId ?? null,
+    dashboardStateKey: state?.dashboardStateKey ?? null,
+    lastSentStarts: normalizeWeatherTierValues(state?.lastSentStarts, normalizeOptionalTimestamp),
+    pingMessageIds: normalizeWeatherTierValues(state?.pingMessageIds, (messageId) => (messageId ? String(messageId) : null)),
+    pingExpireAts: normalizeWeatherTierValues(state?.pingExpireAts, normalizeOptionalTimestamp),
+    rolePanelMessageId: state?.rolePanelMessageId ?? null,
+    rolePanelChannelId: state?.rolePanelChannelId ?? null
   };
 }
 
-function normalizeCultReminderRuntimeState(state) {
-  return {
-    lastSentWindowStart: state?.lastSentWindowStart ?? null,
-    messageId: state?.messageId ?? null,
-    channelId: state?.channelId ?? null
-  };
-}
-
-function normalizeBridgeLinksState(state) {
-  const users = state?.users && typeof state.users === 'object'
-    ? Object.fromEntries(
-      Object.entries(state.users)
-        .map(([discordUserId, entry]) => [String(discordUserId || '').trim(), normalizeBridgeLinkedUser(entry)])
-        .filter(([discordUserId]) => /^\d{16,20}$/.test(discordUserId))
-    )
-    : {};
-
-  return {
-    users,
-    hypixelVerificationMigrationVersion: Number.isFinite(state?.hypixelVerificationMigrationVersion)
-      ? Number(state.hypixelVerificationMigrationVersion)
-      : 0
-  };
-}
-
-function normalizeBridgeLinkedUser(entry) {
-  const minecraftUsernames = normalizeMinecraftUsernameList(entry?.minecraftUsernames);
-  const preferredMinecraftUsername = selectPreferredMinecraftUsername(
-    minecraftUsernames,
-    entry?.preferredMinecraftUsername
+function normalizeWeatherTierValues(values, normalizeValue) {
+  return Object.fromEntries(
+    WEATHER_ROLE_DEFINITIONS.map((definition) => [definition.key, normalizeValue(values?.[definition.key])])
   );
-  const hypixelVerifiedAt = Number.isFinite(entry?.hypixelVerifiedAt) ? Number(entry.hypixelVerifiedAt) : null;
-  const requiresHypixelVerification = Boolean(entry?.requiresHypixelVerification ?? (
-    minecraftUsernames.length > 0 && !hypixelVerifiedAt
-  ));
+}
 
-  return {
-    discordUsername: typeof entry?.discordUsername === 'string' ? entry.discordUsername.trim() : '',
-    discordDisplayName: typeof entry?.discordDisplayName === 'string' ? entry.discordDisplayName.trim() : '',
-    minecraftUsernames,
-    preferredMinecraftUsername,
-    pendingMinecraftUsernames: normalizeMinecraftUsernameList(entry?.pendingMinecraftUsernames),
-    linkCode: typeof entry?.linkCode === 'string' ? entry.linkCode.trim().toUpperCase() : null,
-    linkCodeExpiresAt: Number.isFinite(entry?.linkCodeExpiresAt) ? Number(entry.linkCodeExpiresAt) : null,
-    linkedAt: Number.isFinite(entry?.linkedAt) ? Number(entry.linkedAt) : null,
-    hypixelVerifiedAt,
-    requiresHypixelVerification,
-    eventPreferences: normalizeBridgeEventPreferences(entry?.eventPreferences)
-  };
+function normalizeOptionalTimestamp(value) {
+  return value == null || !Number.isFinite(Number(value)) ? null : Number(value);
 }
 
 function normalizeFarmingStatsState(state) {
@@ -284,80 +268,6 @@ function normalizeFarmingStatsState(state) {
     : {};
 
   return { users };
-}
-
-function normalizeHideonleafStatsState(state) {
-  const users = state?.users && typeof state.users === 'object'
-    ? Object.entries(state.users)
-      .reduce((result, [storedKey, entry]) => {
-        const normalizedEntry = normalizeHideonleafStatsEntry(entry);
-        const normalizedKey = normalizeMinecraftUsername(normalizedEntry.minecraftUsername || storedKey);
-        if (!normalizedKey) {
-          return result;
-        }
-
-        const existingEntry = result[normalizedKey] || null;
-        const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
-        const incomingUpdatedAt = Number.isFinite(normalizedEntry?.updatedAt) ? Number(normalizedEntry.updatedAt) : 0;
-        if (!existingEntry || incomingUpdatedAt >= existingUpdatedAt) {
-          result[normalizedKey] = {
-            ...normalizedEntry,
-            minecraftUsername: normalizedKey
-          };
-        }
-
-        return result;
-      }, {})
-    : {};
-
-  return { users };
-}
-
-function normalizeMobModelState(state) {
-  const users = state?.users && typeof state.users === 'object'
-    ? Object.entries(state.users)
-      .reduce((result, [storedKey, entry]) => {
-        const normalizedEntry = normalizeMobModelEntry(entry);
-        const normalizedKey = normalizeMinecraftUsername(normalizedEntry.minecraftUsername || storedKey);
-        if (!normalizedKey) {
-          return result;
-        }
-
-        const existingEntry = result[normalizedKey] || null;
-        const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
-        const incomingUpdatedAt = Number.isFinite(normalizedEntry?.updatedAt) ? Number(normalizedEntry.updatedAt) : 0;
-        if (!existingEntry || incomingUpdatedAt >= existingUpdatedAt) {
-          result[normalizedKey] = {
-            ...normalizedEntry,
-            minecraftUsername: normalizedKey
-          };
-        }
-
-        return result;
-      }, {})
-    : {};
-
-  return { users };
-}
-
-function normalizeMobModelEntry(entry) {
-  return {
-    minecraftUsername: normalizeMinecraftUsername(entry?.minecraftUsername),
-    enabled: entry?.enabled === true,
-    entityType: normalizeMobModelEntityType(entry?.entityType),
-    baby: entry?.baby === true,
-    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
-  };
-}
-
-function normalizeMobModelEntityType(value) {
-  const raw = String(value || '').trim().toLowerCase();
-  if (!raw) {
-    return 'minecraft:zombie';
-  }
-
-  const namespaced = raw.includes(':') ? raw : `minecraft:${raw}`;
-  return /^[a-z0-9_.-]+:[a-z0-9_./-]+$/.test(namespaced) ? namespaced : 'minecraft:zombie';
 }
 
 function normalizeFarmingStatsEntry(entry) {
@@ -387,69 +297,6 @@ function normalizeLastPestFarmingProfitsEntry(entry) {
   };
 }
 
-function normalizeHideonleafStatsEntry(entry) {
-  return {
-    minecraftUsername: normalizeMinecraftUsername(entry?.minecraftUsername),
-    kills: Math.max(0, Number(entry?.kills) || 0),
-    totalShards: Math.max(0, Number(entry?.totalShards) || 0),
-    totalProfit: Math.max(0, Number(entry?.totalProfit) || 0),
-    profitPerHour: Math.max(0, Number(entry?.profitPerHour) || 0),
-    totalDurationMs: Math.max(0, Number(entry?.totalDurationMs) || 0),
-    items: normalizeHideonleafItems(entry?.items),
-    updatedAt: Number.isFinite(entry?.updatedAt) ? Number(entry.updatedAt) : null
-  };
-}
-
-function normalizeHideonleafItems(items) {
-  if (!items || typeof items !== 'object') {
-    return {};
-  }
-
-  return Object.fromEntries(
-    Object.entries(items)
-      .map(([name, item]) => [String(name || '').trim(), normalizeHideonleafItemEntry(item)])
-      .filter(([name]) => name)
-  );
-}
-
-function normalizeHideonleafItemEntry(item) {
-  return {
-    amount: Math.max(0, Number(item?.amount) || 0),
-    timesDropped: Math.max(0, Number(item?.timesDropped) || 0),
-    pricePerUnit: Math.max(0, Number(item?.pricePerUnit) || 0)
-  };
-}
-
-function normalizeBridgeEventPreferences(preferences) {
-  return Object.fromEntries(BRIDGE_EVENT_KEYS.map((eventKey) => [eventKey, preferences?.[eventKey] !== false]));
-}
-
-function normalizeMinecraftUsernameList(values) {
-  return Array.isArray(values)
-    ? [...new Set(values
-      .map((value) => normalizeMinecraftUsername(value))
-      .filter(Boolean))]
-    : [];
-}
-
-function normalizeMinecraftUsername(value) {
-  const raw = String(value || '').trim();
-  return /^[A-Za-z0-9_]{3,16}$/.test(raw) ? raw : '';
-}
-
-function selectPreferredMinecraftUsername(usernames, preferredUsername) {
-  if (!Array.isArray(usernames) || usernames.length === 0) {
-    return null;
-  }
-
-  const normalizedPreferred = normalizeMinecraftUsername(preferredUsername).toLowerCase();
-  if (!normalizedPreferred) {
-    return usernames[0];
-  }
-
-  return usernames.find((username) => username.toLowerCase() === normalizedPreferred) || usernames[0];
-}
-
 function normalizeSnowflakeList(values) {
   return Array.isArray(values)
     ? [...new Set(values.map((value) => String(value || '').trim()).filter((value) => /^\d{16,20}$/.test(value)))]
@@ -457,41 +304,25 @@ function normalizeSnowflakeList(values) {
 }
 
 function normalizeScreenshotEntries(entry) {
-  const screenshots = Array.isArray(entry?.screenshots)
-    ? entry.screenshots.map((screenshot) => ({
-        url: screenshot?.url || null,
-        name: screenshot?.name || null
-      }))
+  return Array.isArray(entry?.screenshots)
+    ? entry.screenshots
+      .map((screenshot) => ({ url: screenshot?.url || null, name: screenshot?.name || null }))
+      .filter((screenshot) => typeof screenshot.url === 'string' && screenshot.url.trim())
     : [];
-
-  if (screenshots.length === 0 && entry?.screenshotUrl) {
-    screenshots.push({
-      url: entry.screenshotUrl,
-      name: entry?.screenshotName || null
-    });
-  }
-
-  return screenshots.filter((screenshot) => typeof screenshot.url === 'string' && screenshot.url.trim());
 }
 
 function normalizeShitterEntries(entries) {
   return Array.isArray(entries)
-    ? entries.map((entry) => {
-      const screenshots = normalizeScreenshotEntries(entry);
-
-      return {
-        ign: String(entry?.ign || '').trim(),
-        normalizedIgn: String(entry?.normalizedIgn || entry?.ign || '').trim().toLowerCase(),
-        reason: String(entry?.reason || '').trim(),
-        createdAt: entry?.createdAt || null,
-        removedAt: entry?.removedAt || null,
-        screenshotUrl: screenshots[0]?.url || null,
-        screenshotName: screenshots[0]?.name || null,
-        screenshots,
-        addedByUserId: entry?.addedByUserId || null,
-        removedByUserId: entry?.removedByUserId || null
-      };
-    }).filter((entry) => entry.ign && entry.reason && entry.createdAt)
+    ? entries.map((entry) => ({
+      ign: String(entry?.ign || '').trim(),
+      normalizedIgn: String(entry?.normalizedIgn || entry?.ign || '').trim().toLowerCase(),
+      reason: String(entry?.reason || '').trim(),
+      createdAt: entry?.createdAt || null,
+      removedAt: entry?.removedAt || null,
+      screenshots: normalizeScreenshotEntries(entry),
+      addedByUserId: entry?.addedByUserId || null,
+      removedByUserId: entry?.removedByUserId || null
+    })).filter((entry) => entry.ign && entry.reason && entry.createdAt)
     : [];
 }
 
@@ -510,9 +341,6 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
   let shitterData = loadShitterData(shitterFilePath);
   let guildState = loadState(stateFilePath);
 
-  migrateLegacyShitterEntries();
-  migrateLegacyBridgeLinks();
-
   function saveConfig() {
     saveJsonFile(configFilePath, guildConfig);
   }
@@ -525,56 +353,10 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
     saveJsonFile(shitterFilePath, shitterData);
   }
 
-  function migrateLegacyShitterEntries() {
-    let migrated = false;
-    const nextGuilds = { ...guildConfig.guilds };
-
-    for (const [guildId, config] of Object.entries(guildConfig.guilds)) {
-      const legacyEntries = normalizeShitterEntries(config?.shitterEntries);
-      if (legacyEntries.length === 0) {
-        continue;
-      }
-
-      shitterData = {
-        ...shitterData,
-        guilds: {
-          ...shitterData.guilds,
-          [guildId]: legacyEntries
-        }
-      };
-
-      const { shitterEntries, ...rest } = config || {};
-      nextGuilds[guildId] = rest;
-      migrated = true;
-    }
-
-    if (migrated) {
-      guildConfig = { ...guildConfig, guilds: nextGuilds };
-      saveConfig();
-      saveShitterData();
-    }
-  }
-
-  function migrateLegacyBridgeLinks() {
-    const links = normalizeBridgeLinksState(guildState.links);
-    if (links.hypixelVerificationMigrationVersion >= 1) {
-      return;
-    }
-
-    const hasLegacyLinks = Object.values(links.users)
-      .some((entry) => entry.requiresHypixelVerification && entry.minecraftUsernames.length > 0);
-    if (!hasLegacyLinks) {
-      return;
-    }
-
-    guildState = {
-      ...guildState,
-      links: {
-        ...links,
-        hypixelVerificationMigrationVersion: 1
-      }
-    };
-    saveState();
+  function getGuildIdsWhere(predicate) {
+    return Object.entries(guildConfig.guilds)
+      .filter(([, config]) => predicate(normalizeGuildConfig(config)))
+      .map(([guildId]) => guildId);
   }
 
   return {
@@ -610,6 +392,16 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       };
       saveState();
     },
+    // Merges `patch` (or patch(latestSection)) into one runtime section such as 'miningEvents'.
+    updateGuildRuntimeSection(guildId, section, patch) {
+      const latest = this.getGuildRuntimeState(guildId)[section];
+      this.setGuildRuntimeState(guildId, {
+        [section]: {
+          ...latest,
+          ...(typeof patch === 'function' ? patch(latest) : patch)
+        }
+      });
+    },
     getMockState() {
       return {
         enabled: Boolean(guildState.mock?.enabled),
@@ -623,6 +415,19 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
           ...this.getMockState(),
           ...partialState
         }
+      };
+      saveState();
+    },
+    // Last Perkpocalypse order read from the wiki; validated by the jerryRotation feature.
+    getJerryRotationCache() {
+      return guildState.jerryRotation && typeof guildState.jerryRotation === 'object'
+        ? guildState.jerryRotation
+        : null;
+    },
+    setJerryRotationCache(rotation) {
+      guildState = {
+        ...guildState,
+        jerryRotation: rotation || null
       };
       saveState();
     },
@@ -646,265 +451,19 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
       saveShitterData();
     },
     getConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => {
-          const normalized = normalizeGuildConfig(config);
-          return normalized.eventReminders.channelId || normalized.channelId;
-        })
-        .map(([guildId]) => guildId);
+      return getGuildIdsWhere((config) => config.eventReminders.channelId || config.channelId);
     },
     getModUpdateConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => {
-          const normalized = normalizeGuildConfig(config);
-          return normalized.modUpdates.channelId && normalized.modUpdates.trackedRepos.length > 0;
-        })
-        .map(([guildId]) => guildId);
-    },
-    getModUpdateChannelGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).modUpdates.channelId)
-        .map(([guildId]) => guildId);
+      return getGuildIdsWhere((config) => config.modUpdates.channelId && config.modUpdates.trackedRepos.length > 0);
     },
     getEventReminderConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).eventReminders.channelId)
-        .map(([guildId]) => guildId);
+      return getGuildIdsWhere((config) => config.eventReminders.channelId);
     },
     getMiningEventConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).miningEvents.channelId)
-        .map(([guildId]) => guildId);
+      return getGuildIdsWhere((config) => config.miningEvents.channelId);
     },
-    getCakeReminderConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).cakeReminder.channelId)
-        .map(([guildId]) => guildId);
-    },
-    getCultReminderConfiguredGuildIds() {
-      return Object.entries(guildConfig.guilds)
-        .filter(([, config]) => normalizeGuildConfig(config).cultReminder.channelId)
-        .map(([guildId]) => guildId);
-    },
-    getBridgeLinkedAccount(discordUserId) {
-      return normalizeBridgeLinksState(guildState.links).users[String(discordUserId || '').trim()] || null;
-    },
-    getPreferredBridgeMinecraftUsername(discordUserId) {
-      const account = this.getBridgeLinkedAccount(discordUserId);
-      if (account?.requiresHypixelVerification) {
-        return null;
-      }
-
-      return account?.minecraftUsernames?.[0] || null;
-    },
-    setBridgeLinkedAccount(discordUserId, partialEntry) {
-      const key = String(discordUserId || '').trim();
-      const links = normalizeBridgeLinksState(guildState.links);
-      guildState = {
-        ...guildState,
-        links: {
-          ...links,
-          users: {
-            ...links.users,
-            [key]: normalizeBridgeLinkedUser({
-              ...links.users[key],
-              ...partialEntry
-            })
-          }
-        }
-      };
-      saveState();
-      return this.getBridgeLinkedAccount(key);
-    },
-    removeBridgeLinkedAccount(discordUserId) {
-      const key = String(discordUserId || '').trim();
-      const links = normalizeBridgeLinksState(guildState.links);
-      const nextUsers = { ...links.users };
-      delete nextUsers[key];
-      guildState = {
-        ...guildState,
-        links: {
-          ...links,
-          users: nextUsers
-        }
-      };
-      saveState();
-    },
-    findBridgeLinkByMinecraftUsername(username, options = {}) {
-      const normalizedUsername = normalizeMinecraftUsername(username).toLowerCase();
-      if (!normalizedUsername) {
-        return null;
-      }
-
-      const includeLegacy = options.includeLegacy === true;
-      const links = normalizeBridgeLinksState(guildState.links);
-      for (const [discordUserId, entry] of Object.entries(links.users)) {
-        if (!includeLegacy && entry.requiresHypixelVerification) {
-          continue;
-        }
-
-        if (entry.minecraftUsernames.some((value) => value.toLowerCase() === normalizedUsername)) {
-          return { discordUserId, entry };
-        }
-      }
-
-      return null;
-    },
-    startBridgeLink(discordUserId, minecraftUsernames) {
-      const key = String(discordUserId || '').trim();
-      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
-      const conflicts = usernames.filter((username) => {
-        const existing = this.findBridgeLinkByMinecraftUsername(username);
-        return existing && existing.discordUserId !== key;
-      });
-
-      if (conflicts.length > 0) {
-        return { ok: false, error: `These usernames are already linked: ${conflicts.join(', ')}` };
-      }
-
-      const account = this.setBridgeLinkedAccount(key, {
-        ...this.getBridgeLinkedAccount(key),
-        pendingMinecraftUsernames: usernames,
-        linkCode: crypto.randomBytes(3).toString('hex').toUpperCase(),
-        linkCodeExpiresAt: Date.now() + (10 * 60 * 1000),
-        eventPreferences: this.getBridgeLinkedAccount(key)?.eventPreferences || normalizeBridgeEventPreferences()
-      });
-
-      return {
-        ok: true,
-        code: account.linkCode,
-        expiresAt: account.linkCodeExpiresAt,
-        pendingMinecraftUsernames: account.pendingMinecraftUsernames
-      };
-    },
-    completeBridgeLink(code, minecraftUsername) {
-      const normalizedCode = String(code || '').trim().toUpperCase();
-      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
-      if (!normalizedCode || !normalizedUsername) {
-        return { ok: false, error: 'Invalid link code or Minecraft username.' };
-      }
-
-      const links = normalizeBridgeLinksState(guildState.links);
-      for (const [discordUserId, entry] of Object.entries(links.users)) {
-        if (entry.linkCode !== normalizedCode || !entry.linkCodeExpiresAt || entry.linkCodeExpiresAt < Date.now()) {
-          continue;
-        }
-
-        if (
-          entry.pendingMinecraftUsernames.length > 0 &&
-          !entry.pendingMinecraftUsernames.some((value) => value.toLowerCase() === normalizedUsername.toLowerCase())
-        ) {
-          return { ok: false, error: 'This Minecraft username is not in the pending link list.' };
-        }
-
-        const targetUsernames = normalizeMinecraftUsernameList([
-          ...entry.minecraftUsernames,
-          ...entry.pendingMinecraftUsernames,
-          normalizedUsername
-        ]);
-        const conflicts = targetUsernames.filter((username) => {
-          const existing = this.findBridgeLinkByMinecraftUsername(username);
-          return existing && existing.discordUserId !== discordUserId;
-        });
-
-        if (conflicts.length > 0) {
-          return { ok: false, error: `These usernames are already linked elsewhere: ${conflicts.join(', ')}` };
-        }
-
-        const updated = this.setBridgeLinkedAccount(discordUserId, {
-          minecraftUsernames: targetUsernames,
-          pendingMinecraftUsernames: [],
-          linkCode: null,
-          linkCodeExpiresAt: null,
-          linkedAt: entry.linkedAt || Date.now(),
-          eventPreferences: entry.eventPreferences
-        });
-
-        return { ok: true, discordUserId, account: updated };
-      }
-
-      return { ok: false, error: 'Link code not found or expired.' };
-    },
-    linkVerifiedBridgeMinecraftUsernames(discordUserId, minecraftUsernames, metadata = {}) {
-      const key = String(discordUserId || '').trim();
-      const account = this.getBridgeLinkedAccount(key);
-      const usernames = normalizeMinecraftUsernameList(minecraftUsernames);
-      if (usernames.length === 0) {
-        return { ok: false, error: 'Add at least one valid Minecraft username.' };
-      }
-
-      const conflicts = usernames.filter((username) => {
-        const existing = this.findBridgeLinkByMinecraftUsername(username, { includeLegacy: true });
-        return existing && existing.discordUserId !== key && !existing.entry.requiresHypixelVerification;
-      });
-
-      if (conflicts.length > 0) {
-        return { ok: false, error: `These usernames are already linked: ${conflicts.join(', ')}` };
-      }
-
-      for (const username of usernames) {
-        const existing = this.findBridgeLinkByMinecraftUsername(username, { includeLegacy: true });
-        if (existing && existing.discordUserId !== key && existing.entry.requiresHypixelVerification) {
-          this.removeBridgeMinecraftUsername(existing.discordUserId, username);
-        }
-      }
-
-      const existingUsernames = account?.requiresHypixelVerification
-        ? []
-        : (account?.minecraftUsernames || []);
-      const verifiedAt = Date.now();
-      const updated = this.setBridgeLinkedAccount(key, {
-        ...metadata,
-        minecraftUsernames: normalizeMinecraftUsernameList([
-          ...existingUsernames,
-          ...usernames
-        ]),
-        pendingMinecraftUsernames: [],
-        linkCode: null,
-        linkCodeExpiresAt: null,
-        linkedAt: account?.linkedAt || Date.now(),
-        hypixelVerifiedAt: verifiedAt,
-        requiresHypixelVerification: false,
-        eventPreferences: account?.eventPreferences || normalizeBridgeEventPreferences()
-      });
-
-      return { ok: true, account: updated, usernames };
-    },
-    removeBridgeMinecraftUsername(discordUserId, minecraftUsername) {
-      const key = String(discordUserId || '').trim();
-      const account = this.getBridgeLinkedAccount(key);
-      if (!account || account.minecraftUsernames.length === 0) {
-        return { ok: false, error: 'You are not linked yet.' };
-      }
-
-      const normalizedUsername = normalizeMinecraftUsername(minecraftUsername);
-      const nextUsernames = account.minecraftUsernames.filter((value) => value.toLowerCase() !== normalizedUsername.toLowerCase());
-      const updated = this.setBridgeLinkedAccount(key, { minecraftUsernames: nextUsernames });
-      return { ok: true, account: updated };
-    },
-    setBridgeEventPreference(discordUserId, eventKey, enabled) {
-      const key = String(discordUserId || '').trim();
-      const account = this.getBridgeLinkedAccount(key);
-      if (!account || account.minecraftUsernames.length === 0) {
-        return { ok: false, error: 'You are not linked yet.' };
-      }
-
-      if (account.requiresHypixelVerification) {
-        return { ok: false, error: `Re-verify your Minecraft link with \`/link username:${account.minecraftUsernames[0]}\` first.` };
-      }
-
-      if (!BRIDGE_EVENT_KEYS.includes(eventKey)) {
-        return { ok: false, error: 'Unknown event key.' };
-      }
-
-      const updated = this.setBridgeLinkedAccount(key, {
-        eventPreferences: {
-          ...account.eventPreferences,
-          [eventKey]: enabled !== false
-        }
-      });
-
-      return { ok: true, account: updated };
+    getWeatherConfiguredGuildIds() {
+      return getGuildIdsWhere((config) => config.weather.channelId);
     },
     getUserFarmingStats(discordUserId) {
       return normalizeFarmingStatsState(guildState.farming).users[String(discordUserId || '').trim()] || null;
@@ -942,144 +501,22 @@ function createStore({ configFilePath, shitterFilePath, stateFilePath }) {
           updatedAt: Date.now()
         }
       });
-    },
-    getUserHideonleafStats(minecraftUsername) {
-      const key = normalizeMinecraftUsername(minecraftUsername);
-      if (!key) {
-        return null;
-      }
-
-      return normalizeHideonleafStatsState(guildState.hideonleaf).users[key] || null;
-    },
-    setUserHideonleafStats(minecraftUsername, partialEntry) {
-      const key = normalizeMinecraftUsername(minecraftUsername || partialEntry?.minecraftUsername);
-      if (!key) {
-        return null;
-      }
-
-      const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
-      const existingEntry = hideonleaf.users[key] || null;
-      const incomingUpdatedAt = Number.isFinite(partialEntry?.updatedAt) ? Number(partialEntry.updatedAt) : Date.now();
-      const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
-      if (existingEntry && incomingUpdatedAt < existingUpdatedAt) {
-        return this.getUserHideonleafStats(key);
-      }
-
-      guildState = {
-        ...guildState,
-        hideonleaf: {
-          users: {
-            ...hideonleaf.users,
-            [key]: normalizeHideonleafStatsEntry({
-              ...existingEntry,
-              ...partialEntry,
-              minecraftUsername: key,
-              updatedAt: incomingUpdatedAt
-            })
-          }
-        }
-      };
-      saveState();
-      return this.getUserHideonleafStats(key);
-    },
-    getUserMobModel(minecraftUsername) {
-      const key = normalizeMinecraftUsername(minecraftUsername);
-      if (!key) {
-        return null;
-      }
-
-      return normalizeMobModelState(guildState.mobModels).users[key] || null;
-    },
-    setUserMobModel(minecraftUsername, partialEntry) {
-      const key = normalizeMinecraftUsername(minecraftUsername || partialEntry?.minecraftUsername);
-      if (!key) {
-        return null;
-      }
-
-      const mobModels = normalizeMobModelState(guildState.mobModels);
-      const existingEntry = mobModels.users[key] || null;
-      const incomingUpdatedAt = Number.isFinite(partialEntry?.updatedAt) ? Number(partialEntry.updatedAt) : Date.now();
-      const existingUpdatedAt = Number.isFinite(existingEntry?.updatedAt) ? Number(existingEntry.updatedAt) : 0;
-      if (existingEntry && incomingUpdatedAt < existingUpdatedAt) {
-        return this.getUserMobModel(key);
-      }
-
-      guildState = {
-        ...guildState,
-        mobModels: {
-          users: {
-            ...mobModels.users,
-            [key]: normalizeMobModelEntry({
-              ...existingEntry,
-              ...partialEntry,
-              minecraftUsername: key,
-              updatedAt: incomingUpdatedAt
-            })
-          }
-        }
-      };
-      saveState();
-      return this.getUserMobModel(key);
-    },
-    listMobModels() {
-      const mobModels = normalizeMobModelState(guildState.mobModels);
-      return Object.entries(mobModels.users).map(([minecraftUsername, entry]) => ({
-        minecraftUsername,
-        ...entry
-      }));
-    },
-    listHideonleafStats() {
-      const hideonleaf = normalizeHideonleafStatsState(guildState.hideonleaf);
-      return Object.entries(hideonleaf.users).map(([minecraftUsername, entry]) => ({
-        minecraftUsername,
-        ...entry
-      }));
     }
   };
 }
 
 function loadConfig(configFilePath) {
   const config = loadJsonFile(configFilePath, { guilds: {} });
-  return { guilds: config.guilds && typeof config.guilds === 'object' ? config.guilds : {} };
+  return { guilds: config?.guilds && typeof config.guilds === 'object' ? config.guilds : {} };
 }
 
+// Unknown top-level keys (e.g. retired local links) are kept untouched on save.
 function loadState(stateFilePath) {
-  const state = loadJsonFile(stateFilePath, null);
-
-  if (!state) {
-    return {
-      guilds: {},
-      links: normalizeBridgeLinksState(),
-      farming: normalizeFarmingStatsState(),
-      hideonleaf: normalizeHideonleafStatsState(),
-      mobModels: normalizeMobModelState()
-    };
-  }
-
-  if (state.guilds && typeof state.guilds === 'object') {
-    return {
-      ...state,
-      links: normalizeBridgeLinksState(state.links),
-      farming: normalizeFarmingStatsState(state.farming),
-      hideonleaf: normalizeHideonleafStatsState(state.hideonleaf),
-      mobModels: normalizeMobModelState(state.mobModels)
-    };
-  }
-
+  const state = loadJsonFile(stateFilePath, null) || {};
   return {
-    guilds: {
-      legacy: {
-        boothOpen: state.boothOpen ?? null,
-        alertMessageId: state.alertMessageId ?? null,
-        alertChannelId: state.alertChannelId ?? null,
-        statusMessageId: state.statusMessageId ?? null,
-        statusChannelId: state.statusChannelId ?? null
-      }
-    },
-    links: normalizeBridgeLinksState(),
-    farming: normalizeFarmingStatsState(),
-    hideonleaf: normalizeHideonleafStatsState(),
-    mobModels: normalizeMobModelState()
+    ...state,
+    guilds: state.guilds && typeof state.guilds === 'object' ? state.guilds : {},
+    farming: normalizeFarmingStatsState(state.farming)
   };
 }
 

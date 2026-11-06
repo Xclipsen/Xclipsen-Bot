@@ -2,8 +2,10 @@ const { MessageFlags } = require('discord.js');
 
 const { createMayorAlertData } = require('./data');
 const { createMayorAlertEmbeds } = require('./embeds');
+const { refreshJerryRotationSafely } = require('../jerryRotation');
+const { NO_APP_EMOJIS } = require('../../utils/appEmojis');
 
-function createMayorAlerts({ client, env, store, skyblock }) {
+function createMayorAlerts({ client, env, store, skyblock, jerryRotation = null, hypixelApi, appEmojis = NO_APP_EMOJIS }) {
   let lastMayorKey = null;
   let initializedMayorState = false;
   let cachedElectionData = null;
@@ -11,8 +13,8 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   const resolvedMayorEmojiCache = new Map();
   const warnedDisconnectedGuildIds = new Set();
 
-  const data = createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache });
-  const embeds = createMayorAlertEmbeds({ env, skyblock });
+  const data = createMayorAlertData({ client, env, store, skyblock, resolvedMayorEmojiCache, hypixelApi, appEmojis });
+  const embeds = createMayorAlertEmbeds({ env, skyblock, jerryRotation, getMayorFetchedAt: () => cachedElectionDataFetchedAt, appEmojis });
 
   function getActiveConfiguredGuildIds(context) {
     return store.getConfiguredGuildIds()
@@ -55,13 +57,14 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
   async function sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection = null, options = {}) {
     const channel = await data.getTargetChannel(guildId);
-    const mayorEmoji = await data.getMayorEmoji(guildId, mayor);
+    const mayorIcon = await data.getMayorIconResolver(guildId);
+    const mayorEmoji = await data.getMayorEmoji(guildId, mayor, mayorIcon);
     const payload = {
       embeds: [
         embeds.createEventCalendarEmbed(mayor),
-        embeds.createMayorEmbed('SkyBlock Status Update', mayorEmoji, mayor, boothOpen, currentElection)
+        embeds.createMayorEmbed(mayorEmoji, mayor, boothOpen, currentElection, { mayorIcon })
       ],
-      components: boothOpen ? embeds.createCandidateSelectComponents(currentElection) : []
+      components: boothOpen ? embeds.createCandidateSelectComponents(currentElection, mayorIcon) : []
     };
 
     const existingMessage = await data.findExistingStatusMessage(guildId, channel);
@@ -69,7 +72,6 @@ function createMayorAlerts({ client, env, store, skyblock }) {
       if (options.forceResend) {
         await existingMessage.delete().catch(() => null);
         store.setGuildRuntimeState(guildId, {
-          ...store.getGuildRuntimeState(guildId),
           statusMessageId: null,
           statusChannelId: null
         });
@@ -83,7 +85,6 @@ function createMayorAlerts({ client, env, store, skyblock }) {
           }
 
           store.setGuildRuntimeState(guildId, {
-            ...store.getGuildRuntimeState(guildId),
             statusMessageId: null,
             statusChannelId: null
           });
@@ -154,6 +155,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   async function checkElectionState() {
     try {
       const electionData = await fetchElectionData();
+      await refreshJerryRotationSafely(jerryRotation, electionData);
       const mayor = electionData.mayor;
       const currentElection = electionData.current || null;
       const currentMayorKey = String(mayor.key || '').toLowerCase();
@@ -164,10 +166,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
         lastMayorKey = currentMayorKey;
 
         for (const guildId of getActiveConfiguredGuildIds('initial mayor state check')) {
-          store.setGuildRuntimeState(guildId, {
-            ...store.getGuildRuntimeState(guildId),
-            boothOpen
-          });
+          store.setGuildRuntimeState(guildId, { boothOpen });
         }
 
         console.log(`Initial mayor state set to ${mayor.name} (${currentMayorKey})`);
@@ -178,11 +177,13 @@ function createMayorAlerts({ client, env, store, skyblock }) {
 
       for (const guildId of getActiveConfiguredGuildIds('election state check')) {
         try {
-          const state = store.getGuildRuntimeState(guildId);
-          const boothStateChanged = state.boothOpen !== boothOpen;
+          // Only this check records boothOpen, so an opening is never consumed without its ping.
+          // A guild configured since the last check only learns the current state.
+          const { boothOpen: knownBoothOpen } = store.getGuildRuntimeState(guildId);
+          const boothStateChanged = knownBoothOpen !== null && knownBoothOpen !== boothOpen;
 
-          if (boothStateChanged) {
-            store.setGuildRuntimeState(guildId, { ...state, boothOpen });
+          if (knownBoothOpen !== boothOpen) {
+            store.setGuildRuntimeState(guildId, { boothOpen });
           }
 
           if (boothStateChanged && boothOpen && currentElection) {
@@ -218,6 +219,7 @@ function createMayorAlerts({ client, env, store, skyblock }) {
   async function sendScheduledStatusUpdate() {
     try {
       const electionData = await fetchElectionData();
+      await refreshJerryRotationSafely(jerryRotation, electionData);
       const mayor = electionData.mayor;
       const currentElection = electionData.current || null;
       const boothOpen = data.getBoothOpen(electionData);
@@ -225,7 +227,6 @@ function createMayorAlerts({ client, env, store, skyblock }) {
       for (const guildId of getActiveConfiguredGuildIds('scheduled status update')) {
         try {
           await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection);
-          store.setGuildRuntimeState(guildId, { ...store.getGuildRuntimeState(guildId), boothOpen });
           console.log(`Status update sent for mayor ${mayor.name} in guild ${guildId}`);
         } catch (error) {
           console.error(`Status update failed for guild ${guildId}:`, error);
@@ -236,14 +237,10 @@ function createMayorAlerts({ client, env, store, skyblock }) {
     }
   }
 
-  async function refreshStatusForGuild(guildId) {
-    const electionData = await fetchElectionData();
-    const mayor = electionData.mayor;
-    const currentElection = electionData.current || null;
-    const boothOpen = data.getBoothOpen(electionData);
-
-    await sendMayorStatusUpdate(guildId, mayor, boothOpen, currentElection);
-    store.setGuildRuntimeState(guildId, { ...store.getGuildRuntimeState(guildId), boothOpen });
+  // Callers that already hold election data (event reminders) pass it to skip another API request.
+  async function refreshStatusForGuild(guildId, electionData = null) {
+    const currentData = electionData || await fetchElectionData();
+    await sendMayorStatusUpdate(guildId, currentData.mayor, data.getBoothOpen(currentData), currentData.current || null);
   }
 
   async function ensureLegacyEnvConfig() {

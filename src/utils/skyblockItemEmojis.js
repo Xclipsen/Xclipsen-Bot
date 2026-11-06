@@ -1,7 +1,4 @@
-const DEFAULT_ITEM_HASH_URL = 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/itemHash.json';
-const DEFAULT_EMOJI_DATA_URL = 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/emojis.json';
-
-function createSkyblockItemEmojiUtils(env = {}) {
+function createSkyblockItemEmojiUtils(env) {
   let cachedData = null;
   let loadPromise = null;
 
@@ -68,7 +65,7 @@ function createSkyblockItemEmojiUtils(env = {}) {
   async function fetchJson(url) {
     const response = await fetch(url, {
       headers: {
-        'User-Agent': 'hypixel-mayor-discord-bot/1.0.0'
+        'User-Agent': env.USER_AGENT
       }
     });
 
@@ -86,14 +83,20 @@ function createSkyblockItemEmojiUtils(env = {}) {
 
     if (!loadPromise) {
       loadPromise = Promise.all([
-        fetchJson(env.SKYBLOCK_ITEM_EMOJI_HASH_URL || DEFAULT_ITEM_HASH_URL),
-        fetchJson(env.SKYBLOCK_ITEM_EMOJI_DATA_URL || DEFAULT_EMOJI_DATA_URL)
+        fetchJson(env.SKYBLOCK_ITEM_EMOJI_HASH_URL),
+        fetchJson(env.SKYBLOCK_ITEM_EMOJI_DATA_URL)
       ])
         .then(([itemHash, emojis]) => {
+          const customIds = Object.keys(itemHash).sort();
           cachedData = {
             itemHash,
             emojis,
-            customIds: Object.keys(itemHash).sort()
+            customIds,
+            searchEntries: customIds.map((customId) => ({
+              customId,
+              simplified: simplifySearchValue(customId),
+              tokens: splitSearchTokens(customId)
+            }))
           };
           return cachedData;
         })
@@ -154,16 +157,14 @@ function createSkyblockItemEmojiUtils(env = {}) {
     const normalizedInput = normalizeCustomId(input);
     const simplifiedInput = simplifySearchValue(input);
     const inputTokens = splitSearchTokens(input);
-    const { customIds } = await ensureLoaded();
+    const { customIds, searchEntries } = await ensureLoaded();
 
     if (!normalizedInput) {
       return customIds.slice(0, limit);
     }
 
-    const ranked = customIds
-      .map((customId) => {
-        const simplifiedCustomId = simplifySearchValue(customId);
-        const customIdTokens = splitSearchTokens(customId);
+    const ranked = searchEntries
+      .map(({ customId, simplified: simplifiedCustomId, tokens: customIdTokens }) => {
         let score = 0;
 
         if (customId === normalizedInput) {

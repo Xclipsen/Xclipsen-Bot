@@ -15,13 +15,16 @@ const env = {
   IRC_BRIDGE_ENABLED: process.env.IRC_BRIDGE_ENABLED === 'true',
   IRC_BRIDGE_HOST: process.env.IRC_BRIDGE_HOST || '0.0.0.0',
   IRC_BRIDGE_PORT: Math.max(1, Number.parseInt(process.env.IRC_BRIDGE_PORT || '8765', 10)),
-  IRC_BRIDGE_AUTH_TOKEN: process.env.IRC_BRIDGE_AUTH_TOKEN || 'change-me',
+  IRC_BRIDGE_AUTH_TOKEN: process.env.IRC_BRIDGE_AUTH_TOKEN || null,
   IRC_BRIDGE_CHANNEL_ID: process.env.IRC_BRIDGE_CHANNEL_ID || process.env.DISCORD_CHANNEL_ID || null,
   IRC_BRIDGE_MAX_BUFFERED_MESSAGES: Math.max(10, Number.parseInt(process.env.IRC_BRIDGE_MAX_BUFFERED_MESSAGES || '250', 10)),
-  MOD_BACKEND_URL: (process.env.MOD_BACKEND_URL || 'https://api.xclipsen.de').replace(/\/+$/, ''),
-  MOD_BACKEND_AUTH_TOKEN: process.env.MOD_BACKEND_AUTH_TOKEN || process.env.IRC_BRIDGE_AUTH_TOKEN || 'change-me',
+  MOD_BACKEND_URL: process.env.MOD_BACKEND_URL || 'https://api.xclipsen.de',
+  MOD_BACKEND_AUTH_TOKEN: process.env.MOD_BACKEND_AUTH_TOKEN || process.env.IRC_BRIDGE_AUTH_TOKEN || null,
   GITHUB_TOKEN: process.env.GITHUB_TOKEN || null,
   HYPIXEL_API_KEY: process.env.HYPIXEL_API_KEY || null,
+  CRAFTY_API_KEY: process.env.CRAFTY_API_KEY || '',
+  MAGICK_PATH: process.env.MAGICK_PATH || null,
+  USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,
   PRIVILEGED_USER_IDS: new Set([
@@ -39,41 +42,27 @@ const env = {
   SKYBLOCK_ITEM_EMOJI_HASH_URL: process.env.SKYBLOCK_ITEM_EMOJI_HASH_URL || 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/itemHash.json',
   SKYBLOCK_ITEM_EMOJI_DATA_URL: process.env.SKYBLOCK_ITEM_EMOJI_DATA_URL || 'https://raw.githubusercontent.com/Altpapier/Skyblock-Item-Emojis/main/v3/emojis.json',
   ELECTION_URL: 'https://api.hypixel.net/v2/resources/skyblock/election',
-  SKYBLOCK_EPOCH_SECONDS: 1560275700,
-  SKYBLOCK_DAY_SECONDS: 20 * 60,
-  SKYBLOCK_YEAR_SECONDS: 20 * 60 * 372,
-  ELECTION_OPEN_START_DAY: 181,
-  ELECTION_CLOSE_DAY: 88,
   CONFIG_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'config.json'),
   SHITTER_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'shitter-list.json'),
   STATE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'state.json'),
   MOCK_DATA_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'mock-election.json'),
-  MAYOR_HEADS: {
-    aatrox: 'https://mc-heads.net/avatar/AatroxSB/256',
-    cole: 'https://mc-heads.net/avatar/ColeSB/256',
-    diana: 'https://mc-heads.net/avatar/DianaSB/256',
-    diaz: 'https://mc-heads.net/avatar/DiazSB/256',
-    finnegan: 'https://mc-heads.net/avatar/FinneganSB/256',
-    foxy: 'https://mc-heads.net/avatar/FoxySB/256',
-    marina: 'https://mc-heads.net/avatar/MarinaSB/256',
-    paul: 'https://mc-heads.net/avatar/PaulSB/256',
-    derpy: 'https://mc-heads.net/avatar/DerpySB/256',
-    jerry: 'https://mc-heads.net/avatar/CandidateJerry/256',
-    scorpius: 'https://mc-heads.net/avatar/ScorpiusSB/256'
-  },
-  MAYOR_SKIN_LINKS: {
-    aatrox: 'https://www.minecraftskins.com/skin/21660682/hypixel-skyblock-mayor-aatrox-npc/',
-    cole: 'https://www.minecraftskins.com/skin/21660659/hypixel-skyblock-mayor-cole-npc/',
-    diana: 'https://www.minecraftskins.com/skin/21660676/hypixel-skyblock-mayor-diana-npc/',
-    diaz: 'https://www.minecraftskins.com/skin/21660663/hypixel-skyblock-mayor-diaz-npc/',
-    finnegan: 'https://www.minecraftskins.com/skin/21719341/mayor-finnegan/',
-    foxy: 'https://www.minecraftskins.com/skin/21660666/hypixel-skyblock-mayor-foxy-npc/',
-    marina: 'https://www.minecraftskins.com/skin/21660684/hypixel-skyblock-mayor-marina-npc/',
-    paul: 'https://www.minecraftskins.com/skin/21660667/hypixel-skyblock-mayor-paul-npc/',
-    jerry: 'https://www.minecraftskins.com/skin/21660687/hypixel-skyblock-mayor-jerry-npc/',
-    scorpius: 'https://www.minecraftskins.com/skin/21660693/hypixel-skyblock-mayor-scorpius-npc/',
-    seraphine: 'https://www.minecraftskins.com/skin/21660694/hypixel-skyblock-mayor-seraphine-npc/'
-  },
+  NAMEHISTORY_CACHE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'namehistory-cache.json'),
+  // Isometric heads from the in-game NPC skin textures (skyblock.matdoes.dev NPC list);
+  // Jerry is a villager, so he uses Mojang's MHF_Villager head.
+  MAYOR_HEADS: Object.fromEntries(Object.entries({
+    aatrox: 'c1bdf505bb8c0f1f3365a03032de1931663ff71c57e022558de312b8f1b5c445',
+    cole: '16422de08848952d1cbead66bbbad6f07191bdcc952f3d1036aeb0c22938f39b',
+    diana: '83cc1cf672a4b2540be346ead79ac2d9ed19d95b6075bf95be0b6d0da61377be',
+    diaz: '9cf4737cd444b590545734a6408cbe23c182f4283f167a3e3c09532ccbef17f9',
+    finnegan: 'e7747fbee9fb39be39b00d3d483eb2f88b4bae82417ab5cb1b1aa930dd7b6689',
+    foxy: '3485a717fa0f51d7fadc66a5d5e9853905bef914e3b2848a2f128e63d2db87',
+    marina: '807fc9bee8d3344e840e4031a37249a4c3c87fc80cf16432cc5c2153d1f9c53d',
+    paul: '1b59c43d8dbccfd7ec6e6394b6304b70d4ed315add0494ee77c733f41818c73a',
+    derpy: 'f450d12692886c47b078a38f4d492acfe61216e2d0237ab82433409b3046b464',
+    jerry: 'MHF_Villager',
+    scorpius: '8f26fa0c47536e78e337257d898af8b1ebc87c0894503375234035ff2c7ef8f0',
+    seraphine: 'cd654531816ec7200a6a461d7a03c2dadf31f449a591c85f3b31cb2a83dd7366'
+  }).map(([mayor, skin]) => [mayor, `https://mc-heads.net/head/${skin}/256`])),
   MAYOR_EMOJIS: {
     aatrox: process.env.EMOJI_AATROX || '⚔️',
     cole: process.env.EMOJI_COLE || '⛏️',
@@ -89,21 +78,7 @@ const env = {
     seraphine: process.env.EMOJI_SERAPHINE || '🗳️'
   },
   VOTE_BAR_FILLED_EMOJI: process.env.VOTE_BAR_FILLED_EMOJI || '█',
-  VOTE_BAR_EMPTY_EMOJI: process.env.VOTE_BAR_EMPTY_EMOJI || '░',
-  SKYBLOCK_MONTHS: [
-    'Early Spring',
-    'Spring',
-    'Late Spring',
-    'Early Summer',
-    'Summer',
-    'Late Summer',
-    'Early Autumn',
-    'Autumn',
-    'Late Autumn',
-    'Early Winter',
-    'Winter',
-    'Late Winter'
-  ]
+  VOTE_BAR_EMPTY_EMOJI: process.env.VOTE_BAR_EMPTY_EMOJI || '░'
 };
 
 module.exports = { env };

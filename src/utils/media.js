@@ -1,53 +1,15 @@
-const fsSync = require('node:fs');
 const fs = require('node:fs/promises');
 const os = require('node:os');
 const path = require('node:path');
 const { execFile } = require('node:child_process');
 const { promisify } = require('node:util');
 
+const { env } = require('../config/env');
+
 const execFileAsync = promisify(execFile);
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif']);
-const MAGICK_BINARY_CANDIDATES = [
-  process.env.MAGICK_PATH,
-  '/usr/bin/magick',
-  '/usr/local/bin/magick',
-  '/bin/magick',
-  '/usr/bin/convert',
-  '/usr/local/bin/convert',
-  '/bin/convert',
-  'magick',
-  'convert'
-];
-
-function isExecutableFile(filePath) {
-  try {
-    fsSync.accessSync(filePath, fsSync.constants.X_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-function resolveMagickBinary() {
-  for (const candidate of MAGICK_BINARY_CANDIDATES) {
-    if (!candidate) {
-      continue;
-    }
-
-    if (!candidate.includes(path.sep)) {
-      return candidate;
-    }
-
-    if (isExecutableFile(candidate)) {
-      return candidate;
-    }
-  }
-
-  throw new Error('Required media binary is missing: magick');
-}
-
-const MAGICK_BINARY = resolveMagickBinary();
+const MAGICK_BINARY = env.MAGICK_PATH || 'magick';
 
 function getAttachmentExtension(attachment) {
   const attachmentName = String(attachment?.name || '').trim();
@@ -112,7 +74,7 @@ async function downloadAttachment(attachment, tempDirectoryPath, fileNamePrefix 
   }
 
   const response = await fetch(sourceUrl, {
-    headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
+    headers: { 'User-Agent': env.USER_AGENT }
   });
 
   if (!response.ok) {

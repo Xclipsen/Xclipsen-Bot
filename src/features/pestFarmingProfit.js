@@ -6,11 +6,13 @@ const {
   SELL_ORDER,
   NPC_SELL,
   SELL_METHOD_LABELS,
-  PEST_ERADICATOR_NAME
+  calculateValuePerKill,
+  isPestEradicatorActive,
+  getBazaarUnitPrice,
+  formatCoins,
+  formatRareDropBonus
 } = require('./bestPest');
 
-const BAZAAR_CACHE_TTL_MS = 60 * 1000;
-const ELECTION_CACHE_TTL_MS = 60 * 1000;
 const BASE_PEST_COOLDOWN_SECONDS = 300;
 const FULL_PEST_HUNTER_CDR = 0.55;
 const FINNEGAN_COOLDOWN_REDUCTION = 0.2;
@@ -19,11 +21,9 @@ const ASSUMED_PEST_FARM_CROPS_PER_SECOND = 20;
 const DEFAULT_PEST_FORTUNE_DELTA = 300;
 const BAIT_PEST_WEIGHT = 12;
 const VINYL_PEST_WEIGHT = 3;
-const BASE_GUARANTEED_COINS = 1000;
-const REFERENCE_FORTUNE = 2500;
-const CALIBRATED_PEST_SHARD_RARE_BONUS_PER_LEVEL = 0.02;
 const BASE_CROP_BREAKS_PER_HOUR_PER_PLOT = 66320;
 const KILL_SECONDS_PER_PEST = 4.628140703517589;
+const BAITS_PER_PLOT_PER_HOUR = 2;
 
 const REFORGE_OPTIONS = {
   blessed: {
@@ -68,165 +68,14 @@ const BAIT_BY_KEY = Object.fromEntries(BAITS.map((bait) => [bait.key, bait]));
 const CROP_BY_KEY = Object.fromEntries(CROPS.map((crop) => [crop.key, crop]));
 const PEST_BY_KEY = Object.fromEntries(PESTS.map((pest) => [pest.key, pest]));
 
-let cachedBazaarProducts = null;
-let cachedBazaarFetchedAt = 0;
-let cachedElectionState = null;
-let cachedElectionFetchedAt = 0;
-
-function createPestFarmingProfitFeature({ env, store }) {
-  function normalizeText(value) {
-    return String(value || '')
-      .replace(/§./g, '')
-      .replace(/☘/g, '')
-      .replace(/\s+/g, ' ')
-      .trim();
-  }
-
-  async function fetchBazaarProducts() {
-    if (cachedBazaarProducts && (Date.now() - cachedBazaarFetchedAt) < BAZAAR_CACHE_TTL_MS) {
-      return cachedBazaarProducts;
-    }
-
-    const response = await fetch('https://api.hypixel.net/v2/skyblock/bazaar', {
-      headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Hypixel Bazaar API responded with ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.products) {
-      throw new Error('Hypixel Bazaar API response did not contain product data.');
-    }
-
-    cachedBazaarProducts = data.products;
-    cachedBazaarFetchedAt = Date.now();
-    return cachedBazaarProducts;
-  }
-
-  async function fetchElectionState() {
-    if (cachedElectionState && (Date.now() - cachedElectionFetchedAt) < ELECTION_CACHE_TTL_MS) {
-      return cachedElectionState;
-    }
-
-    const response = await fetch(env.ELECTION_URL, {
-      headers: { 'User-Agent': 'hypixel-mayor-discord-bot/1.0.0' }
-    });
-
-    if (!response.ok) {
-      throw new Error(`Hypixel Election API responded with ${response.status} ${response.statusText}`);
-    }
-
-    const data = await response.json();
-    if (!data.success || !data.mayor) {
-      throw new Error('Hypixel Election API response did not contain mayor data.');
-    }
-
-    cachedElectionState = data;
-    cachedElectionFetchedAt = Date.now();
-    return cachedElectionState;
-  }
-
-  async function isPestEradicatorActive() {
-    const electionState = await fetchElectionState();
-    const mayor = electionState?.mayor || null;
-    const normalizedMayorKey = String(mayor?.key || '').toLowerCase();
-    const normalizedMayorName = String(mayor?.name || '').toLowerCase();
-    const normalizedMayorPerks = Array.isArray(mayor?.perks)
-      ? mayor.perks.map((perk) => normalizeText(perk?.name))
-      : [];
-    const ministerPerkName = normalizeText(mayor?.minister?.perk?.name);
-
-    return (
-      (
-        (normalizedMayorKey === 'finnegan' || normalizedMayorName === 'finnegan')
-        && normalizedMayorPerks.includes(PEST_ERADICATOR_NAME)
-      )
-      || ministerPerkName === PEST_ERADICATOR_NAME
-    );
-  }
-
-  function calculateGuaranteedAmount(fortune, guaranteed) {
-    const normalizedFortune = Math.max(0, Number(fortune) || 0);
-    const scaledAmount = guaranteed.scaling > 0 ? normalizedFortune / guaranteed.scaling : 0;
-    return Math.max(guaranteed.baseAmount, scaledAmount);
-  }
-
-  function calculateGuaranteedNpcValue(fortune, pest) {
-    return (calculateGuaranteedAmount(fortune, pest.guaranteed) * pest.guaranteed.unitNpcValue) + BASE_GUARANTEED_COINS;
-  }
-
-  function calculateRareScaling(fortune) {
-    return (1 + (Math.max(0, Number(fortune) || 0) / 600)) / (1 + (REFERENCE_FORTUNE / 600));
-  }
-
-  function calculateNpcValuePerKill(fortune, pest, rareMultiplier = 1) {
-    const guaranteedValue = calculateGuaranteedNpcValue(fortune, pest);
-    const guaranteedAtReference = calculateGuaranteedNpcValue(REFERENCE_FORTUNE, pest);
-    const referenceRareValue = Math.max(0, pest.targetNpcAt2500 - guaranteedAtReference);
-    const scaledRareValue = referenceRareValue * calculateRareScaling(fortune) * rareMultiplier;
-    return guaranteedValue + scaledRareValue;
-  }
-
-  function getProductUnitPrice(products, productId, method) {
-    const product = products?.[productId];
-    if (!product?.quick_status) {
-      return null;
-    }
-
-    if (method === SELL_ORDER) {
-      return Number(product.quick_status.buyPrice) || 0;
-    }
-
-    return Number(product.quick_status.sellPrice) || 0;
-  }
-
-  function calculateGuaranteedMarketValue(fortune, pest, products, method) {
-    const amount = calculateGuaranteedAmount(fortune, pest.guaranteed);
-    const bundle = Array.isArray(pest.guaranteed.marketBundle) ? pest.guaranteed.marketBundle : [];
-
-    if (bundle.length === 0) {
-      return calculateGuaranteedNpcValue(fortune, pest);
-    }
-
-    const bundleUnitValue = bundle.reduce((sum, component) => {
-      const price = getProductUnitPrice(products, component.productId, method);
-      if (price == null) {
-        return sum;
-      }
-
-      return sum + (price * (component.amount || 1));
-    }, 0);
-
-    if (bundleUnitValue <= 0) {
-      return calculateGuaranteedNpcValue(fortune, pest);
-    }
-
-    return (amount * bundleUnitValue) + BASE_GUARANTEED_COINS;
-  }
-
-  async function calculatePestValuePerKill(fortune, pest, sellMethod, pestShardLevel) {
-    const calibratedRareMultiplier = 1 + (Math.max(0, Number(pestShardLevel) || 0) * CALIBRATED_PEST_SHARD_RARE_BONUS_PER_LEVEL);
-
-    if (sellMethod === NPC_SELL) {
-      return calculateNpcValuePerKill(fortune, pest, calibratedRareMultiplier);
-    }
-
-    const products = await fetchBazaarProducts();
-    const baselineNpcValue = calculateNpcValuePerKill(fortune, pest, calibratedRareMultiplier);
-    const baselineNpcGuaranteedValue = calculateGuaranteedNpcValue(fortune, pest);
-    const marketGuaranteedValue = calculateGuaranteedMarketValue(fortune, pest, products, sellMethod);
-    return baselineNpcValue - baselineNpcGuaranteedValue + marketGuaranteedValue;
-  }
-
+function createPestFarmingProfitFeature({ store, hypixelApi }) {
   function resolveCropUnitValue(products, crop, sellMethod) {
     if (sellMethod === NPC_SELL && Number.isFinite(crop.npcUnitPrice)) {
       return crop.npcUnitPrice;
     }
 
     return crop.components.reduce((sum, component) => {
-      const price = getProductUnitPrice(products, component.productId, sellMethod === NPC_SELL ? INSTA_SELL : sellMethod);
+      const price = getBazaarUnitPrice(products, component.productId, sellMethod === NPC_SELL ? INSTA_SELL : sellMethod);
       if (price == null) {
         return sum;
       }
@@ -244,19 +93,6 @@ function createPestFarmingProfitFeature({ env, store }) {
       minimumFractionDigits: digits,
       maximumFractionDigits: digits
     }).format(Number(value) || 0);
-  }
-
-  function formatCoins(value) {
-    const number = Math.max(0, Number(value) || 0);
-    if (number >= 1000000) {
-      return `${(number / 1000000).toFixed(2)}M`;
-    }
-
-    if (number >= 1000) {
-      return `${(number / 1000).toFixed(2)}K`;
-    }
-
-    return number.toFixed(0);
   }
 
   function getPestsPerSpawn(bonusPestChance) {
@@ -349,7 +185,7 @@ function createPestFarmingProfitFeature({ env, store }) {
         },
         {
           name: 'Pest Shard Level',
-          value: `${formatNumber(stats.pestShardLevel)} (+${formatNumber(stats.pestShardLevel * 2)}% rare drops)`,
+          value: `${formatNumber(stats.pestShardLevel)} (${formatRareDropBonus(stats.pestShardLevel)})`,
           inline: true
         },
         {
@@ -403,7 +239,7 @@ function createPestFarmingProfitFeature({ env, store }) {
       `**Sell Method:** ${SELL_METHOD_LABELS[sellMethod] || sellMethod}`,
       `**Mayor Finnegan:** ${finneganEnabled ? 'Enabled' : 'Disabled'}`,
       `**Bonus Pest Chance:** ${formatNumber(stats.bonusPestChance)}`,
-      `**Pest Shard Level:** ${formatNumber(stats.pestShardLevel)} (+${formatNumber(stats.pestShardLevel * 2)}% rare drops)`,
+      `**Pest Shard Level:** ${formatNumber(stats.pestShardLevel)} (${formatRareDropBonus(stats.pestShardLevel)})`,
       `**Reforge:** ${reforge.label}`,
       `**Average Time to Spawn:** ${formatDuration(averageSpawnTimeSeconds)}`,
       '',
@@ -430,11 +266,16 @@ function createPestFarmingProfitFeature({ env, store }) {
   }
 
   async function handleSetFarmingStatsCommand(interaction) {
+    // Cropeetle and Rarefinder are optional and only echoed; omitted values keep the saved level.
+    const optionalLevels = Object.fromEntries(
+      [['cropeetleLevel', 'cropeetle_level'], ['rarefinderLevel', 'rarefinder_level']]
+        .map(([key, optionName]) => [key, interaction.options.getInteger(optionName, false)])
+        .filter(([, value]) => value != null)
+    );
     const nextStats = store.setUserFarmingStats(interaction.user.id, {
       bonusPestChance: interaction.options.getInteger('bonus_pest_chance', true),
       pestShardLevel: interaction.options.getInteger('pest_shard_level', true),
-      cropeetleLevel: interaction.options.getInteger('cropeetle_level', true),
-      rarefinderLevel: interaction.options.getInteger('rarefinder_level', true),
+      ...optionalLevels,
       reforge: interaction.options.getString('reforge', true)
     });
 
@@ -443,12 +284,68 @@ function createPestFarmingProfitFeature({ env, store }) {
     });
   }
 
+  async function computeProfit(stats, input) {
+    const { fortune, pestFortune, plots, bait, vinyl, crop, sellMethod } = input;
+    const [products, electionState] = await Promise.all([
+      hypixelApi.getBazaar(),
+      hypixelApi.getElection()
+    ]);
+    const finneganEnabled = isPestEradicatorActive(electionState);
+
+    const effectiveCooldownSeconds = getEffectiveCooldownSeconds(finneganEnabled);
+    const averageSpawnTimeSeconds = effectiveCooldownSeconds + getExpectedAdditionalSpawnDelaySeconds();
+    const pestsPerSpawn = getPestsPerSpawn(stats.bonusPestChance);
+    const eventsPerHour = 3600 / averageSpawnTimeSeconds;
+    const pestsPerHour = eventsPerHour * pestsPerSpawn;
+    const baitCostPerHour = (getBazaarUnitPrice(products, bait.productId, SELL_ORDER) || 0) * plots * BAITS_PER_PLOT_PER_HOUR;
+    const cropUnitValue = resolveCropUnitValue(products, crop, sellMethod);
+    const reforgeBonus = REFORGE_OPTIONS[stats.reforge]?.coinsPerCrop || 0;
+    const grossCropProfitPerHour = plots * BASE_CROP_BREAKS_PER_HOUR_PER_PLOT * (1 + (fortune / 100)) * (cropUnitValue + reforgeBonus);
+    const uptimeMultiplier = Math.max(0, 1 - ((pestsPerHour * KILL_SECONDS_PER_PEST) / 3600));
+    const cropProfitPerHour = grossCropProfitPerHour * uptimeMultiplier;
+
+    const weights = getPestWeights(bait, vinyl.key);
+    const totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
+    const pestBreakdown = weights.map((entry) => {
+      const valuePerKill = calculateValuePerKill(pestFortune, entry.pest, sellMethod, stats.pestShardLevel, products);
+      const share = entry.weight / totalWeight;
+      const pestRate = pestsPerHour * share;
+      return {
+        pest: entry.pest,
+        share: share * 100,
+        pestsPerHour: pestRate,
+        valuePerKill,
+        profitPerHour: pestRate * valuePerKill
+      };
+    });
+
+    pestBreakdown.sort((left, right) => right.profitPerHour - left.profitPerHour || left.pest.label.localeCompare(right.pest.label));
+
+    const pestProfitPerHour = pestBreakdown.reduce((sum, entry) => sum + entry.profitPerHour, 0);
+    const netProfitPerHour = cropProfitPerHour + pestProfitPerHour - baitCostPerHour;
+
+    return buildProfitEmbed({
+      ...input,
+      finneganEnabled,
+      stats,
+      pestsPerHour,
+      baitCostPerHour,
+      grossCropProfitPerHour,
+      cropProfitPerHour,
+      uptimeMultiplier,
+      averageSpawnTimeSeconds,
+      pestProfitPerHour,
+      netProfitPerHour,
+      topPests: pestBreakdown.slice(0, 5)
+    });
+  }
+
   async function handlePestFarmingProfitsCommand(interaction) {
     await interaction.deferReply();
 
     try {
       const stats = getStoredFarmingStatsOrThrow(interaction.user.id);
-      const { fortune, pestFortune, plots, bait, vinyl, crop, sellMethod } = resolvePestFarmingInputOrThrow({
+      const input = resolvePestFarmingInputOrThrow({
         fortune: interaction.options.getInteger('fortune', true),
         pestFortune: interaction.options.getInteger('pest_fortune', false),
         plots: interaction.options.getInteger('plots', true),
@@ -458,74 +355,16 @@ function createPestFarmingProfitFeature({ env, store }) {
         sellMethod: interaction.options.getString('sell_method', true)
       });
 
-      const [products, finneganEnabled] = await Promise.all([
-        fetchBazaarProducts(),
-        isPestEradicatorActive()
-      ]);
-
-      const effectiveCooldownSeconds = getEffectiveCooldownSeconds(finneganEnabled);
-      const averageSpawnTimeSeconds = effectiveCooldownSeconds + getExpectedAdditionalSpawnDelaySeconds();
-      const pestsPerSpawn = getPestsPerSpawn(stats.bonusPestChance);
-      const eventsPerHour = 3600 / averageSpawnTimeSeconds;
-      const pestsPerHour = eventsPerHour * pestsPerSpawn;
-      const baitCostPerHour = (getProductUnitPrice(products, bait.productId, SELL_ORDER) || 0) * plots * 2;
-      const cropUnitValue = resolveCropUnitValue(products, crop, sellMethod);
-      const reforgeBonus = REFORGE_OPTIONS[stats.reforge]?.coinsPerCrop || 0;
-      const grossCropProfitPerHour = plots * BASE_CROP_BREAKS_PER_HOUR_PER_PLOT * (1 + (fortune / 100)) * (cropUnitValue + reforgeBonus);
-      const uptimeMultiplier = Math.max(0, 1 - ((pestsPerHour * KILL_SECONDS_PER_PEST) / 3600));
-      const cropProfitPerHour = grossCropProfitPerHour * uptimeMultiplier;
-
-      const weights = getPestWeights(bait, vinyl.key);
-      const totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
-      const pestBreakdown = await Promise.all(weights.map(async (entry) => {
-        const valuePerKill = await calculatePestValuePerKill(pestFortune, entry.pest, sellMethod, stats.pestShardLevel);
-        const share = entry.weight / totalWeight;
-        const pestRate = pestsPerHour * share;
-        return {
-          pest: entry.pest,
-          share: share * 100,
-          pestsPerHour: pestRate,
-          valuePerKill,
-          profitPerHour: pestRate * valuePerKill
-        };
-      }));
-
-      pestBreakdown.sort((left, right) => right.profitPerHour - left.profitPerHour || left.pest.label.localeCompare(right.pest.label));
-
-      const pestProfitPerHour = pestBreakdown.reduce((sum, entry) => sum + entry.profitPerHour, 0);
-      const netProfitPerHour = cropProfitPerHour + pestProfitPerHour - baitCostPerHour;
-
-      await interaction.editReply({
-        embeds: [buildProfitEmbed({
-          fortune,
-          plots,
-          bait,
-          vinyl,
-          crop,
-          sellMethod,
-          finneganEnabled,
-          stats,
-          pestsPerHour,
-          baitCostPerHour,
-          grossCropProfitPerHour,
-          cropProfitPerHour,
-          uptimeMultiplier,
-          averageSpawnTimeSeconds,
-          pestProfitPerHour,
-          netProfitPerHour,
-          topPests: pestBreakdown.slice(0, 5),
-          pestFortune
-        })]
-      });
+      await interaction.editReply({ embeds: [await computeProfit(stats, input)] });
 
       store.setUserLastPestFarmingProfits(interaction.user.id, {
-        bait: bait.key,
-        vinyl: vinyl.key,
-        crop: crop.key,
-        fortune,
-        pestFortune,
-        plots,
-        sellMethod
+        bait: input.bait.key,
+        vinyl: input.vinyl.key,
+        crop: input.crop.key,
+        fortune: input.fortune,
+        pestFortune: input.pestFortune,
+        plots: input.plots,
+        sellMethod: input.sellMethod
       });
     } catch (error) {
       await interaction.editReply({
@@ -539,68 +378,8 @@ function createPestFarmingProfitFeature({ env, store }) {
 
     try {
       const stats = getStoredFarmingStatsOrThrow(interaction.user.id);
-      const savedInput = store.getUserLastPestFarmingProfits(interaction.user.id);
-      const { fortune, pestFortune, plots, bait, vinyl, crop, sellMethod } = resolvePestFarmingInputOrThrow(savedInput);
-
-      const [products, finneganEnabled] = await Promise.all([
-        fetchBazaarProducts(),
-        isPestEradicatorActive()
-      ]);
-
-      const effectiveCooldownSeconds = getEffectiveCooldownSeconds(finneganEnabled);
-      const averageSpawnTimeSeconds = effectiveCooldownSeconds + getExpectedAdditionalSpawnDelaySeconds();
-      const pestsPerSpawn = getPestsPerSpawn(stats.bonusPestChance);
-      const eventsPerHour = 3600 / averageSpawnTimeSeconds;
-      const pestsPerHour = eventsPerHour * pestsPerSpawn;
-      const baitCostPerHour = (getProductUnitPrice(products, bait.productId, SELL_ORDER) || 0) * plots * 2;
-      const cropUnitValue = resolveCropUnitValue(products, crop, sellMethod);
-      const reforgeBonus = REFORGE_OPTIONS[stats.reforge]?.coinsPerCrop || 0;
-      const grossCropProfitPerHour = plots * BASE_CROP_BREAKS_PER_HOUR_PER_PLOT * (1 + (fortune / 100)) * (cropUnitValue + reforgeBonus);
-      const uptimeMultiplier = Math.max(0, 1 - ((pestsPerHour * KILL_SECONDS_PER_PEST) / 3600));
-      const cropProfitPerHour = grossCropProfitPerHour * uptimeMultiplier;
-
-      const weights = getPestWeights(bait, vinyl.key);
-      const totalWeight = weights.reduce((sum, entry) => sum + entry.weight, 0);
-      const pestBreakdown = await Promise.all(weights.map(async (entry) => {
-        const valuePerKill = await calculatePestValuePerKill(pestFortune, entry.pest, sellMethod, stats.pestShardLevel);
-        const share = entry.weight / totalWeight;
-        const pestRate = pestsPerHour * share;
-        return {
-          pest: entry.pest,
-          share: share * 100,
-          pestsPerHour: pestRate,
-          valuePerKill,
-          profitPerHour: pestRate * valuePerKill
-        };
-      }));
-
-      pestBreakdown.sort((left, right) => right.profitPerHour - left.profitPerHour || left.pest.label.localeCompare(right.pest.label));
-
-      const pestProfitPerHour = pestBreakdown.reduce((sum, entry) => sum + entry.profitPerHour, 0);
-      const netProfitPerHour = cropProfitPerHour + pestProfitPerHour - baitCostPerHour;
-
-      await interaction.editReply({
-        embeds: [buildProfitEmbed({
-          fortune,
-          plots,
-          bait,
-          vinyl,
-          crop,
-          sellMethod,
-          finneganEnabled,
-          stats,
-          pestsPerHour,
-          baitCostPerHour,
-          grossCropProfitPerHour,
-          cropProfitPerHour,
-          uptimeMultiplier,
-          averageSpawnTimeSeconds,
-          pestProfitPerHour,
-          netProfitPerHour,
-          topPests: pestBreakdown.slice(0, 5),
-          pestFortune
-        })]
-      });
+      const input = resolvePestFarmingInputOrThrow(store.getUserLastPestFarmingProfits(interaction.user.id));
+      await interaction.editReply({ embeds: [await computeProfit(stats, input)] });
     } catch (error) {
       await interaction.editReply({
         content: error.message || 'Failed to recalculate pest farming profit.'
@@ -611,9 +390,7 @@ function createPestFarmingProfitFeature({ env, store }) {
   return {
     handleSetFarmingStatsCommand,
     handlePestFarmingProfitsCommand,
-    handleLastPestFarmingProfitsCommand,
-    BAITS,
-    CROPS
+    handleLastPestFarmingProfitsCommand
   };
 }
 

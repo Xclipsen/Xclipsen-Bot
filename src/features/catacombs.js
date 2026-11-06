@@ -6,6 +6,8 @@ const {
   MessageFlags
 } = require('discord.js');
 const { buildLinkedUsernameNotice, resolveMinecraftUsernameOption } = require('./linkedMinecraftUser');
+const { normalizeUuid, selectProfile } = require('../utils/hypixelApi');
+const { NO_APP_EMOJIS } = require('../utils/appEmojis');
 
 const CATACOMBS_XP_TABLE = [
   0,
@@ -68,50 +70,25 @@ const FLOOR_RANGES = {
   M: { start: 1, end: 7 }
 };
 const CATACOMBS_VIEW_BASIC = 'basic';
-const CATACOMBS_VIEW_BOSS_COLLECTIONS = 'boss_collections';
-const CATACOMBS_VIEW_BASIC_BUTTON_ID = 'catacombs-view-basic';
-const CATACOMBS_VIEW_BOSS_COLLECTIONS_BUTTON_ID = 'catacombs-view-boss-collections';
+const CATACOMBS_VIEW_BOSS_COLLECTIONS = 'boss';
+// View buttons carry `cata:<view>:<uuid>:<profile id>:<player name>` (at most 93 characters),
+// so they keep working after a restart. Buttons from older bot versions used fixed ids.
+const CATACOMBS_VIEW_BUTTON_PREFIX = 'cata:';
+const LEGACY_CATACOMBS_VIEW_BUTTON_IDS = new Set(['catacombs-view-basic', 'catacombs-view-boss-collections']);
 const BOSS_COLLECTIONS = [
-  { key: 'bonzo', label: 'Bonzo', icon: '🤡', killSource: { type: 'catacombs', floor: '1' }, thresholds: [25, 50, 100, 150, 250, 1000] },
-  { key: 'scarf', label: 'Scarf', icon: '🧣', killSource: { type: 'catacombs', floor: '2' }, thresholds: [25, 50, 100, 150, 250, 1000] },
-  { key: 'professor', label: 'The Professor', icon: '🎓', killSource: { type: 'catacombs', floor: '3' }, thresholds: [25, 50, 100, 150, 250, 1000] },
-  { key: 'thorn', label: 'Thorn', icon: '🦴', killSource: { type: 'catacombs', floor: '4' }, thresholds: [50, 100, 150, 250, 400, 1000] },
-  { key: 'livid', label: 'Livid', icon: '🗡️', killSource: { type: 'catacombs', floor: '5' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
-  { key: 'sadan', label: 'Sadan', icon: '🪵', killSource: { type: 'catacombs', floor: '6' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
-  { key: 'necron', label: 'Necron', icon: '💎', killSource: { type: 'catacombs', floor: '7' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
-  { key: 'kuudra', label: 'Kuudra', icon: '🌋', killSource: { type: 'kuudra' }, thresholds: [10, 100, 500, 2000, 5000] }
+  { key: 'bonzo', label: 'Bonzo', emoji: '🤡', icon: 'boss_bonzo', killSource: { type: 'catacombs', floor: '1' }, thresholds: [25, 50, 100, 150, 250, 1000] },
+  { key: 'scarf', label: 'Scarf', emoji: '🧣', icon: 'boss_scarf', killSource: { type: 'catacombs', floor: '2' }, thresholds: [25, 50, 100, 150, 250, 1000] },
+  { key: 'professor', label: 'The Professor', emoji: '🎓', icon: 'boss_professor', killSource: { type: 'catacombs', floor: '3' }, thresholds: [25, 50, 100, 150, 250, 1000] },
+  { key: 'thorn', label: 'Thorn', emoji: '🦴', icon: 'boss_thorn', killSource: { type: 'catacombs', floor: '4' }, thresholds: [50, 100, 150, 250, 400, 1000] },
+  { key: 'livid', label: 'Livid', emoji: '🗡️', icon: 'boss_livid', killSource: { type: 'catacombs', floor: '5' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
+  { key: 'sadan', label: 'Sadan', emoji: '🪵', icon: 'boss_sadan', killSource: { type: 'catacombs', floor: '6' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
+  { key: 'necron', label: 'Necron', emoji: '💎', icon: 'boss_necron', killSource: { type: 'catacombs', floor: '7' }, thresholds: [50, 100, 150, 250, 500, 750, 1000] },
+  { key: 'kuudra', label: 'Kuudra', emoji: '🌋', icon: 'boss_kuudra', killSource: { type: 'kuudra' }, thresholds: [10, 100, 500, 2000, 5000] }
 ];
 
-function createCatacombsFeature({ env, minecraft, store }) {
-  const viewContextByMessageId = new Map();
-
-  async function fetchProfiles(uuid) {
-    if (!env.HYPIXEL_API_KEY) {
-      throw new Error('HYPIXEL_API_KEY is missing. Add it to the bot environment first.');
-    }
-
-    const response = await fetch(`https://api.hypixel.net/v2/skyblock/profiles?uuid=${uuid}`, {
-      headers: {
-        'API-Key': env.HYPIXEL_API_KEY,
-        'User-Agent': 'hypixel-mayor-discord-bot/1.0.0'
-      }
-    });
-
-    if (response.status === 403) {
-      throw new Error('Hypixel rejected the API key for `/cata` requests.');
-    }
-
-    if (!response.ok) {
-      throw new Error(`Failed to fetch Hypixel SkyBlock profiles (${response.status}).`);
-    }
-
-    const data = await response.json();
-    if (!data.success) {
-      throw new Error(data.cause || 'Hypixel API did not return profile data.');
-    }
-
-    return Array.isArray(data.profiles) ? data.profiles : [];
-  }
+function createCatacombsFeature({ env, minecraft, linkStore, hypixelApi, appEmojis = NO_APP_EMOJIS }) {
+  // Item icons (assets/app-emojis) with the Unicode emoji as fallback.
+  const icon = (name, fallback) => appEmojis.get(name, fallback);
 
   function calculateLevel(experience = 0) {
     let remaining = Math.max(0, Number(experience) || 0);
@@ -302,15 +279,26 @@ function createCatacombsFeature({ env, minecraft, store }) {
       .join('\n');
   }
 
-  function buildViewComponents(selectedView = CATACOMBS_VIEW_BASIC) {
+  function buildViewButtonId(view, { uuid, profileId, playerName }) {
+    return `${CATACOMBS_VIEW_BUTTON_PREFIX}${view}:${normalizeUuid(uuid)}:${normalizeUuid(profileId)}:${playerName}`;
+  }
+
+  function parseViewButtonId(customId) {
+    const [view, uuid, profileId, playerName] = customId.slice(CATACOMBS_VIEW_BUTTON_PREFIX.length).split(':');
+    return [CATACOMBS_VIEW_BASIC, CATACOMBS_VIEW_BOSS_COLLECTIONS].includes(view) && uuid && profileId && playerName
+      ? { view, uuid, profileId, playerName }
+      : null;
+  }
+
+  function buildViewComponents(selectedView, context) {
     return [
       new ActionRowBuilder().addComponents(
         new ButtonBuilder()
-          .setCustomId(CATACOMBS_VIEW_BASIC_BUTTON_ID)
+          .setCustomId(buildViewButtonId(CATACOMBS_VIEW_BASIC, context))
           .setLabel('Basic Info')
           .setStyle(selectedView === CATACOMBS_VIEW_BASIC ? ButtonStyle.Primary : ButtonStyle.Secondary),
         new ButtonBuilder()
-          .setCustomId(CATACOMBS_VIEW_BOSS_COLLECTIONS_BUTTON_ID)
+          .setCustomId(buildViewButtonId(CATACOMBS_VIEW_BOSS_COLLECTIONS, context))
           .setLabel('Boss Collections')
           .setStyle(selectedView === CATACOMBS_VIEW_BOSS_COLLECTIONS ? ButtonStyle.Primary : ButtonStyle.Secondary)
       )
@@ -372,11 +360,12 @@ function createCatacombsFeature({ env, minecraft, store }) {
     for (const boss of BOSS_COLLECTIONS) {
       const kills = getBossCollectionKills(member, boss.killSource);
       const progress = getBossCollectionProgress(kills, boss.thresholds);
+      // Field names do not render custom emojis, so the boss icon leads the value.
       embed.addFields({
-        name: `${boss.icon} ${boss.label} ${progress.level}`,
+        name: `${boss.label} ${progress.level}`,
         value: progress.maxed
-          ? `${formatNumber(kills)} kills\nMaxed`
-          : `${formatNumber(kills)} kills\n${boss.label} ${progress.level + 1} in ${formatNumber(progress.killsToNext)} kills`,
+          ? `${icon(boss.icon, boss.emoji)} ${formatNumber(kills)} kills\nMaxed`
+          : `${icon(boss.icon, boss.emoji)} ${formatNumber(kills)} kills\n${boss.label} ${progress.level + 1} in ${formatNumber(progress.killsToNext)} kills`,
         inline: true
       });
     }
@@ -384,80 +373,29 @@ function createCatacombsFeature({ env, minecraft, store }) {
     return embed;
   }
 
-  function buildCatacombsPayload(view, playerName, profileName, member, content) {
+  function buildCatacombsPayload(view, playerName, uuid, selectedProfile, content) {
     const selectedView = view === CATACOMBS_VIEW_BOSS_COLLECTIONS ? CATACOMBS_VIEW_BOSS_COLLECTIONS : CATACOMBS_VIEW_BASIC;
     const embed = selectedView === CATACOMBS_VIEW_BOSS_COLLECTIONS
-      ? buildBossCollectionsEmbed(playerName, profileName, member)
-      : buildDungeonEmbed(playerName, profileName, member);
+      ? buildBossCollectionsEmbed(playerName, selectedProfile.cuteName, selectedProfile.member)
+      : buildDungeonEmbed(playerName, selectedProfile.cuteName, selectedProfile.member);
 
     return {
       content,
       embeds: [embed],
-      components: buildViewComponents(selectedView)
+      components: buildViewComponents(selectedView, { uuid, profileId: selectedProfile.profileId, playerName })
     };
   }
 
-  function getBestProfile(profiles, uuid) {
-    const candidates = profiles
-      .map((profile) => {
-        const member = profile?.members?.[uuid];
-        const catacombsXp = member?.dungeons?.dungeon_types?.catacombs?.experience ?? 0;
-        return {
-          profile,
-          member,
-          catacombsXp
-        };
-      })
-      .filter((entry) => entry.member);
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    candidates.sort((left, right) => right.catacombsXp - left.catacombsXp);
-    return candidates[0];
+  function getCatacombsXp(entry) {
+    return Number(entry.member?.dungeons?.dungeon_types?.catacombs?.experience) || 0;
   }
 
-  function getAvailableProfileNames(profiles) {
-    return profiles
-      .map((profile) => profile?.cute_name || profile?.cuteName)
-      .filter(Boolean)
-      .sort((left, right) => String(left).localeCompare(String(right)));
-  }
-
-  function selectProfile(profiles, uuid, requestedProfileName = null) {
-    const requestedProfile = String(requestedProfileName || '').trim();
-    const candidates = profiles
-      .map((profile) => ({
-        profile,
-        member: profile?.members?.[uuid],
-        cuteName: profile?.cute_name || profile?.cuteName || 'Unknown',
-        catacombsXp: profile?.members?.[uuid]?.dungeons?.dungeon_types?.catacombs?.experience ?? 0,
-        selected: profile?.selected === true
-      }))
-      .filter((entry) => entry.member);
-
-    if (candidates.length === 0) {
-      return null;
-    }
-
-    if (requestedProfile) {
-      const matchedProfile = candidates.find((entry) => entry.cuteName.toLowerCase() === requestedProfile.toLowerCase());
-      if (!matchedProfile) {
-        const availableProfiles = getAvailableProfileNames(profiles);
-        throw new Error(`Profile \`${requestedProfile}\` was not found. Available profiles: ${availableProfiles.map((name) => `\`${name}\``).join(', ')}`);
-      }
-
-      return matchedProfile;
-    }
-
-    const selectedProfile = candidates.find((entry) => entry.selected);
-    if (selectedProfile) {
-      return selectedProfile;
-    }
-
-    candidates.sort((left, right) => right.catacombsXp - left.catacombsXp);
-    return candidates[0];
+  // Without a requested or selected profile, show the one with the most Catacombs XP.
+  function selectCatacombsProfile(profiles, uuid, options) {
+    return selectProfile(profiles, uuid, {
+      ...options,
+      fallback: (candidates) => [...candidates].sort((left, right) => getCatacombsXp(right) - getCatacombsXp(left))[0]
+    });
   }
 
   function buildDungeonEmbed(playerName, profileName, member) {
@@ -477,12 +415,12 @@ function createCatacombsFeature({ env, minecraft, store }) {
       .setColor(0x3498db)
       .setTitle(`${playerName}'s Catacombs on ${profileName || 'Unknown'}`)
       .setDescription([
-        `💀 **Catacombs:** ${formatLevelSummary(catacombsExperience)} | ${formatCompactNumber(catacombsExperience)} XP`,
-        `🧰 **Secrets found:** ${formatNumber(secretsFound)}${totalRuns > 0 ? ` (Per Run: ${(secretsFound / totalRuns).toFixed(2)})` : ''}`,
-        `🏃 **Total Runs:** ${formatNumber(totalRuns)}`,
-        `🩸 **Blood Mob Kills:** ${formatNumber(getBloodMobKills(catacombs))}`,
-        `⭐ **Selected Class:** ${formatClassName(selectedClass)} ${formatLevelSummary(selectedClassExperience, { wholeNumber: true })}`,
-        `📘 **Class Average:** ${
+        `${icon('dungeon_catacombs', '💀')} **Catacombs:** ${formatLevelSummary(catacombsExperience)} | ${formatCompactNumber(catacombsExperience)} XP`,
+        `${icon('dungeon_secrets', '🧰')} **Secrets found:** ${formatNumber(secretsFound)}${totalRuns > 0 ? ` (Per Run: ${(secretsFound / totalRuns).toFixed(2)})` : ''}`,
+        `${icon('dungeon_runs', '🏃')} **Total Runs:** ${formatNumber(totalRuns)}`,
+        `${icon('dungeon_blood', '🩸')} **Blood Mob Kills:** ${formatNumber(getBloodMobKills(catacombs))}`,
+        `${icon('dungeon_class', '⭐')} **Selected Class:** ${formatClassName(selectedClass)} ${formatLevelSummary(selectedClassExperience, { wholeNumber: true })}`,
+        `${icon('dungeon_class_average', '📘')} **Class Average:** ${
           classSummary
             ? `${classSummary.averageBaseLevel.toFixed(1)} (${classSummary.averageOverflowLevel.toFixed(2)})`
             : 'Unknown'
@@ -505,45 +443,27 @@ function createCatacombsFeature({ env, minecraft, store }) {
       .setTimestamp();
   }
 
-  async function resolveRequestedPlayer(interaction) {
-    const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({
-      interaction,
-      store,
-      optionName: 'player',
-      missingMessage: 'No player provided and no linked Minecraft username found. Use `/link username:<ign>` first or pass `player:`.'
-    });
-
-    return { player: username, usedLinkedAccount };
-  }
-
   async function handleCatacombsCommand(interaction) {
     await interaction.deferReply();
 
     try {
-      const { player, usedLinkedAccount } = await resolveRequestedPlayer(interaction);
+      const { username, usedLinkedAccount } = await resolveMinecraftUsernameOption({ interaction, linkStore, optionName: 'player' });
       const requestedProfile = interaction.options.getString('profile', false)?.trim() || null;
-      const { uuid, name } = await minecraft.resolvePlayerProfile(player);
-      const profiles = await fetchProfiles(uuid);
-      const bestProfile = selectProfile(profiles, uuid, requestedProfile);
+      const { uuid, name } = await minecraft.resolvePlayerProfile(username);
+      const profiles = await hypixelApi.getProfiles(uuid);
+      const selectedProfile = selectCatacombsProfile(profiles, uuid, { profileName: requestedProfile });
 
-      if (!bestProfile) {
+      if (!selectedProfile) {
         throw new Error('No SkyBlock profile with dungeon data found for that player.');
       }
 
       await interaction.editReply(buildCatacombsPayload(
         CATACOMBS_VIEW_BASIC,
         name,
-        bestProfile.cuteName,
-        bestProfile.member,
+        uuid,
+        selectedProfile,
         usedLinkedAccount ? buildLinkedUsernameNotice(name) : undefined
       ));
-
-      const message = await interaction.fetchReply();
-      viewContextByMessageId.set(message.id, {
-        playerName: name,
-        uuid,
-        profileName: bestProfile.cuteName
-      });
     } catch (error) {
       await interaction.editReply({
         content: error.message || 'Failed to fetch catacombs data.'
@@ -556,17 +476,12 @@ function createCatacombsFeature({ env, minecraft, store }) {
       return false;
     }
 
-    const nextView = interaction.customId === CATACOMBS_VIEW_BASIC_BUTTON_ID
-      ? CATACOMBS_VIEW_BASIC
-      : interaction.customId === CATACOMBS_VIEW_BOSS_COLLECTIONS_BUTTON_ID
-        ? CATACOMBS_VIEW_BOSS_COLLECTIONS
-        : null;
-
-    if (!nextView) {
+    const isLegacyButton = LEGACY_CATACOMBS_VIEW_BUTTON_IDS.has(interaction.customId);
+    if (!isLegacyButton && !interaction.customId.startsWith(CATACOMBS_VIEW_BUTTON_PREFIX)) {
       return false;
     }
 
-    const context = viewContextByMessageId.get(interaction.message.id);
+    const context = isLegacyButton ? null : parseViewButtonId(interaction.customId);
     if (!context) {
       await interaction.reply({
         content: 'This catacombs view selector has expired. Run `/cata` again.',
@@ -576,17 +491,17 @@ function createCatacombsFeature({ env, minecraft, store }) {
     }
 
     try {
-      const profiles = await fetchProfiles(context.uuid);
-      const selectedProfile = selectProfile(profiles, context.uuid, context.profileName);
+      const profiles = await hypixelApi.getProfiles(context.uuid);
+      const selectedProfile = selectCatacombsProfile(profiles, context.uuid, { profileId: context.profileId });
       if (!selectedProfile) {
         throw new Error('This SkyBlock profile is no longer available.');
       }
 
       await interaction.update(buildCatacombsPayload(
-        nextView,
+        context.view,
         context.playerName,
-        selectedProfile.cuteName,
-        selectedProfile.member,
+        context.uuid,
+        selectedProfile,
         interaction.message.content || undefined
       ));
     } catch (error) {
