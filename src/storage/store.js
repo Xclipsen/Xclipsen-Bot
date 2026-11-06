@@ -58,6 +58,10 @@ function normalizeGuildConfig(config) {
     miningEvents: normalizeMiningEventConfig(config?.miningEvents),
     weather: normalizeWeatherConfig(config?.weather),
     modUpdates: normalizeModUpdateConfig(config?.modUpdates),
+    tts: {
+      roleId: config?.tts?.roleId || null,
+      voice: config?.tts?.voice || null
+    },
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),
       blockedRoleIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedRoleIds),

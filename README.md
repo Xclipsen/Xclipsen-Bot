@@ -32,6 +32,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
 - Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link and manage event pings for the Minecraft mod.
 - Includes `/gif` to convert an uploaded image into a GIF.
+- Includes `/tts` to read messages aloud in a voice channel with a local text-to-speech service (no cloud API).
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
 - Persists booth state, tracked message IDs, and per-user farming stats in `data/state.json`.
 - Stores server configuration in `data/config.json`.
@@ -66,6 +67,9 @@ All variables are read in `src/config/env.js`; `.env.example` is a template.
 - `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
 - `CRAFTY_API_KEY` - optional Bearer token for the Crafty.gg name history fallback
 - `MAGICK_PATH` - optional path to the ImageMagick binary used by `/gif` (default `magick`)
+- `TTS_URL` - base URL of the text-to-speech service; set by `docker-compose.yml`, `/tts` is disabled without it
+- `TTS_ROLE_NAME` - role that may use `/tts`, created by the bot when missing (default `TTS`)
+- `TTS_MAX_QUEUE` / `TTS_MAX_CHARS` - queued lines per server and characters read per message (defaults `10` / `300`)
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
 - `ADMIN_USER_IDS` - optional comma-separated Discord user IDs that can always use admin bot commands
@@ -219,6 +223,14 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 - Use `/gif media:<image>` to convert an uploaded image into a GIF file.
 
+## Text-to-Speech
+
+- On start the bot creates a `TTS` role in every server (needs the Manage Roles permission) and stores its ID. Give that role to everyone who may use TTS; server managers can always use it.
+- `/tts join` joins your voice channel. The bot then reads messages from the channel where you ran the command and from the voice channel's own chat, but only from TTS role members who are in that voice channel. Before a new speaker it says "<name> sagt: …".
+- The bot stays in the channel until whoever ran `/tts join` leaves (or moves); then it leaves too. `/tts leave` makes it leave earlier.
+- `/tts say text:<text>` reads one text aloud; `/tts voice voice:<name>` (admins) picks the server voice.
+- Speech comes from `tts-service/`, a separate container running Piper (`thorsten`, default) and Kyutai Pocket TTS (`juergen`) on the CPU. Custom Piper voices go into `tts-voices/` as `<id>.onnx` + `<id>.onnx.json`.
+
 ## Help
 
 - Use `/help` to open the full command guide.
@@ -238,7 +250,8 @@ docker compose up -d --build
 ```
 
 - `docker-compose.yml` publishes the IRC bridge port (host `8767` to container `8765`) for the Minecraft mod.
-- `docs/`, root Markdown files, `.env`, `.env.example`, and `data/` are excluded from the image.
+- `docs/`, root Markdown files, `.env`, `.env.example`, `data/`, and `tts-service/` are excluded from the bot image.
+- The `tts` service builds `tts-service/`, is only reachable from the bot (`http://tts:5000`), and is limited to 3 CPUs and 3 GB RAM. Model downloads are kept in the `tts-models` volume.
 
 - The bot loads its token and optional legacy defaults from `.env`.
 - `./data` is mounted to `/app/data` so server config, the stored status message ID, and booth state survive restarts.

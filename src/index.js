@@ -23,6 +23,7 @@ const { createSetupHub } = require('./features/setupHub');
 const { createCatacombsFeature } = require('./features/catacombs');
 const { createItemEmojiFeature } = require('./features/itemEmoji');
 const { createGifFeature } = require('./features/gif');
+const { createTtsFeature } = require('./features/tts');
 const { createHelpFeature } = require('./features/help');
 const { createNameHistoryFeature } = require('./features/nameHistory');
 const { createPlayerUuidFeature } = require('./features/playerUuid');
@@ -51,6 +52,7 @@ const client = new Client({
     GatewayIntentBits.GuildMembers,
     GatewayIntentBits.GuildMessages,
     GatewayIntentBits.GuildMessageReactions,
+    GatewayIntentBits.GuildVoiceStates,
     GatewayIntentBits.MessageContent
   ],
   partials: [Partials.Message, Partials.Channel, Partials.Reaction]
@@ -102,6 +104,7 @@ const trophyFishing = createTrophyFishingFeature({ minecraft, linkStore: modBack
 const bestPest = createBestPestFeature({ store, hypixelApi });
 const pestFarmingProfit = createPestFarmingProfitFeature({ store, hypixelApi });
 const gif = createGifFeature();
+const tts = createTtsFeature({ client, env, store });
 const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft, linkStore: modBackend });
 const playerUuid = createPlayerUuidFeature({ minecraft, linkStore: modBackend });
@@ -204,6 +207,8 @@ async function registerGuildCommands(guild) {
 async function setUpGuild(guild, { ensurePanels }) {
   try {
     await registerGuildCommands(guild);
+    // A missing Manage Roles permission must not keep the setup panels from being checked.
+    await tts.ensureRole(guild).catch((error) => console.error(`TTS role setup failed for ${guild.id}:`, error));
     if (ensurePanels) {
       await setupEditor.ensurePanels(guild);
     }
@@ -251,6 +256,11 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 
 client.on(Events.MessageCreate, async (message) => {
   await ircBridge.handleDiscordMessage(message);
+  await tts.handleMessage(message).catch((error) => console.error('TTS message handling failed:', error));
+});
+
+client.on(Events.VoiceStateUpdate, async (oldState, newState) => {
+  await tts.handleVoiceStateUpdate(oldState, newState).catch((error) => console.error('TTS voice state handling failed:', error));
 });
 
 async function handleSimulateCommand(interaction) {
@@ -321,6 +331,7 @@ const commandHandlers = {
   [commandNames.uuid]: (interaction) => playerUuid.handlePlayerUuidCommand(interaction),
   [commandNames.namehistory]: (interaction) => nameHistory.handleNameHistoryCommand(interaction),
   [commandNames.gif]: (interaction) => gif.handleGifCommand(interaction),
+  [commandNames.tts]: (interaction) => tts.handleTtsCommand(interaction, accessControl),
   [commandNames.hideonleaf]: (interaction) => hideonleaf.handleHideonleafCommand(interaction),
   [commandNames.shitter]: (interaction) => shitterList.handleShitterCommand(interaction),
   [commandNames.link]: (interaction) => linking.handleLinkCommand(interaction)
@@ -337,6 +348,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
     if (await shitterList.handlePagination(interaction)) return;
     if (await modUpdates.handleViewAllReleasesButton(interaction)) return;
     if (await setupEditor.handle(interaction)) return;
+
+    if (interaction.isAutocomplete() && interaction.commandName === commandNames.tts) {
+      await tts.handleVoiceAutocomplete(interaction);
+      return;
+    }
 
     if (interaction.isAutocomplete() && interaction.commandName === commandNames.itememoji) {
       await itemEmoji.handleItemEmojiAutocomplete(interaction);
@@ -401,9 +417,11 @@ void loginWithRetry().catch((error) => {
 });
 
 process.on('SIGINT', () => {
+  tts.destroyAll();
   void ircBridge.stop().finally(() => process.exit(0));
 });
 
 process.on('SIGTERM', () => {
+  tts.destroyAll();
   void ircBridge.stop().finally(() => process.exit(0));
 });

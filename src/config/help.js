@@ -66,6 +66,17 @@ const helpSections = [
         example: '/gif media:<upload>'
       },
       {
+        command: '/tts join | leave | say text:<text>',
+        description: 'Read messages aloud in your voice channel. Needs the TTS role; only members in the voice channel are read, and the bot leaves when whoever ran /tts join leaves.',
+        example: '/tts join'
+      },
+      {
+        command: '/tts voice voice:<name>',
+        description: 'Choose the TTS voice for this server.',
+        example: '/tts voice voice:thorsten',
+        adminOnly: true
+      },
+      {
         command: '/cata [player:<ign>] [profile:<name>]',
         description: 'Show a catacombs overview for a player, with selectable views like Basic Info and Boss Collections. Also available as /catacombs.',
         example: '/cata'

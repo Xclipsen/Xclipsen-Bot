@@ -5,8 +5,29 @@ services:
     container_name: xclipsen-bot
     env_file:
       - .env
+    environment:
+      TTS_URL: http://tts:5000
     restart: unless-stopped
     volumes:
       - ./data:/app/data
     ports:
       - "8767:8765"
+    depends_on:
+      - tts
+
+  # Local text-to-speech for /tts; only reachable from the bot, capped so other services keep their CPU.
+  tts:
+    build:
+      context: ./tts-service
+    container_name: xclipsen-tts
+    restart: unless-stopped
+    environment:
+      TTS_THREADS: "3"
+    volumes:
+      - tts-models:/models
+      - ./tts-voices:/voices:ro
+    cpus: 3
+    mem_limit: 3g
+
+volumes:
+  tts-models:

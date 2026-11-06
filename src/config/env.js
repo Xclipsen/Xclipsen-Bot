@@ -24,6 +24,11 @@ const env = {
   HYPIXEL_API_KEY: process.env.HYPIXEL_API_KEY || null,
   CRAFTY_API_KEY: process.env.CRAFTY_API_KEY || '',
   MAGICK_PATH: process.env.MAGICK_PATH || null,
+  // Base URL of the tts-service container; /tts is disabled without it.
+  TTS_URL: (process.env.TTS_URL || '').replace(/\/+$/, '') || null,
+  TTS_ROLE_NAME: process.env.TTS_ROLE_NAME || 'TTS',
+  TTS_MAX_QUEUE: Math.max(1, Number.parseInt(process.env.TTS_MAX_QUEUE || '10', 10)),
+  TTS_MAX_CHARS: Math.max(20, Number.parseInt(process.env.TTS_MAX_CHARS || '300', 10)),
   USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,

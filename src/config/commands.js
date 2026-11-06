@@ -227,6 +227,32 @@ const gifCommand = new SlashCommandBuilder()
     .setDescription('Image to convert')
     .setRequired(true));
 
+const ttsCommand = new SlashCommandBuilder()
+  .setName('tts')
+  .setDescription('Read messages aloud in your voice channel.')
+  .addSubcommand((subcommand) => subcommand
+    .setName('join')
+    .setDescription('Join your voice channel and read this channel aloud.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('leave')
+    .setDescription('Leave the voice channel.'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('say')
+    .setDescription('Read a text aloud.')
+    .addStringOption((option) => option
+      .setName('text')
+      .setDescription('Text to read aloud')
+      .setRequired(true)
+      .setMaxLength(500)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('voice')
+    .setDescription('Choose the TTS voice for this server.')
+    .addStringOption((option) => option
+      .setName('voice')
+      .setDescription('Voice to use')
+      .setRequired(true)
+      .setAutocomplete(true)));
+
 const hideonleafCommand = new SlashCommandBuilder()
   .setName('hideonleaf')
   .setDescription('Show the Hideonleaf leaderboard for kills, shards, money, and money per hour.');
@@ -370,6 +396,7 @@ const commands = [
   uuidCommand,
   nameHistoryCommand,
   gifCommand,
+  ttsCommand,
   hideonleafCommand,
   shitterCommand,
   linkCommand
@@ -398,6 +425,7 @@ module.exports = {
     uuid: 'uuid',
     namehistory: 'namehistory',
     gif: 'gif',
+    tts: 'tts',
     hideonleaf: 'hideonleaf',
     shitter: 'shitter',
     link: 'link'
