@@ -34,6 +34,9 @@ const env = {
   // Only members with this role see the music channel; the bot creates it once (needs Manage Roles).
   MUSIC_ROLE_NAME: process.env.MUSIC_ROLE_NAME || 'Voice',
   YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
+  // Optional Spotify Web API app (Client Credentials); Spotify links also work without it via the embed page.
+  SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID || null,
+  SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET || null,
   USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,
