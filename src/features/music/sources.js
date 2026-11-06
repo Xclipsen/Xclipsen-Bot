@@ -7,6 +7,10 @@ const MAX_TRACK_SECONDS = 3 * 60 * 60;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']);
 // yt-dlp only enables deno by default; the bot image already has node for YouTube's JS challenges.
 const YTDLP_COMMON_ARGS = ['--no-playlist', '--no-warnings', '--js-runtimes', 'node'];
+// Only the first entry of a search; never walk a whole playlist or channel.
+const YTDLP_RESOLVE_ARGS = ['--dump-single-json', '--playlist-items', '1'];
+// ffmpeg may only open the radio stream over the network (no file:, concat:, subfile: etc.).
+const RADIO_PROTOCOLS = 'http,https,tcp,tls';
 
 class MusicError extends Error {}
 
@@ -21,6 +25,15 @@ function isYouTubeUrl(value) {
   } catch {
     return false;
   }
+}
+
+// A link to one video (watch?v=, youtu.be/<id>, /shorts/, /live/, /embed/), not a playlist or channel.
+function isYouTubeVideoUrl(value) {
+  if (!isYouTubeUrl(value)) return false;
+  const url = new URL(value);
+  if (url.hostname.toLowerCase() === 'youtu.be') return /^\/[\w-]+\/?$/.test(url.pathname);
+  if (url.pathname === '/watch') return Boolean(url.searchParams.get('v'));
+  return /^\/(shorts|live|embed)\/[\w-]+\/?$/.test(url.pathname);
 }
 
 function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn = childProcess.spawn } = {}) {
@@ -54,10 +67,11 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     const text = String(query || '').trim();
     if (!text) throw new MusicError('Give me a YouTube link or something to search for.');
     if (isUrl(text) && !isYouTubeUrl(text)) throw new MusicError('Only YouTube links are supported.');
+    if (isUrl(text) && !isYouTubeVideoUrl(text)) throw new MusicError('Only links to a single YouTube video work, not playlists or channels.');
 
     let output;
     try {
-      output = await run(ytdlpPath, ['--dump-single-json', ...YTDLP_COMMON_ARGS, '--', isUrl(text) ? text : `ytsearch1:${text}`], RESOLVE_TIMEOUT_MS);
+      output = await run(ytdlpPath, [...YTDLP_RESOLVE_ARGS, ...YTDLP_COMMON_ARGS, '--', isUrl(text) ? text : `ytsearch1:${text}`], RESOLVE_TIMEOUT_MS);
     } catch (error) {
       if (error instanceof MusicError) throw error;
       console.error('yt-dlp lookup failed:', error.message.slice(0, 500));
@@ -148,6 +162,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
   // Radio: ffmpeg reads the stream itself and reconnects when it drops.
   function spawnRadio(url) {
     const ffmpeg = attachLogging(spawnFfmpeg(url, 'ignore', [
+      '-protocol_whitelist', RADIO_PROTOCOLS,
       '-reconnect', '1', '-reconnect_streamed', '1', '-reconnect_on_network_error', '1', '-reconnect_delay_max', '5'
     ]), 'ffmpeg radio');
     return {
@@ -163,4 +178,4 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
   return { resolveTrack, spawnTrack, spawnRadio };
 }
 
-module.exports = { createMusicSources, isYouTubeUrl, MusicError, MAX_TRACK_SECONDS };
+module.exports = { createMusicSources, isYouTubeUrl, isYouTubeVideoUrl, MusicError, MAX_TRACK_SECONDS };

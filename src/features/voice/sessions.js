@@ -2,10 +2,13 @@
 // Each session has two audio players: speech (TTS) and music. The connection plays music and
 // switches to speech while a line is spoken; the music player then auto-pauses (tracks) or keeps
 // running unheard (live radio, see NoSubscriberBehavior.Play) and is heard again afterwards.
-// The bot leaves when the member who brought it into the channel leaves.
+// The bot leaves when the member who brought it into the channel leaves; without such an owner
+// (e.g. after an admin moved the bot elsewhere) it leaves once no human is left in the channel.
 
 const CONNECT_TIMEOUT_MS = 20_000;
 const RECONNECT_TIMEOUT_MS = 5_000;
+// Back-to-back TTS lines start a moment after the previous one ends; wait before music returns.
+const MUSIC_RETURN_DELAY_MS = 300;
 
 function createVoiceSessions({ client, voice = require('@discordjs/voice') }) {
   const sessions = new Map();
@@ -69,7 +72,12 @@ function createVoiceSessions({ client, voice = require('@discordjs/voice') }) {
       if (isCurrent(session)) connection.subscribe(speechPlayer);
     });
     speechPlayer.on(voice.AudioPlayerStatus.Idle, () => {
-      if (isCurrent(session)) connection.subscribe(musicPlayer);
+      const timer = setTimeout(() => {
+        if (isCurrent(session) && speechPlayer.state.status === voice.AudioPlayerStatus.Idle) {
+          connection.subscribe(musicPlayer);
+        }
+      }, MUSIC_RETURN_DELAY_MS);
+      timer.unref?.();
     });
     speechPlayer.on('error', (error) => console.error(`Speech playback failed in guild ${guild.id}:`, error.message));
     musicPlayer.on('error', (error) => console.error(`Music playback failed in guild ${guild.id}:`, error.message));
@@ -126,17 +134,29 @@ function createVoiceSessions({ client, voice = require('@discordjs/voice') }) {
     if (!session) return;
 
     if (newState.id === client.user?.id) {
+      // A late update for a channel the bot already left belongs to an earlier session.
+      if (oldState.channelId !== session.channelId) return;
       if (!newState.channelId) {
         leave(session.guildId, 'bot was disconnected');
-      } else {
+      } else if (newState.channelId !== session.channelId) {
         session.channelId = newState.channelId;
+        // Moved by someone: keep the owner only if they are in the new channel.
+        if (!newState.channel?.members?.has(session.ownerId)) session.ownerId = null;
       }
       return;
     }
 
-    if (oldState.id === session.ownerId && oldState.channelId === session.channelId && newState.channelId !== session.channelId) {
+    if (oldState.channelId !== session.channelId || newState.channelId === session.channelId) return;
+
+    if (oldState.id === session.ownerId) {
       leave(session.guildId, 'owner left the voice channel');
-      await notify(session, `👋 <@${session.ownerId}> left the voice channel, so I left too.`);
+      await notify(session, `👋 <@${oldState.id}> left the voice channel, so I left too.`);
+      return;
+    }
+
+    const humansLeft = oldState.channel?.members?.filter((member) => !member.user?.bot).size ?? 1;
+    if (!session.ownerId && humansLeft === 0) {
+      leave(session.guildId, 'voice channel is empty');
     }
   }
 

@@ -52,8 +52,22 @@ function createFakeVoice() {
         player.emit('idle', oldState, { status: 'idle' });
         return true;
       };
-      player.pause = () => { player.status = 'paused'; return true; };
-      player.unpause = () => { player.status = 'playing'; return true; };
+      // Like @discordjs/voice: pause() only works while Playing, unpause() only while Paused.
+      player.setStatus = (status) => {
+        const oldState = { status: player.status, resource: player.resource };
+        player.status = status;
+        player.emit(status, oldState, { status, resource: player.resource });
+      };
+      player.pause = () => {
+        if (player.status !== 'playing') return false;
+        player.setStatus('paused');
+        return true;
+      };
+      player.unpause = () => {
+        if (player.status !== 'paused') return false;
+        player.setStatus('playing');
+        return true;
+      };
       player.finish = () => player.stop();
       voice.players.push(player);
       return player;
@@ -125,14 +139,21 @@ function createTextChannel(id, name = 'voice') {
     type: ChannelType.GuildText,
     messages: {
       fetch: async (messageId) => {
-        if (!messages.has(messageId)) throw new Error('Unknown Message');
+        if (channel.fetchError) throw channel.fetchError;
+        if (!messages.has(messageId)) throw Object.assign(new Error('Unknown Message'), { code: 10008 });
         return messages.get(messageId);
       }
     },
     sent: [],
     edits: [],
+    deleted: [],
     async send(payload) {
-      const message = { id: `m${nextId++}`, payload, edit: async (next) => { message.payload = next; channel.edits.push(next); } };
+      const message = {
+        id: `m${nextId++}`,
+        payload,
+        edit: async (next) => { message.payload = next; channel.edits.push(next); },
+        delete: async () => { messages.delete(message.id); channel.deleted.push(message.id); }
+      };
       messages.set(message.id, message);
       channel.sent.push(payload);
       return message;
@@ -204,7 +225,7 @@ function createInteraction(guild, member, subcommand, options = {}, { channelId 
   };
 }
 
-function createFeature({ store = createFakeStore(), guild = createGuild(), spawn = createFakeSpawn(VIDEOS) } = {}) {
+function createFeature({ store = createFakeStore(), guild = createGuild(), spawn = createFakeSpawn(VIDEOS), lookup = async () => [{ address: '93.184.216.34', family: 4 }] } = {}) {
   const voice = createFakeVoice();
   const client = {
     user: { id: 'bot' },
@@ -213,7 +234,7 @@ function createFeature({ store = createFakeStore(), guild = createGuild(), spawn
   };
   const voiceSessions = createVoiceSessions({ client, voice });
   const sources = createMusicSources({ spawn });
-  const feature = createMusicFeature({ client, env, store, voiceSessions, voice, sources, panelDelayMs: 0 });
+  const feature = createMusicFeature({ client, env, store, voiceSessions, voice, sources, lookup, panelDelayMs: 0 });
   const musicPlayer = () => voiceSessions.get('g1')?.musicPlayer;
   return { feature, voiceSessions, voice, store, guild, spawn, musicPlayer };
 }
@@ -319,6 +340,8 @@ test('live radio keeps streaming without subscribers, tracks pause', async () =>
   assert.equal(ffmpeg.command, 'ffmpeg');
   assert.ok(ffmpeg.args.includes(station.url));
   assert.ok(ffmpeg.args.includes('-reconnect'));
+  assert.equal(ffmpeg.args[ffmpeg.args.indexOf('-protocol_whitelist') + 1], 'http,https,tcp,tls');
+  assert.ok(ffmpeg.args.indexOf('-protocol_whitelist') < ffmpeg.args.indexOf('-i'));
   assert.equal(musicPlayer().resource.options.inputType, 'raw');
   assert.equal(musicPlayer().behaviors.noSubscriber, 'play');
 
@@ -503,4 +526,217 @@ test('station autocomplete offers built-in and custom stations', async () => {
   assert.ok(choices.some((choice) => choice.value === 'custom:jazz corner'));
   assert.ok(choices.some((choice) => choice.value === 'lautfm-loungetunes'));
   assert.ok(choices.every((choice) => /jazz/i.test(choice.name)));
+});
+
+test('pause and resume follow what the player really did', async () => {
+  const { feature, guild, musicPlayer } = createFeature();
+  const member = createMember('owner');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'lofi beats' }));
+  const player = musicPlayer();
+
+  // Auto-paused while TTS speaks: pause() returns false, the wish is applied once it plays again.
+  player.setStatus('autopaused');
+  const pause = createInteraction(guild, member, 'pause');
+  await feature.handleMusicCommand(pause);
+  assert.match(pause.lastReply().content, /Paused/);
+  assert.equal(player.status, 'autopaused');
+  player.setStatus('playing');
+  assert.equal(player.status, 'paused');
+
+  const again = createInteraction(guild, member, 'pause');
+  await feature.handleMusicCommand(again);
+  assert.match(again.lastReply().content, /Already paused/);
+
+  const resume = createInteraction(guild, member, 'resume');
+  await feature.handleMusicCommand(resume);
+  assert.match(resume.lastReply().content, /Resumed/);
+  assert.equal(player.status, 'playing');
+
+  // Resume while auto-paused: unpause() fails, and the track must not be re-paused when it continues.
+  await feature.handleMusicCommand(createInteraction(guild, member, 'pause'));
+  assert.equal(player.status, 'paused');
+  player.setStatus('autopaused');
+  await feature.handleMusicCommand(createInteraction(guild, member, 'resume'));
+  player.setStatus('playing');
+  assert.equal(player.status, 'playing');
+
+  // A new track starts unpaused even if the old one was paused.
+  await feature.handleMusicCommand(createInteraction(guild, member, 'pause'));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'play', { query: 'second song' }));
+  await feature.handleMusicCommand(createInteraction(guild, member, 'skip'));
+  assert.equal(player.status, 'playing');
+});
+
+test('after the first setup a cleared or deleted control channel is not created again', async () => {
+  const kept = createFeature({ store: createFakeStore({ controlChannelId: CONTROL_CHANNEL_ID }) });
+  await kept.feature.ensureControlChannel(kept.guild);
+  assert.equal(kept.store.guilds.g1.music.autoSetupDone, true);
+  assert.equal(kept.store.guilds.g1.music.controlChannelId, CONTROL_CHANNEL_ID);
+
+  const first = createFeature({ store: createFakeStore({ controlChannelId: null }), guild: createGuild({ channels: [] }) });
+  await first.feature.ensureControlChannel(first.guild);
+  assert.equal(first.store.guilds.g1.music.autoSetupDone, true);
+  assert.equal(first.guild.channels.created.length, 1);
+
+  // The admin cleared the channel in /setup (or deleted it); a restart leaves it unset.
+  first.store.setGuildConfig('g1', { music: { ...first.store.getGuildConfig('g1').music, controlChannelId: null, panelMessageId: null } });
+  first.guild.channels.cache.delete('created-ch');
+  assert.equal(await first.feature.ensureControlChannel(first.guild), null);
+  assert.equal(first.guild.channels.created.length, 1);
+  assert.equal(first.store.guilds.g1.music.controlChannelId, null);
+
+  const deleted = createFeature({ store: createFakeStore({ controlChannelId: 'gone', autoSetupDone: true }), guild: createGuild({ channels: [createTextChannel('by-name')] }) });
+  assert.equal(await deleted.feature.ensureControlChannel(deleted.guild), null);
+  assert.equal(deleted.guild.channels.created.length, 0);
+  assert.equal(deleted.store.guilds.g1.music.controlChannelId, 'gone');
+
+  const command = createInteraction(first.guild, createMember('u1'), 'play', { query: 'lofi beats' });
+  await first.feature.handleMusicCommand(command);
+  assert.match(command.lastReply().content, /not set up/);
+});
+
+test('the panel is only posted again when Discord says it is gone', async () => {
+  const { feature, guild, store } = createFeature();
+  const channel = guild.channels.cache.get(CONTROL_CHANNEL_ID);
+  await feature.refreshPanel('g1');
+  assert.equal(store.guilds.g1.music.panelMessageId, 'm1');
+
+  const originalError = console.error;
+  console.error = () => {};
+  try {
+    channel.fetchError = Object.assign(new Error('Service unavailable'), { status: 503 });
+    await feature.refreshPanel('g1');
+  } finally {
+    console.error = originalError;
+  }
+  assert.equal(channel.sent.length, 1);
+  assert.equal(store.guilds.g1.music.panelMessageId, 'm1');
+
+  channel.fetchError = null;
+  channel.deleteMessage('m1');
+  await feature.refreshPanel('g1');
+  assert.equal(channel.sent.length, 2);
+  assert.equal(store.guilds.g1.music.panelMessageId, 'm2');
+});
+
+test('a panel posted while /setup moved the control channel is not saved', async () => {
+  const other = createTextChannel('other-ch');
+  const { feature, guild, store } = createFeature({ guild: createGuild({ channels: [createTextChannel(CONTROL_CHANNEL_ID), other] }) });
+  const channel = guild.channels.cache.get(CONTROL_CHANNEL_ID);
+  const send = channel.send.bind(channel);
+  channel.send = async (payload) => {
+    const message = await send(payload);
+    store.setGuildConfig('g1', { music: { ...store.getGuildConfig('g1').music, controlChannelId: 'other-ch', panelMessageId: null } });
+    return message;
+  };
+
+  await feature.refreshPanel('g1');
+  assert.deepEqual(channel.deleted, ['m1']);
+  await tick();
+  assert.equal(other.sent.length, 1);
+  assert.equal(store.guilds.g1.music.panelMessageId, 'm1');
+  assert.equal(store.guilds.g1.music.controlChannelId, 'other-ch');
+});
+
+test('yt-dlp lookups run one per server and never walk playlists or channels', async () => {
+  const spawn = createFakeSpawn(VIDEOS);
+  const { feature, guild } = createFeature({ spawn });
+  const first = createInteraction(guild, createMember('owner'), 'play', { query: 'lofi beats' });
+  const second = createInteraction(guild, createMember('owner'), 'play', { query: 'second song' });
+
+  await Promise.all([feature.handleMusicCommand(first), feature.handleMusicCommand(second)]);
+  assert.match(first.lastReply().content, /Now playing/);
+  assert.match(second.lastReply().content, /busy/);
+  const lookups = spawn.calls.filter((call) => call.args.includes('--dump-single-json'));
+  assert.equal(lookups.length, 1);
+  assert.equal(lookups[0].args[lookups[0].args.indexOf('--playlist-items') + 1], '1');
+
+  const after = createInteraction(guild, createMember('owner'), 'play', { query: 'second song' });
+  await feature.handleMusicCommand(after);
+  assert.match(after.lastReply().content, /Queued/);
+
+  const sources = createMusicSources({ spawn: createFakeSpawn(VIDEOS) });
+  for (const url of ['https://www.youtube.com/@LofiGirl', 'https://www.youtube.com/playlist?list=PL123', 'https://www.youtube.com/channel/UC123/videos', 'https://youtu.be/']) {
+    await assert.rejects(sources.resolveTrack(url), /single YouTube video/, url);
+  }
+});
+
+test('the global yt-dlp lookup cap is shared by all servers', async () => {
+  let release;
+  const pending = new Promise((resolve) => { release = resolve; });
+  const sources = { resolveTrack: async () => { await pending; return { kind: 'track', title: 'T', url: 'https://www.youtube.com/watch?v=t', duration: 10 }; }, spawnTrack: () => ({ stdout: new PassThrough(), kill() {} }) };
+  const voice = createFakeVoice();
+  const guilds = new Map();
+  const store = { getGuildConfig: () => ({ music: { controlChannelId: CONTROL_CHANNEL_ID, panelMessageId: null, stations: [], volume: 50 } }), setGuildConfig() {} };
+  const client = { user: { id: 'bot' }, guilds: { cache: guilds }, channels: { cache: new Map() } };
+  const feature = createMusicFeature({ client, env, store, voiceSessions: createVoiceSessions({ client, voice }), voice, sources, panelDelayMs: 0 });
+  const interactions = ['g1', 'g2', 'g3', 'g4'].map((guildId) => {
+    const guild = { ...createGuild(), id: guildId };
+    const interaction = createInteraction(guild, createMember('owner'), 'play', { query: 'x' });
+    interaction.guildId = guildId;
+    return interaction;
+  });
+
+  const runs = interactions.map((interaction) => feature.handleMusicCommand(interaction));
+  await tick();
+  assert.match(interactions[3].lastReply().content, /busy/);
+  release();
+  await Promise.all(runs);
+  assert.ok(interactions.slice(0, 3).every((interaction) => /Now playing/.test(interaction.lastReply().content)));
+});
+
+test('custom stations on private hosts or names that resolve to private addresses are refused', async () => {
+  const { checkStationUrl, assertPublicStationUrl } = require('../src/features/music/urlSafety');
+  for (const url of [
+    'http://localhost:5000/stream', 'http://tts:5000/', 'http://api.localhost/', 'http://127.0.0.1/', 'http://10.1.2.3/',
+    'http://172.20.0.5/', 'http://192.168.1.1/', 'http://169.254.169.254/latest', 'http://100.64.0.1/', 'http://[::1]/',
+    'http://[fd00::1]/', 'http://[fe80::1]/', 'http://[::ffff:127.0.0.1]/', 'http://2130706433/', 'http://0.0.0.0/', 'ftp://radio.example.com/'
+  ]) {
+    assert.ok(checkStationUrl(url), url);
+  }
+  for (const url of ['https://stream.laut.fm/lofi', 'http://8.8.8.8/stream', 'http://172.32.0.1/', 'http://[2001:db8::1]/']) {
+    assert.equal(checkStationUrl(url), null, url);
+  }
+
+  const lookup = async (host) => (host === 'evil.example.com'
+    ? [{ address: '93.184.216.34', family: 4 }, { address: '10.0.0.5', family: 4 }]
+    : [{ address: '93.184.216.34', family: 4 }]);
+  await assert.rejects(assertPublicStationUrl('https://evil.example.com/stream', { lookup }), /private/);
+  assert.equal(await assertPublicStationUrl('https://radio.example.com/stream', { lookup }), 'https://radio.example.com/stream');
+  await assert.rejects(assertPublicStationUrl('https://missing.example.com/', { lookup: async () => { throw new Error('ENOTFOUND'); } }), /could not be found/);
+
+  // At play time the same checks run with DNS, so a stored station cannot reach the bot's network.
+  const stations = [{ name: 'Rebind', url: 'https://evil.example.com/stream' }, { name: 'Old', url: 'http://tts:5000/' }, { name: 'Fine', url: 'https://radio.example.com/stream' }];
+  const { feature, guild, voiceSessions, spawn } = createFeature({ store: createFakeStore({ stations }), lookup });
+  for (const name of ['rebind', 'old']) {
+    const refused = createInteraction(guild, createMember('owner'), 'radio', { station: `custom:${name}` });
+    await feature.handleMusicCommand(refused);
+    assert.match(refused.lastReply().content, /Can't play/);
+  }
+  assert.equal(voiceSessions.get('g1'), null);
+  assert.equal(spawn.calls.length, 0);
+
+  const fine = createInteraction(guild, createMember('owner'), 'radio', { station: 'custom:fine' });
+  await feature.handleMusicCommand(fine);
+  assert.match(fine.lastReply().content, /Tuned in/);
+  assert.ok(spawn.calls.at(-1).args.includes('https://radio.example.com/stream'));
+});
+
+test('without a voice session only server managers may change the stored volume', async () => {
+  const { feature, guild, store } = createFeature();
+  const member = createInteraction(guild, createMember('u1'), 'volume', { level: 80 });
+  await feature.handleMusicCommand(member);
+  assert.match(member.lastReply().content, /Only server managers/);
+  assert.equal(store.guilds.g1.music.volume, 50);
+
+  const button = createInteraction(guild, createMember('u1'), null, {}, { customId: PANEL_IDS.volumeUp });
+  await feature.handlePanelInteraction(button);
+  assert.match(button.lastReply().content, /Only server managers/);
+
+  for (const manager of [createMember('admin', { channelId: null, manageGuild: true }), createMember('god', { channelId: null })]) {
+    const interaction = createInteraction(guild, manager, 'volume', { level: 80 });
+    await feature.handleMusicCommand(interaction);
+    assert.match(interaction.lastReply().content, /80%/);
+  }
+  assert.equal(store.guilds.g1.music.volume, 80);
 });

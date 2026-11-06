@@ -210,6 +210,17 @@ test('stations are added through a validated modal', async t => {
   assert.throws(() => parseStationInput('x'.repeat(51), 'https://a.example'), /name/);
 });
 
+test('stations on local or private hosts are refused', async t => {
+  const f = fixture(t);
+  for (const [url, pattern] of [['http://localhost:5000/', /localhost/], ['http://tts:5000/speak', /public host/], ['http://127.0.0.1/', /private/],
+    ['http://192.168.0.10/stream', /private/], ['http://169.254.169.254/latest/meta-data', /private/], ['http://[::1]:8080/', /private/], ['http://[fd12::5]/', /private/]]) {
+    const bad = await f.run('admin:savestation:voice:stations', { fields: { name: 'Bad', url } });
+    assert.match(f.view(bad).embed.description, pattern, url);
+  }
+  assert.deepEqual(f.config().music.stations, []);
+  assert.deepEqual(parseStationInput('Public', 'http://8.8.8.8/stream'), { name: 'Public', url: 'http://8.8.8.8/stream' });
+});
+
 test('stations can be removed and are capped at 25', async t => {
   const f = fixture(t);
   const stations = Array.from({ length: MAX_STATIONS }, (_, i) => ({ name: `Station ${i}`, url: `https://radio${i}.example.com/stream` }));

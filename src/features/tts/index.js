@@ -1,5 +1,5 @@
 const { Readable } = require('node:stream');
-const { MessageFlags, PermissionsBitField } = require('discord.js');
+const { MessageFlags, PermissionFlagsBits, PermissionsBitField } = require('discord.js');
 
 const { createTtsClient } = require('./ttsClient');
 const { toSpeakerName, toSpeechText } = require('./speechText');
@@ -11,6 +11,14 @@ const MOOD_SUBCOMMANDS = {
   drunk: { voice: 'thorsten_drunk', verb: 'lallt' },
   angry: { voice: 'thorsten_angry', verb: 'schreit' }
 };
+
+// Lines synthesized ahead of playback; the service works one line at a time.
+const PREFETCH_LINES = 2;
+// Queued lines per member, so one person cannot fill the whole queue.
+const MAX_LINES_PER_MEMBER = 3;
+// The service refuses longer texts (TTS_MAX_CHARS there).
+const MAX_SPOKEN_CHARS = 390;
+const MEMBER_FETCH_CACHE_MS = 60_000;
 
 function normalizeName(value) {
   return String(value || '').trim().toLowerCase();
@@ -66,11 +74,21 @@ function createTtsFeature({
     return Boolean(roleId) && member.roles?.cache?.has(roleId) === true;
   }
 
+  // Re-reads the config right before writing, so changes made meanwhile are kept.
+  function updateTtsConfig(guildId, patch) {
+    store.setGuildConfig(guildId, { tts: { ...getTtsConfig(guildId), ...patch } });
+  }
+
+  // Creates or finds the TTS role once; after that a role an admin cleared or deleted stays gone.
   async function ensureRole(guild) {
     const config = getTtsConfig(guild.id);
     let role = config.roleId
       ? guild.roles.cache.get(config.roleId) || await guild.roles.fetch(config.roleId).catch(() => null)
       : null;
+
+    if (!role && config.autoSetupDone) {
+      return null;
+    }
 
     if (!role) {
       role = guild.roles.cache.find((entry) => normalizeName(entry.name) === normalizeName(env.TTS_ROLE_NAME)) || null;
@@ -91,8 +109,8 @@ function createTtsFeature({
       }
     }
 
-    if (role.id !== config.roleId) {
-      store.setGuildConfig(guild.id, { tts: { ...config, roleId: role.id } });
+    if (role.id !== config.roleId || !config.autoSetupDone) {
+      updateTtsConfig(guild.id, { roleId: role.id, autoSetupDone: true });
     }
 
     return role;
@@ -107,12 +125,23 @@ function createTtsFeature({
     }
   }
 
+  function prefetch(state) {
+    for (const item of state.queue.slice(0, PREFETCH_LINES)) {
+      if (!item.audio) {
+        item.audio = ttsClient.synthesize(item.spoken, item.voice);
+        item.audio.catch(() => {});
+      }
+    }
+  }
+
   function playNext(state) {
     if (state.playing || !isActive(state)) return;
+    prefetch(state);
     const item = state.queue.shift();
     if (!item) return;
 
     state.playing = true;
+    prefetch(state);
     item.audio
       .then((audio) => {
         if (!isActive(state)) return;
@@ -132,15 +161,22 @@ function createTtsFeature({
     if (state.queue.length >= env.TTS_MAX_QUEUE) {
       return false;
     }
+    if (state.queue.filter((item) => item.memberId === member.id).length >= MAX_LINES_PER_MEMBER) {
+      return false;
+    }
 
     const speakerName = toSpeakerName(member.displayName) || 'Jemand';
     const spoken = verb || state.lastSpeakerId !== member.id ? `${speakerName} ${verb || 'sagt'}: ${text}` : text;
     state.lastSpeakerId = member.id;
 
     const config = getTtsConfig(state.session.guildId);
-    const audio = ttsClient.synthesize(spoken, voiceId || config.userVoices[member.id] || config.voice);
-    audio.catch(() => {});
-    state.queue.push({ audio });
+    state.queue.push({
+      memberId: member.id,
+      spoken: spoken.slice(0, MAX_SPOKEN_CHARS),
+      voice: voiceId || config.userVoices[member.id] || config.voice,
+      audio: null
+    });
+    prefetch(state);
     playNext(state);
     return true;
   }
@@ -256,7 +292,7 @@ function createTtsFeature({
 
     store.setGuildConfig(interaction.guildId, { tts: { ...config, followUserIds } });
     await replyEphemeral(interaction, enabled
-      ? `Every message from <@${user.id}> is read aloud while I'm in a voice channel.`
+      ? `Every message from <@${user.id}> in public channels is read aloud while I'm in a voice channel.`
       : `Stopped reading every message from <@${user.id}>.`);
   }
 
@@ -288,13 +324,24 @@ function createTtsFeature({
       : `<@${user.id}> uses the server voice again.`);
   }
 
+  const memberFetches = new Map();
+
+  // A full member fetch is rate-limited by Discord; once a minute per guild is enough here.
+  async function fetchMembersCached(guild) {
+    const last = memberFetches.get(guild.id) || 0;
+    if (Date.now() - last < MEMBER_FETCH_CACHE_MS) return;
+    memberFetches.set(guild.id, Date.now());
+    await guild.members.fetch().catch(() => null);
+  }
+
   async function handleList(interaction) {
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
     const config = getTtsConfig(interaction.guildId);
     const session = voiceSessions.get(interaction.guildId);
     const state = states.get(interaction.guildId);
     const role = config.roleId ? interaction.guild.roles.cache.get(config.roleId) : null;
     // Role members are only complete once all members are fetched; small servers, so fetch them.
-    await interaction.guild.members.fetch().catch(() => null);
+    await fetchMembersCached(interaction.guild);
     const roleMembers = role ? [...role.members.values()].map((entry) => `<@${entry.id}>`) : [];
     const followed = config.followUserIds.map((id) => `<@${id}>`);
     const userVoices = Object.entries(config.userVoices).map(([id, voiceId]) => `<@${id}> → \`${voiceId}\``);
@@ -304,11 +351,11 @@ function createTtsFeature({
         ? `🔊 In <#${session.channelId}>${state?.textChannelId ? `, reading <#${state.textChannelId}> and the voice chat` : ''}; leaves with <@${session.ownerId}>.`
         : '🔇 Not in a voice channel.',
       `**Read when in the voice channel** (${role ? `<@&${role.id}>` : 'no TTS role'}): ${roleMembers.join(', ') || 'nobody'}`,
-      `**Followed, read from every channel:** ${followed.join(', ') || 'nobody'}`,
+      `**Followed, read from every public channel:** ${followed.join(', ') || 'nobody'}`,
       `**Server voice:** \`${config.voice || 'default'}\``,
       `**Own voices:** ${userVoices.join(', ') || 'none'}`
     ];
-    await replyEphemeral(interaction, lines.join('\n').slice(0, 2000));
+    await interaction.editReply({ content: lines.join('\n').slice(0, 2000), allowedMentions: { parse: [] } });
   }
 
   async function handleTtsCommand(interaction, accessControl) {
@@ -332,11 +379,6 @@ function createTtsFeature({
       return;
     }
 
-    if (subcommand === 'list') {
-      await handleList(interaction);
-      return;
-    }
-
     if (subcommand === 'voice') {
       if (await accessControl.ensureSetupAccess(interaction, 'TTS voice setting')) {
         await handleVoice(interaction);
@@ -350,7 +392,8 @@ function createTtsFeature({
       return;
     }
 
-    if (subcommand === 'join') await handleJoin(interaction, member);
+    if (subcommand === 'list') await handleList(interaction);
+    else if (subcommand === 'join') await handleJoin(interaction, member);
     else if (subcommand === 'leave') await handleLeave(interaction, member);
     else if (subcommand === 'say') await handleSay(interaction, member);
     else if (subcommand === 'uservoice') await handleUserVoice(interaction, member, accessControl);
@@ -375,8 +418,13 @@ function createTtsFeature({
     };
   }
 
+  function isPublicChannel(channel) {
+    const everyone = channel?.guild?.roles?.everyone;
+    return Boolean(everyone) && channel.permissionsFor?.(everyone)?.has(PermissionFlagsBits.ViewChannel) === true;
+  }
+
   // Reads messages from the channel where /tts join ran and from the voice channel's own chat.
-  // Followed users (/tts follow) are read from every channel, wherever they are.
+  // Followed users (/tts follow) are read from every public channel, wherever they are.
   async function handleMessage(message) {
     if (!message.inGuild() || message.author.bot || message.system) return;
     const session = voiceSessions.get(message.guildId);
@@ -387,7 +435,10 @@ function createTtsFeature({
 
     // Without /tts join (e.g. the bot only plays music) just followed users are read.
     const state = states.get(message.guildId);
-    const followed = getTtsConfig(message.guildId).followUserIds.includes(member.id);
+    // Followed users are read from every channel everyone on the server can see, never from
+    // private channels: the voice channel may hold people who cannot read those.
+    const followed = getTtsConfig(message.guildId).followUserIds.includes(member.id)
+      && isPublicChannel(message.channel);
     if (!followed) {
       if (!state?.textChannelId) return;
       if (message.channelId !== state.textChannelId && message.channelId !== session.channelId) return;

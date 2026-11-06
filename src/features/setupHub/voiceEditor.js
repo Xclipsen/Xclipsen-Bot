@@ -3,6 +3,7 @@ const { ActionRowBuilder, ButtonBuilder, ButtonStyle, ChannelSelectMenuBuilder, 
   PermissionsBitField } = require('discord.js');
 const { createHash } = require('node:crypto');
 const { createTtsClient } = require('../tts/ttsClient');
+const { checkStationUrl } = require('../music/urlSafety');
 const { interactionIds } = require('../../config/interactionIds');
 
 // The "Voice" setup section (TTS + music settings). Same id scheme as ./editor.js: `admin:<action>:voice:<field>[:<userId>]`.
@@ -45,7 +46,7 @@ function fitLines(lines, empty) {
   return out.join('\n');
 }
 
-// Name 1–50 characters, http(s) URL with a host, no duplicate name or URL, at most 25 stations.
+// Name 1–50 characters, http(s) URL with a public host, no duplicate name or URL, at most 25 stations.
 function parseStationInput(name, url, stations = []) {
   const cleanName = String(name || '').trim().replace(/\s+/g, ' ');
   const cleanUrl = String(url || '').trim();
@@ -54,6 +55,8 @@ function parseStationInput(name, url, stations = []) {
   let parsed;
   try { parsed = new URL(cleanUrl); } catch { throw new Error('Enter a full stream URL starting with http:// or https://.'); }
   if (!['http:', 'https:'].includes(parsed.protocol) || !parsed.hostname || cleanUrl.length > MAX_STATION_URL) throw new Error('Enter a full stream URL starting with http:// or https://.');
+  const unsafe = checkStationUrl(cleanUrl);
+  if (unsafe) throw new Error(unsafe);
   if (stations.some(station => station.name.toLowerCase() === cleanName.toLowerCase())) throw new Error(`A station named "${cleanName}" already exists.`);
   if (stations.some(station => station.url === cleanUrl)) throw new Error('That stream URL is already in the list.');
   return { name: cleanName, url: cleanUrl };
@@ -98,7 +101,7 @@ function createVoiceEditor({ store, accessControl, env = {}, privilegedUserIds =
     const userVoiceLines = Object.entries(tts.userVoices).map(([user, voice]) => `<@${user}> → \`${voice}\``);
 
     let detail;
-    if (field === 'role') detail = `${tts.roleId ? `<@&${tts.roleId}>` : 'Not selected'}\nMembers with this role are read aloud in the bot's voice channel. Without a role, \`/tts\` creates or reuses one on first use.`;
+    if (field === 'role') detail = `${tts.roleId ? `<@&${tts.roleId}>` : 'Not selected'}\nMembers with this role are read aloud in the bot's voice channel. The bot creates or reuses this role once when it starts; after that a cleared role stays cleared.`;
     if (field === 'voice') detail = `${tts.voice ? voiceLabel(voices, tts.voice) : 'Service default'}${voices ? voices.length > MAX_VOICE_OPTIONS ? `\nShowing the first ${MAX_VOICE_OPTIONS} of ${voices.length} voices; use \`/tts voice\` for the others.` : '' : `\n${unavailable}`}`;
     if (field === 'uservoices') detail = `${fitLines(userVoiceLines, 'Nobody has a personal voice.')}\n\n${userId ? `Editing <@${userId}>: pick a voice below, or "Server voice" to reset.` : 'Choose a member to set or reset their voice.'}${voices ? '' : `\n${unavailable}`}`;
     if (field === 'follow') detail = `${fitLines(tts.followUserIds.map(user => `<@${user}>`), 'Nobody is followed.')}\n\nEvery message from followed users is read aloud while the bot is in a voice channel.${privileged ? '' : '\n🔒 Read-only: only the bot owners can change the follow list.'}`;

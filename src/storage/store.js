@@ -64,6 +64,8 @@ function normalizeGuildConfig(config) {
       // Set by privileged bot users with /tts follow: read everything these users write.
       followUserIds: normalizeSnowflakeList(config?.tts?.followUserIds),
       // userId -> voice id from /tts uservoice; wins over the server voice.
+      // Set once the TTS role was auto-created/found; afterwards a cleared role stays cleared.
+      autoSetupDone: config?.tts?.autoSetupDone === true,
       userVoices: Object.fromEntries(Object.entries(config?.tts?.userVoices || {})
         .filter(([userId, voice]) => /^\d{16,20}$/.test(userId) && typeof voice === 'string' && voice))
     },
@@ -72,6 +74,8 @@ function normalizeGuildConfig(config) {
     music: {
       controlChannelId: config?.music?.controlChannelId || null,
       panelMessageId: config?.music?.panelMessageId || null,
+      // Set once the control channel was auto-created/found; afterwards a cleared channel stays cleared.
+      autoSetupDone: config?.music?.autoSetupDone === true,
       stations: Array.isArray(config?.music?.stations)
         ? config.music.stations
           .filter((station) => station && typeof station.name === 'string' && /^https?:\/\//i.test(String(station.url || '')))

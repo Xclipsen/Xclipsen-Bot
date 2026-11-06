@@ -71,7 +71,7 @@ All variables are read in `src/config/env.js`; `.env.example` is a template.
 - `TTS_URL` - base URL of the text-to-speech service; set by `docker-compose.yml`, `/tts` is disabled without it
 - `TTS_ROLE_NAME` - role that may use `/tts`, created by the bot when missing (default `TTS`)
 - `TTS_MAX_QUEUE` / `TTS_MAX_CHARS` - queued lines per server and characters read per message (defaults `10` / `300`)
-- `MUSIC_CHANNEL_NAME` - text channel for `/music` and its control panel, created by the bot when missing (default `voice`)
+- `MUSIC_CHANNEL_NAME` - text channel for `/music` and its control panel, set up once per server by the bot (default `voice`)
 - `YTDLP_PATH` - path to the yt-dlp binary used by `/music play` (default `yt-dlp`; the Docker image ships it)
 - `DISCORD_CHANNEL_ID` - optional legacy default channel for first-time setup
 - `DISCORD_ROLE_ID` - optional legacy default role for first-time setup
@@ -236,13 +236,13 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Music and Radio
 
-- On start the bot makes sure every server has a `#voice` text channel (`MUSIC_CHANNEL_NAME`; it reuses the stored channel or one with that name, else creates it, which needs Manage Channels). It keeps one control panel message there: now playing (title, source, requester, length or live), queue, volume, current radio station, an overview of the `/music` and `/tts` commands, buttons for pause/resume, skip, stop and volume -10/+10, and a radio station picker. The panel updates itself and is posted again if someone deletes it.
+- On its first start in a server the bot sets up a `#voice` text channel (`MUSIC_CHANNEL_NAME`; it reuses one with that name, else creates it, which needs Manage Channels). This happens once: if an admin later clears the control channel in `/setup` or deletes it, it stays unset until a channel is picked in `/setup`, and `/music` says it is not set up. It keeps one control panel message there: now playing (title, source, requester, length or live), queue, volume, current radio station, an overview of the `/music` and `/tts` commands, buttons for pause/resume, skip, stop and volume -10/+10, and a radio station picker. The panel updates itself and is posted again if someone deletes it (only when Discord reports it as deleted, so a temporary error never leaves a duplicate).
 - `/music` only works in that channel. Anyone can use it from a voice channel: `play query:<YouTube link or search>`, `radio station:<name>`, `skip`, `stop`, `pause`, `resume`, `queue`, `nowplaying`, `volume level:<0-100>`. Replies are only visible to you.
-- Without a voice session the bot joins your voice channel and leaves when you leave (the same shared session as `/tts`; `/tts leave` makes it leave earlier). While it is in another voice channel, `play` and `radio` are refused. Playback controls and panel buttons need you in the bot's voice channel; server managers and `ADMIN_USER_IDS` can always use them.
-- The queue holds up to 50 tracks; videos longer than 3 hours are refused unless they are live. A radio station replaces the queue, and `play` during radio replaces the station.
+- Without a voice session the bot joins your voice channel and leaves when you leave (the same shared session as `/tts`; `/tts leave` makes it leave earlier). While it is in another voice channel, `play` and `radio` are refused. Playback controls, volume and panel buttons need you in the bot's voice channel; server managers and `ADMIN_USER_IDS` can always use them. While the bot is not in a voice channel, only they can change the stored volume.
+- The queue holds up to 50 tracks; videos longer than 3 hours are refused unless they are live. `play` takes a single video (links to playlists or channels are refused) and looks up one track per server at a time, at most three across all servers; otherwise it asks you to try again in a moment. A radio station replaces the queue, and `play` during radio replaces the station.
 - TTS lines interrupt music: tracks pause and continue afterwards, radio and live streams keep running underneath.
-- YouTube audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp) (against YouTube's terms of service, and it breaks when YouTube changes something; rebuild the image to update yt-dlp). Radio streams are read by ffmpeg, which reconnects when a stream drops.
-- Built-in stations are in `src/features/music/stations.js`; admins can add more stations (`music.stations` in the server config) through `/setup`.
+- YouTube audio comes from [yt-dlp](https://github.com/yt-dlp/yt-dlp) (against YouTube's terms of service, and it breaks when YouTube changes something; the image pins a release in `YTDLP_VERSION`; bump it and rebuild to update yt-dlp). Radio streams are read by ffmpeg, which reconnects when a stream drops and may only use http(s).
+- Built-in stations are in `src/features/music/stations.js`; admins can add more stations (`music.stations` in the server config) through `/setup`. Custom station URLs must point to a public host: localhost, single-label names (like the `tts` service), and private, loopback, link-local or CGNAT addresses are refused when saving and again when playing (then also after a DNS lookup).
 
 ## Help
 
@@ -265,7 +265,8 @@ docker compose up -d --build
 - `docker-compose.yml` publishes the IRC bridge port (host `8767` to container `8765`) for the Minecraft mod.
 - `docs/`, root Markdown files, `.env`, `.env.example`, `data/`, and `tts-service/` are excluded from the bot image.
 - The `tts` service builds `tts-service/`, is only reachable from the bot (`http://tts:5000`), and is limited to 3 CPUs and 3 GB RAM. Model downloads are kept in the `tts-models` volume.
-- The bot image installs the official standalone yt-dlp build for musl (checked against the release checksums). `docker compose build --no-cache xclipsen-bot` fetches the newest release; `--build-arg YTDLP_VERSION=<tag>` pins one.
+- The bot image installs the official standalone yt-dlp build for musl (checked against the release checksums), pinned by `YTDLP_VERSION` in the `Dockerfile`; bump it or build with `--build-arg YTDLP_VERSION=latest` to update.
+- The bot runs as the unprivileged `node` user (uid 1000), so the host's `data/` directory must be writable by uid 1000; it is limited to 1 GB RAM.
 
 - The bot loads its token and optional legacy defaults from `.env`.
 - `./data` is mounted to `/app/data` so server config, the stored status message ID, and booth state survive restarts.

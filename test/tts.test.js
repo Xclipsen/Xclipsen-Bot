@@ -53,7 +53,8 @@ function createFakeVoice() {
     },
     createAudioPlayer() {
       const player = new EventEmitter();
-      player.play = (resource) => { played.push(resource); player.emit('playing'); };
+      player.state = { status: 'idle' };
+      player.play = (resource) => { played.push(resource); player.state = { status: 'playing' }; player.emit('playing'); };
       player.stop = () => {};
       voice.lastPlayer = player;
       return player;
@@ -283,6 +284,14 @@ test('/tts whisper uses the whisper voice and always announces the verb', async 
   ]);
 });
 
+function publicChannel(visible) {
+  const everyone = { id: 'everyone' };
+  return {
+    guild: { roles: { everyone } },
+    permissionsFor: (role) => (role === everyone ? { has: () => visible } : null)
+  };
+}
+
 test('/tts follow is for privileged users and reads the followed user from any channel', async () => {
   const store = createFakeStore();
   const { feature, synthesized } = createFeature({ store });
@@ -303,6 +312,7 @@ test('/tts follow is for privileged users and reads the followed user from any c
     system: false,
     guildId: 'g1',
     channelId: 'somewhere-else',
+    channel: publicChannel(true),
     member: followed,
     content: 'Ich bin gar nicht im Voice',
     guild: { members: { cache: new Map() }, channels: { cache: new Map() }, roles: { cache: new Map() } },
@@ -310,6 +320,10 @@ test('/tts follow is for privileged users and reads the followed user from any c
   };
   await feature.handleMessage(message);
   assert.deepEqual(synthesized.map((entry) => entry.text), ['User followed sagt: Ich bin gar nicht im Voice']);
+
+  // Never from channels @everyone cannot see.
+  await feature.handleMessage({ ...message, channel: publicChannel(false), content: 'Geheim' });
+  assert.equal(synthesized.length, 1);
 
   await feature.handleTtsCommand(createInteraction(createMember('god'), 'follow', { user: { id: 'followed' } }), accessControl);
   assert.deepEqual(store.guilds.g1.tts.followUserIds, []);
@@ -364,6 +378,71 @@ test('speech takes over the connection and hands it back to music', async () => 
   await new Promise((resolve) => setImmediate(resolve));
   assert.equal(voice.lastConnection.subscribed, session.speechPlayer);
 
+  session.speechPlayer.state = { status: 'idle' };
   session.speechPlayer.emit('idle');
+  // Music only returns after a short pause, in case the next line follows right away.
+  assert.equal(voice.lastConnection.subscribed, session.speechPlayer);
+  await new Promise((resolve) => setTimeout(resolve, 350));
   assert.equal(voice.lastConnection.subscribed, session.musicPlayer);
+});
+
+test('one member can queue at most three lines', async () => {
+  const { feature, synthesized } = createFeature();
+  const owner = createMember('owner', { roles: ['tts-role'] });
+  await feature.handleTtsCommand(createInteraction(owner, 'join'), accessControl);
+
+  const replies = [];
+  for (let index = 0; index < 5; index += 1) {
+    const interaction = createInteraction(owner, 'say', { text: `Satz ${index}` });
+    await feature.handleTtsCommand(interaction, accessControl);
+    replies.push(interaction.replies[0].content);
+  }
+
+  // One line plays, three wait; the fifth is refused. Only the first lines are synthesized ahead.
+  assert.equal(replies.filter((content) => /queue is full/.test(content)).length, 1);
+  assert.ok(synthesized.length <= 3);
+});
+
+test('a late "bot left" update does not end the next session', async () => {
+  const { feature, voiceSessions } = createFeature();
+  const owner = createMember('owner', { roles: ['tts-role'] });
+  await feature.handleTtsCommand(createInteraction(owner, 'join'), accessControl);
+  voiceSessions.leave('g1', 'test');
+
+  const other = createMember('owner', { roles: ['tts-role'], channelId: 'vc2' });
+  await feature.handleTtsCommand(createInteraction(other, 'join'), accessControl);
+  await voiceSessions.handleVoiceStateUpdate({ id: 'bot', channelId: 'vc1', guild: { id: 'g1' } }, { id: 'bot', channelId: null });
+
+  assert.equal(feature.getSession('g1')?.channelId, 'vc2');
+});
+
+test('moved by an admin, the bot leaves once its new channel is empty', async () => {
+  const { feature, voiceSessions } = createFeature();
+  await feature.handleTtsCommand(createInteraction(createMember('owner', { roles: ['tts-role'] }), 'join'), accessControl);
+
+  await voiceSessions.handleVoiceStateUpdate(
+    { id: 'bot', channelId: 'vc1', guild: { id: 'g1' } },
+    { id: 'bot', channelId: 'vc3', channel: { members: new Map([['guest', {}]]) } }
+  );
+  assert.equal(feature.getSession('g1').ownerId, null);
+
+  const empty = new Map();
+  empty.filter = () => ({ size: 0 });
+  await voiceSessions.handleVoiceStateUpdate(
+    { id: 'guest', channelId: 'vc3', guild: { id: 'g1' }, channel: { members: empty } },
+    { id: 'guest', channelId: null }
+  );
+  assert.equal(feature.getSession('g1'), null);
+});
+
+test('ensureRole does not bring back a role an admin cleared', async () => {
+  const store = createFakeStore({ roleId: null, autoSetupDone: true });
+  const { feature } = createFeature({ store });
+  let created = 0;
+  const roles = new Map();
+  roles.find = () => undefined;
+  const guild = { id: 'g1', name: 'Test', roles: { cache: roles, fetch: async () => null, create: async () => { created += 1; return { id: 'x' }; } } };
+
+  assert.equal(await feature.ensureRole(guild), null);
+  assert.equal(created, 0);
 });

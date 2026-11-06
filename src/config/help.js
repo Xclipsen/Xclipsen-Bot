@@ -93,7 +93,7 @@ const helpSections = [
       },
       {
         command: '/tts follow user:<user> [enabled:<true|false>]',
-        description: 'Bot owners only: while the bot is in a voice channel, read every message of that user from any channel.',
+        description: 'Bot owners only: while the bot is in a voice channel, read every message of that user from every public channel (never from private ones).',
         example: '/tts follow user:@someone',
         adminOnly: true
       },

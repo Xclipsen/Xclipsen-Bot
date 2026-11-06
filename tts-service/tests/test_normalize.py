@@ -155,3 +155,81 @@ def test_coin_amounts(text, expected):
 )
 def test_skyblock_terms(text, expected):
     assert normalize(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("500 k", "fünfhundert k"),
+        ("gib mir 500 k pls", "gib mir fünfhundert k bitte"),
+        ("2.5 b", "zwei Komma fünf Milliarden"),
+        ("k danke", "okay danke"),
+    ],
+)
+def test_spaced_coin_amounts(text, expected):
+    assert normalize(text) == expected
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("06.11.2026", "sechster November zweitausendsechsundzwanzig"),
+        ("6.11.", "sechster November"),
+        ("Am 6.11. geht es los", "Am sechsten November geht es los"),
+        ("der 1.3.26 war gut", "der erste März sechsundzwanzig war gut"),
+        ("Am 24.12.1999.", "Am vierundzwanzigsten Dezember neunzehnhundertneunundneunzig."),
+        # Not a date: invalid month, decimal numbers, thousands separators.
+        ("Pi ist 3.14", "Pi ist drei Komma eins vier"),
+        ("1.000.000 Leute", "eine Million Leute"),
+    ],
+)
+def test_dates(text, expected):
+    assert normalize(text) == expected
+
+
+def test_invalid_dates_are_left_as_numbers():
+    assert normalize("32.12.") == "zweiunddreißig Komma eins zwei."
+    assert normalize("5.13.") == "fünf Komma eins drei."
+
+
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("5:30", "fünf Uhr dreißig"),
+        ("um 5:30 Uhr", "um fünf Uhr dreißig"),
+        ("17:05", "siebzehn Uhr fünf"),
+        ("1:00", "ein Uhr"),
+        ("0:15", "null Uhr fünfzehn"),
+        # Not a time: hour or minutes out of range, single-digit minutes.
+        ("25:30", "fünfundzwanzig: dreißig"),
+        ("5:75", "fünf: fünfundsiebzig"),
+        ("2:1", "zwei: eins"),
+    ],
+)
+def test_times(text, expected):
+    assert normalize(text) == expected
+
+
+def test_english_dates_and_times():
+    assert normalize("06.11.2026 at 5:30, 5:05 or 7:00", "en") == (
+        "sixth of November twenty twenty-six at five thirty, five oh five or seven o'clock"
+    )
+
+
+def test_very_long_digit_runs_are_cut():
+    assert normalize("1" * 300) == "eins eins eins eins eins eins und so weiter"
+    assert normalize("9" * 21, "en") == "nine nine nine nine nine nine and so on"
+    # Up to 20 digits are still read in full.
+    assert normalize("12345678901234567890").split()[-1] == "null"
+    assert normalize("3," + "1" * 30) == "drei Komma eins eins eins eins eins eins und so weiter"
+
+
+def test_truncate_cuts_at_word_boundary():
+    from normalize import truncate
+
+    assert truncate("kurz", 600) == "kurz"
+    assert truncate("eins zwei drei vier fünf", 18) == "eins und so weiter"
+    assert truncate("one two, three four five", 22, "en") == "one two and so on"
+    long = normalize(" ".join(["123"] * 200))
+    cut = truncate(long, 600)
+    assert len(cut) <= 600 and cut.endswith(" und so weiter")

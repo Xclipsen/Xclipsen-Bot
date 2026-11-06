@@ -9,6 +9,7 @@ THREADS = max(1, int(os.environ.get("TTS_THREADS", "3")))
 for _var in ("OMP_NUM_THREADS", "MKL_NUM_THREADS", "OPENBLAS_NUM_THREADS"):
     os.environ.setdefault(_var, str(THREADS))
 
+import asyncio
 import logging
 import threading
 import time
@@ -23,7 +24,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel
 
 from engines import Engine, PiperEngine, PocketEngine, load_piper_voice
-from normalize import normalize
+from normalize import normalize, truncate
 
 logging.basicConfig(
     level=os.environ.get("TTS_LOG_LEVEL", "INFO").upper(),
@@ -32,7 +33,12 @@ logging.basicConfig(
 log = logging.getLogger("tts")
 
 MAX_CHARS = int(os.environ.get("TTS_MAX_CHARS", "400"))
+# Normalization can make text much longer (numbers become words); the result is cut here.
+MAX_NORMALIZED_CHARS = int(os.environ.get("TTS_MAX_NORMALIZED_CHARS", "600"))
+# Requests waiting for the synthesis lock beyond this get 503 right away.
+MAX_PENDING = int(os.environ.get("TTS_MAX_PENDING", "8"))
 CACHE_SIZE = int(os.environ.get("TTS_CACHE_SIZE", "128"))
+CACHE_MAX_BYTES = int(os.environ.get("TTS_CACHE_MAX_BYTES", str(64 * 1024 * 1024)))
 DEFAULT_VOICE_IDS = (
     "thorsten,juergen,jenny,alan,thorsten_whisper,thorsten_sleepy,thorsten_drunk,thorsten_angry,"
     "thorsten_amused,thorsten_surprised,thorsten_disgusted,thorsten_neutral"
@@ -131,10 +137,17 @@ def build_voices() -> tuple[dict[str, Engine], str]:
 
 
 class LRUCache:
-    def __init__(self, size: int):
+    """LRU cache bounded by entry count and by total bytes; entries over 1/4 of the byte budget are not kept."""
+
+    def __init__(self, size: int, max_bytes: int):
         self.size = size
+        self.max_bytes = max_bytes
+        self.bytes = 0
         self._data: OrderedDict[tuple[str, str], bytes] = OrderedDict()
         self._lock = threading.Lock()
+
+    def __len__(self) -> int:
+        return len(self._data)
 
     def get(self, key: tuple[str, str]) -> bytes | None:
         with self._lock:
@@ -144,18 +157,26 @@ class LRUCache:
             return value
 
     def put(self, key: tuple[str, str], value: bytes) -> None:
-        if self.size <= 0:
+        if self.size <= 0 or len(value) > self.max_bytes // 4:
             return
         with self._lock:
+            old = self._data.pop(key, None)
+            if old is not None:
+                self.bytes -= len(old)
             self._data[key] = value
-            self._data.move_to_end(key)
-            while len(self._data) > self.size:
-                self._data.popitem(last=False)
+            self.bytes += len(value)
+            while len(self._data) > self.size or self.bytes > self.max_bytes:
+                _, evicted = self._data.popitem(last=False)
+                self.bytes -= len(evicted)
 
 
 state: dict = {}
-synth_lock = threading.Lock()
-cache = LRUCache(CACHE_SIZE)
+# Synthesis runs one at a time. An asyncio lock (FIFO) instead of a thread lock, so waiting
+# requests can be counted and dropped without blocking threadpool threads. run_in_threadpool
+# is shielded from cancellation, so the lock is held until the engine call has returned.
+synth_lock = asyncio.Lock()
+pending = 0
+cache = LRUCache(CACHE_SIZE, CACHE_MAX_BYTES)
 
 
 @asynccontextmanager
@@ -190,41 +211,59 @@ def voices():
     return [engine.info() for engine in state["voices"].values()]
 
 
-def _synthesize(engine: Engine, text: str) -> tuple[bytes, bool]:
-    key = (engine.id, text)
-    cached = cache.get(key)
-    if cached is not None:
-        return cached, True
-    if isinstance(engine, PocketEngine):
-        # Load outside the synthesis lock so other voices keep working meanwhile.
-        engine.load()
-    with synth_lock:
-        cached = cache.get(key)
-        if cached is not None:
-            return cached, True
-        audio = engine.synthesize(text)
-    cache.put(key, audio)
-    return audio, False
+# Status for requests whose client went away before synthesis; nobody reads the response.
+CLIENT_CLOSED = 499
 
 
 @app.post("/synthesize")
-async def synthesize(req: SynthesizeRequest):
+async def synthesize(req: SynthesizeRequest, request: Request):
+    global pending
     if len(req.text) > MAX_CHARS:
         raise HTTPException(413, f"text longer than {MAX_CHARS} characters")
     voice_id = req.voice or state["default"]
     engine = state["voices"].get(voice_id)
     if engine is None:
         raise HTTPException(400, f"unknown voice {voice_id!r}")
-    text = normalize(req.text, engine.language)
+    text = truncate(normalize(req.text, engine.language), MAX_NORMALIZED_CHARS, engine.language)
     if not text:
         raise HTTPException(400, "text is empty")
 
     started = time.perf_counter()
-    try:
-        audio, hit = await run_in_threadpool(_synthesize, engine, text)
-    except Exception:
-        log.exception("synthesis failed (voice %s)", voice_id)
-        raise HTTPException(500, "synthesis failed")
+    key = (engine.id, text)
+    audio = cache.get(key)
+    hit = audio is not None
+    if not hit:
+        if await request.is_disconnected():
+            log.info("voice=%s skipped: client disconnected", voice_id)
+            return Response(status_code=CLIENT_CLOSED)
+        # No await between this check and the increment, so the limit holds.
+        if pending >= MAX_PENDING:
+            log.warning("voice=%s rejected: %d requests already waiting", voice_id, pending)
+            raise HTTPException(503, "too many pending synthesis requests")
+        pending += 1
+        waiting = True
+        try:
+            if isinstance(engine, PocketEngine) and not engine.loaded:
+                # Load outside the synthesis lock so other voices keep working meanwhile.
+                await run_in_threadpool(engine.load)
+            async with synth_lock:
+                pending -= 1
+                waiting = False
+                audio = cache.get(key)
+                hit = audio is not None
+                if not hit:
+                    if await request.is_disconnected():
+                        log.info("voice=%s skipped: client disconnected", voice_id)
+                        return Response(status_code=CLIENT_CLOSED)
+                    audio = await run_in_threadpool(engine.synthesize, text)
+        except Exception:
+            log.exception("synthesis failed (voice %s)", voice_id)
+            raise HTTPException(500, "synthesis failed")
+        finally:
+            if waiting:
+                pending -= 1
+        if not hit:
+            cache.put(key, audio)
     elapsed_ms = int((time.perf_counter() - started) * 1000)
     log.info("voice=%s chars=%d cache=%s %dms", voice_id, len(text), "hit" if hit else "miss", elapsed_ms)
     return Response(

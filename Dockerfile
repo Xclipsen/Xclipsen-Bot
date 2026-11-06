@@ -6,8 +6,8 @@ WORKDIR /app
 RUN apk add --no-cache imagemagick imagemagick-webp imagemagick-jpeg imagemagick-heic ffmpeg
 
 # yt-dlp for /music play: the official standalone musl build (no Python needed), checked against
-# the release checksums. Rebuild the image to update it, or pin a release with YTDLP_VERSION.
-ARG YTDLP_VERSION=latest
+# the release checksums. Bump YTDLP_VERSION (or build with --build-arg YTDLP_VERSION=latest) to update it.
+ARG YTDLP_VERSION=2026.10.26
 RUN set -eux; \
   case "$(apk --print-arch)" in \
     x86_64) asset=yt-dlp_musllinux ;; \
@@ -26,5 +26,11 @@ COPY package.json package-lock.json ./
 RUN npm ci --omit=dev
 
 COPY . .
+
+# Run as the image's unprivileged node user (uid 1000, like the owner of the host's data/ directory).
+# The app files stay root-owned; only data/ and the home directory (yt-dlp's cache) are writable.
+ENV HOME=/home/node XDG_CACHE_HOME=/home/node/.cache
+RUN mkdir -p /app/data /home/node/.cache && chown node:node /app/data /home/node/.cache
+USER node
 
 CMD ["npm", "start"]

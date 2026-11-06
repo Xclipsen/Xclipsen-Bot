@@ -1,11 +1,18 @@
 const { ChannelType, MessageFlags, PermissionsBitField } = require('discord.js');
 
+const dns = require('node:dns');
+
 const { createMusicSources, MusicError } = require('./sources');
 const { listStations, findStation } = require('./stations');
 const { PANEL_IDS, buildPanelMessage, describeItem, formatDuration } = require('./panel');
+const { assertPublicStationUrl } = require('./urlSafety');
 
 const MAX_QUEUE = 50;
 const VOLUME_STEP = 10;
+// yt-dlp lookups: one per server at a time, a few across all servers.
+const MAX_LOOKUPS = 3;
+const UNKNOWN_MESSAGE = 10008;
+const UNKNOWN_CHANNEL = 10003;
 const PANEL_CUSTOM_IDS = new Set(Object.values(PANEL_IDS));
 
 function normalizeName(value) {
@@ -21,12 +28,14 @@ function createMusicFeature({
   voiceSessions,
   voice = require('@discordjs/voice'),
   sources = createMusicSources({ ytdlpPath: env.YTDLP_PATH }),
+  lookup = dns.promises.lookup,
   panelDelayMs = 2_000
 }) {
-  // guildId -> { session, queue, current, paused, child, resource }
+  // guildId -> { session, queue, current, paused, child, resource }; `paused` is what the user asked for.
   const states = new Map();
   const panelTimers = new Map();
   const panelChains = new Map();
+  const lookupGuilds = new Set();
 
   voiceSessions.onEnd((session) => {
     const state = states.get(session.guildId);
@@ -58,6 +67,11 @@ function createMusicFeature({
       session.musicPlayer.on(voice.AudioPlayerStatus.Idle, (oldState) => {
         if (!isActive(state) || !state.resource || oldState?.resource !== state.resource) return;
         playNext(state);
+      });
+      // pause() only works while the player is Playing; a pause asked for while the track was still
+      // loading or auto-paused for TTS is applied as soon as it plays again.
+      session.musicPlayer.on(voice.AudioPlayerStatus.Playing, () => {
+        if (isActive(state) && state.paused && state.resource) session.musicPlayer.pause(true);
       });
     }
     return state;
@@ -131,9 +145,17 @@ function createMusicFeature({
     };
   }
 
+  // null when the channel is gone; other errors (network, rate limits) are thrown.
   async function fetchChannel(guild, channelId) {
     if (!channelId) return null;
-    return guild.channels.cache.get(channelId) || await guild.channels.fetch(channelId).catch(() => null);
+    const cached = guild.channels.cache.get(channelId);
+    if (cached) return cached;
+    try {
+      return await guild.channels.fetch(channelId);
+    } catch (error) {
+      if (error?.code === UNKNOWN_CHANNEL || error?.status === 404) return null;
+      throw error;
+    }
   }
 
   async function writePanel(guildId) {
@@ -144,14 +166,29 @@ function createMusicFeature({
     if (!channel?.messages) return;
 
     const payload = buildPanelMessage(getPanelState(guildId));
-    const message = config.panelMessageId
-      ? await channel.messages.fetch(config.panelMessageId).catch(() => null)
-      : null;
-    if (message) {
-      await message.edit(payload);
-      return;
+    if (config.panelMessageId) {
+      let message = null;
+      try {
+        message = await channel.messages.fetch(config.panelMessageId);
+      } catch (error) {
+        // Only a deleted panel is posted again; on other errors the old one stays to avoid duplicates.
+        if (error?.code !== UNKNOWN_MESSAGE) {
+          console.error(`Could not load the music panel in guild ${guildId}:`, error.message);
+          return;
+        }
+      }
+      if (message) {
+        await message.edit(payload);
+        return;
+      }
     }
     const posted = await channel.send(payload);
+    // /setup may have moved the control channel while this was sent; then this message is stale.
+    if (getMusicConfig(guildId).controlChannelId !== channel.id) {
+      await posted.delete?.().catch(() => {});
+      schedulePanel(guildId);
+      return;
+    }
     updateMusicConfig(guildId, { panelMessageId: posted.id });
   }
 
@@ -175,15 +212,27 @@ function createMusicFeature({
     panelTimers.set(guildId, timer);
   }
 
-  // Reuses the stored channel, else one named MUSIC_CHANNEL_NAME, else creates it; then posts the panel.
+  // Uses the stored channel; otherwise sets one up once per server (one named MUSIC_CHANNEL_NAME,
+  // else a new one) and then posts the panel. After that first setup a channel that admins cleared
+  // or deleted stays unset, and /music says so.
   async function ensureControlChannel(guild) {
     const config = getMusicConfig(guild.id);
-    let channel = await fetchChannel(guild, config.controlChannelId);
-    if (!channel) {
-      channel = guild.channels.cache.find((entry) => entry.type === ChannelType.GuildText
-        && normalizeName(entry.name) === normalizeName(env.MUSIC_CHANNEL_NAME)) || null;
+    let channel;
+    try {
+      channel = await fetchChannel(guild, config.controlChannelId);
+    } catch (error) {
+      console.error(`Could not load the music channel in guild ${guild.id} (${guild.name}):`, error.message);
+      return null;
     }
+    if (channel) {
+      if (!getMusicConfig(guild.id).autoSetupDone) updateMusicConfig(guild.id, { autoSetupDone: true });
+      await refreshPanel(guild.id);
+      return channel;
+    }
+    if (config.autoSetupDone) return null;
 
+    channel = guild.channels.cache.find((entry) => entry.type === ChannelType.GuildText
+      && normalizeName(entry.name) === normalizeName(env.MUSIC_CHANNEL_NAME)) || null;
     if (!channel) {
       try {
         channel = await guild.channels.create({
@@ -199,9 +248,17 @@ function createMusicFeature({
       }
     }
 
-    if (channel.id !== config.controlChannelId) {
-      updateMusicConfig(guild.id, { controlChannelId: channel.id, panelMessageId: null });
+    // Re-read: an admin may have picked a channel in /setup in the meantime.
+    const latest = getMusicConfig(guild.id);
+    if (latest.controlChannelId && latest.controlChannelId !== config.controlChannelId) {
+      updateMusicConfig(guild.id, { autoSetupDone: true });
+      await refreshPanel(guild.id);
+      return fetchChannel(guild, latest.controlChannelId).catch(() => null);
     }
+    updateMusicConfig(guild.id, {
+      autoSetupDone: true,
+      ...(channel.id !== latest.controlChannelId ? { controlChannelId: channel.id, panelMessageId: null } : {})
+    });
     await refreshPanel(guild.id);
     return channel;
   }
@@ -257,9 +314,22 @@ function createMusicFeature({
     }
   }
 
+  // Runs one yt-dlp lookup with the per-server and global limits.
+  async function lookupTrack(guildId, query) {
+    if (lookupGuilds.has(guildId) || lookupGuilds.size >= MAX_LOOKUPS) {
+      throw new MusicError('⏳ I am busy looking up another track. Try again in a moment.');
+    }
+    lookupGuilds.add(guildId);
+    try {
+      return await sources.resolveTrack(query);
+    } finally {
+      lookupGuilds.delete(guildId);
+    }
+  }
+
   async function play(ctx, query) {
     checkVoiceChannel(ctx);
-    const track = await sources.resolveTrack(query);
+    const track = await lookupTrack(ctx.guild.id, query);
     const state = getState(await ensureSession(ctx));
     const item = { ...track, requesterId: ctx.member.id };
 
@@ -278,13 +348,21 @@ function createMusicFeature({
     const station = findStation(stationKey, getMusicConfig(ctx.guild.id).stations);
     if (!station) throw new MusicError('Unknown station. Pick one from the list.');
     checkVoiceChannel(ctx);
+    let url = station.url;
+    if (station.custom) {
+      try {
+        url = await assertPublicStationUrl(station.url, { lookup });
+      } catch (error) {
+        throw new MusicError(`Can't play **${station.name}**: ${error.message}`);
+      }
+    }
     const state = getState(await ensureSession(ctx));
     const dropped = state.queue.length;
     state.queue = [];
     startItem(state, {
       kind: 'radio',
       title: station.name,
-      url: station.url,
+      url,
       stationKey: station.key,
       source: 'Radio',
       isLive: true,
@@ -306,11 +384,13 @@ function createMusicFeature({
     return '⏹️ Stopped playback and cleared the queue.';
   }
 
+  // `paused` is the user's wish; when the player can't pause right now (loading, auto-paused while
+  // TTS speaks) the Playing listener in getState applies it later.
   function pause(ctx) {
     const state = requireControl(ctx);
     if (state.paused) return '⏸️ Already paused.';
-    state.session.musicPlayer.pause(true);
     state.paused = true;
+    state.session.musicPlayer.pause(true);
     schedulePanel(ctx.guild.id);
     return '⏸️ Paused.';
   }
@@ -318,14 +398,18 @@ function createMusicFeature({
   function resume(ctx) {
     const state = requireControl(ctx);
     if (!state.paused) return '▶️ Already playing.';
-    state.session.musicPlayer.unpause();
     state.paused = false;
+    // false while auto-paused for TTS or loading; the player then continues on its own.
+    state.session.musicPlayer.unpause();
     schedulePanel(ctx.guild.id);
     return '▶️ Resumed.';
   }
 
   function setVolume(ctx, level) {
     const session = voiceSessions.get(ctx.guild.id);
+    if (!session && !isManager(ctx.member)) {
+      throw new MusicError('Only server managers can change the volume while I am not in a voice channel.');
+    }
     if (session && ctx.member.voice?.channelId !== session.channelId && !isManager(ctx.member)) {
       throw new MusicError(`Join <#${session.channelId}> to change the volume.`);
     }
