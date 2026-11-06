@@ -98,14 +98,14 @@ const helpSections = [
         adminOnly: true
       },
       {
-        command: '/music play query:<link or search> | radio station:<name>',
-        description: 'Play (or queue) a YouTube video or a lofi / chill radio station in your voice channel. Music commands only work in the #voice channel, which also has a control panel with buttons and a station picker.',
-        example: '/music radio station:Lofi (laut.fm)'
+        command: '/music play | playnext | radio | continue | skip | stop | pause | resume | queue | shuffle | clear | remove | move | loop | nowplaying | volume',
+        description: 'YouTube, Spotify links (played from YouTube) and lofi radio in your voice channel, only in the #voice channel (with a control panel). Queue tools, loop off/track/queue, continue a stopped session (24 h). Controls need you in the bot channel. Actions are announced there; when idle the bot cleans its channel up so the panel is on top.',
+        example: '/music play query:lofi beats'
       },
       {
-        command: '/music skip | stop | pause | resume | queue | nowplaying | volume level:<0-100>',
-        description: 'Control playback; members in the bot voice channel and server managers can use the controls.',
-        example: '/music volume level:40'
+        command: '/playlist create | add | remove | rename | delete | visibility | play | show | list | save | import | copy',
+        description: 'Your own playlists (25, 200 tracks each), private or public. Play or show public ones of others with user:, save the queue, import a YouTube or Spotify playlist (100 tracks) or copy a public one.',
+        example: '/playlist play name:Chill shuffle:true'
       },
       {
         command: '/cata [player:<ign>] [profile:<name>]',

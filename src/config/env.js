@@ -34,6 +34,9 @@ const env = {
   // Only members with this role see the music channel; the bot creates it once (needs Manage Roles).
   MUSIC_ROLE_NAME: process.env.MUSIC_ROLE_NAME || 'Voice',
   YTDLP_PATH: process.env.YTDLP_PATH || 'yt-dlp',
+  // Optional Spotify Web API app (Client Credentials); Spotify links also work without it via the embed page.
+  SPOTIFY_CLIENT_ID: process.env.SPOTIFY_CLIENT_ID || null,
+  SPOTIFY_CLIENT_SECRET: process.env.SPOTIFY_CLIENT_SECRET || null,
   USER_AGENT: 'hypixel-mayor-discord-bot/1.0.0',
   DEFAULT_DISCORD_CHANNEL_ID: process.env.DISCORD_CHANNEL_ID || null,
   DEFAULT_DISCORD_ROLE_ID: process.env.DISCORD_ROLE_ID || null,
@@ -57,6 +60,10 @@ const env = {
   STATE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'state.json'),
   MOCK_DATA_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'mock-election.json'),
   NAMEHISTORY_CACHE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'namehistory-cache.json'),
+  // Saved music playlists per server (src/features/music/playlists.js).
+  PLAYLISTS_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'playlists.json'),
+  // The last interrupted music session per server, for /music continue (kept 24 hours).
+  MUSIC_RESUME_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'music-resume.json'),
   // Isometric heads from the in-game NPC skin textures (skyblock.matdoes.dev NPC list);
   // Jerry is a villager, so he uses Mojang's MHF_Villager head.
   MAYOR_HEADS: Object.fromEntries(Object.entries({

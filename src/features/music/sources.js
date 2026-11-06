@@ -3,12 +3,16 @@ const childProcess = require('node:child_process');
 // YouTube through yt-dlp and radio through ffmpeg; both run as child processes that the
 // player kills on skip/stop/leave. The spawner is injectable for tests.
 const RESOLVE_TIMEOUT_MS = 30_000;
+const PLAYLIST_TIMEOUT_MS = 60_000;
+const MAX_IMPORT_TRACKS = 100;
 const MAX_TRACK_SECONDS = 3 * 60 * 60;
 const YOUTUBE_HOSTS = new Set(['youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com', 'youtu.be']);
 // yt-dlp only enables deno by default; the bot image already has node for YouTube's JS challenges.
 const YTDLP_COMMON_ARGS = ['--no-playlist', '--no-warnings', '--js-runtimes', 'node'];
 // Only the first entry of a search; never walk a whole playlist or channel.
 const YTDLP_RESOLVE_ARGS = ['--dump-single-json', '--playlist-items', '1'];
+// Playlist imports only list the entries (no per-video lookups), at most MAX_IMPORT_TRACKS.
+const YTDLP_PLAYLIST_ARGS = ['--flat-playlist', '--dump-single-json', '--playlist-items', `1:${MAX_IMPORT_TRACKS}`, '--no-warnings', '--js-runtimes', 'node'];
 // ffmpeg may only open the radio stream over the network (no file:, concat:, subfile: etc.).
 const RADIO_PROTOCOLS = 'http,https,tcp,tls';
 
@@ -36,16 +40,35 @@ function isYouTubeVideoUrl(value) {
   return /^\/(shorts|live|embed)\/[\w-]+\/?$/.test(url.pathname);
 }
 
+// The playlist id of a YouTube link (playlist?list=, watch?v=…&list=, youtu.be/…?list=), else null.
+function getYouTubePlaylistId(value) {
+  if (!isYouTubeUrl(value)) return null;
+  const id = new URL(value).searchParams.get('list');
+  return id && /^[\w-]{2,64}$/.test(id) ? id : null;
+}
+
 function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn = childProcess.spawn } = {}) {
-  function run(command, args, timeoutMs) {
+  // Errors carry a `code`: TIMEOUT, ABORTED (the signal fired) or the process error.
+  function run(command, args, timeoutMs, timeoutMessage = 'Looking up that video took too long. Please try again.', signal = null) {
     return new Promise((resolve, reject) => {
+      if (signal?.aborted) {
+        reject(Object.assign(new MusicError('The lookup was cancelled.'), { code: 'ABORTED' }));
+        return;
+      }
       const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
       let stdout = '';
       let stderr = '';
       const timer = setTimeout(() => {
         child.kill('SIGKILL');
-        reject(new MusicError('Looking up that video took too long. Please try again.'));
+        reject(Object.assign(new MusicError(timeoutMessage), { code: 'TIMEOUT' }));
       }, timeoutMs);
+      const onAbort = () => {
+        clearTimeout(timer);
+        child.kill('SIGKILL');
+        reject(Object.assign(new MusicError('The lookup was cancelled.'), { code: 'ABORTED' }));
+      };
+      signal?.addEventListener('abort', onAbort, { once: true });
+      child.on('close', () => signal?.removeEventListener('abort', onAbort));
       child.stdout.on('data', (chunk) => { stdout += chunk; });
       child.stderr.on('data', (chunk) => { stderr += chunk; });
       child.on('error', (error) => {
@@ -110,6 +133,89 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     };
   }
 
+  // Lists the videos of a YouTube playlist without resolving each one.
+  // Returns { title, tracks: [{ kind, title, url, duration, isLive, source }], skipped }.
+  async function resolvePlaylist(link) {
+    const text = String(link || '').trim();
+    const id = getYouTubePlaylistId(text);
+    if (!id) throw new MusicError('Give me a link to a YouTube playlist (with `list=` in it).');
+
+    let output;
+    try {
+      output = await run(ytdlpPath, [...YTDLP_PLAYLIST_ARGS, '--', `https://www.youtube.com/playlist?list=${id}`], PLAYLIST_TIMEOUT_MS,
+        'Loading that playlist took too long. Please try again.');
+    } catch (error) {
+      if (error instanceof MusicError) throw error;
+      console.error('yt-dlp playlist lookup failed:', error.message.slice(0, 500));
+      throw new MusicError(/private|unavailable|does not exist|removed/i.test(error.message)
+        ? 'That playlist is unavailable (private or removed).'
+        : 'Could not load that playlist from YouTube.');
+    }
+
+    let info;
+    try {
+      info = JSON.parse(output);
+    } catch {
+      throw new MusicError('Could not read the playlist details from yt-dlp.');
+    }
+    const entries = Array.isArray(info?.entries) ? info.entries.slice(0, MAX_IMPORT_TRACKS) : [];
+    const tracks = [];
+    for (const entry of entries) {
+      const videoId = typeof entry?.id === 'string' && /^[\w-]{6,20}$/.test(entry.id) ? entry.id : null;
+      const title = String(entry?.title || '');
+      // Deleted and private videos stay in playlists as placeholders.
+      if (!videoId || /^\[(private|deleted) video\]$/i.test(title) || entry.live_status === 'is_upcoming') continue;
+      const isLive = entry.live_status === 'is_live';
+      const duration = Number.isFinite(entry.duration) ? Math.round(entry.duration) : null;
+      if (!isLive && duration && duration > MAX_TRACK_SECONDS) continue;
+      tracks.push({
+        kind: 'track',
+        title: (title || 'Unknown title').slice(0, 200),
+        url: `https://www.youtube.com/watch?v=${videoId}`,
+        source: 'YouTube',
+        author: entry.channel || entry.uploader || null,
+        duration: isLive ? null : duration,
+        isLive,
+        thumbnail: null
+      });
+    }
+    if (!tracks.length) throw new MusicError('That playlist has no playable videos.');
+    return { title: String(info.title || 'YouTube playlist').slice(0, 200), tracks, skipped: entries.length - tracks.length };
+  }
+
+  // The first `count` YouTube search results as { title, uploader, duration, url } (one flat lookup),
+  // for matching Spotify tracks. Live streams and videos over 3 hours are left out.
+  // `signal` aborts the search and kills yt-dlp (skip/stop while a Spotify track is matched).
+  async function searchCandidates(query, count = 5, { signal = null } = {}) {
+    const text = String(query || '').trim();
+    if (!text) throw new MusicError('Nothing to search for.');
+    let output;
+    try {
+      output = await run(ytdlpPath, ['--flat-playlist', '--dump-single-json', '--no-warnings', '--js-runtimes', 'node', '--', `ytsearch${count}:${text}`], RESOLVE_TIMEOUT_MS,
+        'Searching YouTube took too long. Please try again.', signal);
+    } catch (error) {
+      if (error instanceof MusicError) throw error;
+      console.error('yt-dlp search failed:', error.message.slice(0, 500));
+      throw Object.assign(new MusicError('Could not search YouTube.'), { code: 'YOUTUBE' });
+    }
+    let info;
+    try {
+      info = JSON.parse(output);
+    } catch {
+      throw new MusicError('Could not read the search results from yt-dlp.');
+    }
+    return (Array.isArray(info?.entries) ? info.entries : [])
+      .filter((entry) => typeof entry?.id === 'string' && /^[\w-]{6,20}$/.test(entry.id))
+      .filter((entry) => entry.live_status !== 'is_live' && entry.live_status !== 'is_upcoming')
+      .filter((entry) => !(Number.isFinite(entry.duration) && entry.duration > MAX_TRACK_SECONDS))
+      .map((entry) => ({
+        title: String(entry.title || ''),
+        uploader: entry.channel || entry.uploader || '',
+        duration: Number.isFinite(entry.duration) ? Math.round(entry.duration) : null,
+        url: `https://www.youtube.com/watch?v=${entry.id}`
+      }));
+  }
+
   function attachLogging(child, label) {
     let stderr = '';
     child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-2000); });
@@ -133,12 +239,14 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
   // through prism's FFmpeg in Node broke the pipe after a few seconds under backpressure.)
   // Live streams have no audio-only format, so they fall back to a small video format.
   // yt-dlp runs in its own process group so kill() also ends the ffmpeg it starts for live streams.
-  function spawnTrack(url) {
+  // `startAt` (seconds) makes ffmpeg skip that far into the track, for /music continue.
+  function spawnTrack(url, { startAt = 0 } = {}) {
     const ytdlp = attachLogging(spawn(ytdlpPath, ['-f', 'bestaudio/best[height<=480]/best', '-q', ...YTDLP_COMMON_ARGS, '-o', '-', '--', url], {
       stdio: ['ignore', 'pipe', 'pipe'],
       detached: true
     }), 'yt-dlp');
-    const ffmpeg = attachLogging(spawnFfmpeg('pipe:0', ytdlp.stdout), 'ffmpeg');
+    const seek = Number.isFinite(startAt) && startAt > 0 ? ['-ss', String(Math.floor(startAt))] : [];
+    const ffmpeg = attachLogging(spawnFfmpeg('pipe:0', ytdlp.stdout, seek), 'ffmpeg');
     // ffmpeg holds its own copy of the pipe; closing ours lets yt-dlp notice when ffmpeg is gone.
     ytdlp.stdout.destroy();
 
@@ -175,7 +283,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     };
   }
 
-  return { resolveTrack, spawnTrack, spawnRadio };
+  return { resolveTrack, resolvePlaylist, searchCandidates, spawnTrack, spawnRadio };
 }
 
-module.exports = { createMusicSources, isYouTubeUrl, isYouTubeVideoUrl, MusicError, MAX_TRACK_SECONDS };
+module.exports = { createMusicSources, isYouTubeUrl, isYouTubeVideoUrl, getYouTubePlaylistId, MusicError, MAX_TRACK_SECONDS, MAX_IMPORT_TRACKS };
