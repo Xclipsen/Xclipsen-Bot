@@ -555,4 +555,4 @@ function loadShitterData(shitterFilePath) {
   return normalizeShitterStore(data);
 }
 
-module.exports = { createStore, normalizeGuildConfig };
+module.exports = { createStore, normalizeGuildConfig, loadJsonFile, saveJsonFile };

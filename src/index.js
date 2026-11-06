@@ -25,6 +25,8 @@ const { createItemEmojiFeature } = require('./features/itemEmoji');
 const { createGifFeature } = require('./features/gif');
 const { createTtsFeature } = require('./features/tts');
 const { createMusicFeature } = require('./features/music');
+const { createPlaylistStore } = require('./features/music/playlists');
+const { createResumeStore } = require('./features/music/resume');
 const { createVoiceSessions } = require('./features/voice/sessions');
 const { createHelpFeature } = require('./features/help');
 const { createNameHistoryFeature } = require('./features/nameHistory');
@@ -111,7 +113,14 @@ const pestFarmingProfit = createPestFarmingProfitFeature({ store, hypixelApi });
 const gif = createGifFeature();
 const voiceSessions = createVoiceSessions({ client });
 const tts = createTtsFeature({ client, env, store, voiceSessions });
-const music = createMusicFeature({ client, env, store, voiceSessions });
+const music = createMusicFeature({
+  client,
+  env,
+  store,
+  voiceSessions,
+  playlists: createPlaylistStore({ filePath: env.PLAYLISTS_FILE_PATH }),
+  resumeStore: createResumeStore({ filePath: env.MUSIC_RESUME_FILE_PATH })
+});
 const help = createHelpFeature();
 const nameHistory = createNameHistoryFeature({ minecraft, linkStore: modBackend });
 const playerUuid = createPlayerUuidFeature({ minecraft, linkStore: modBackend });
@@ -265,6 +274,7 @@ client.on(Events.MessageReactionRemove, async (reaction, user) => {
 client.on(Events.MessageCreate, async (message) => {
   await ircBridge.handleDiscordMessage(message);
   await tts.handleMessage(message).catch((error) => console.error('TTS message handling failed:', error));
+  await music.handleMessageCreate(message).catch((error) => console.error('Music channel message handling failed:', error));
 });
 
 client.on(Events.MessageDelete, async (message) => {
@@ -345,6 +355,7 @@ const commandHandlers = {
   [commandNames.gif]: (interaction) => gif.handleGifCommand(interaction),
   [commandNames.tts]: (interaction) => tts.handleTtsCommand(interaction, accessControl),
   [commandNames.music]: (interaction) => music.handleMusicCommand(interaction),
+  [commandNames.playlist]: (interaction) => music.handlePlaylistCommand(interaction),
   [commandNames.hideonleaf]: (interaction) => hideonleaf.handleHideonleafCommand(interaction),
   [commandNames.shitter]: (interaction) => shitterList.handleShitterCommand(interaction),
   [commandNames.link]: (interaction) => linking.handleLinkCommand(interaction)
@@ -371,6 +382,11 @@ client.on(Events.InteractionCreate, async (interaction) => {
 
     if (interaction.isAutocomplete() && interaction.commandName === commandNames.music) {
       await music.handleStationAutocomplete(interaction);
+      return;
+    }
+
+    if (interaction.isAutocomplete() && interaction.commandName === commandNames.playlist) {
+      await music.handlePlaylistAutocomplete(interaction);
       return;
     }
 

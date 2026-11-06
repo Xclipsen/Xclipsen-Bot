@@ -4,13 +4,35 @@ const dns = require('node:dns');
 
 const { createMusicSources, MusicError } = require('./sources');
 const { listStations, findStation } = require('./stations');
-const { PANEL_IDS, buildPanelMessage, describeItem, formatDuration } = require('./panel');
+const {
+  PANEL_IDS,
+  PAGE_PREFIX,
+  buildPanelMessage,
+  buildQueueView,
+  buildPlaylistView,
+  buildPlaylistListView,
+  describeItem,
+  describeLength,
+  escapeMarkdown,
+  formatDuration,
+  shorten
+} = require('./panel');
 const { assertPublicStationUrl } = require('./urlSafety');
+const { nextLoopMode, shuffled, removeAt, moveItem, LOOP_MODES } = require('./queue');
+const { createPlaylistStore, canRead, MAX_PLAYLIST_TRACKS } = require('./playlists');
+const { createResumeStore } = require('./resume');
 
 const MAX_QUEUE = 50;
+// Playlists (and /music continue) may fill the queue further.
+const MAX_PLAYLIST_QUEUE = 100;
 const VOLUME_STEP = 10;
 // yt-dlp lookups: one per server at a time, a few across all servers.
 const MAX_LOOKUPS = 3;
+// A track that ended this quickly failed (or was removed); loops skip it instead of retrying forever.
+const MIN_LOOP_PLAY_MS = 3_000;
+// Channel cleanup: bulk delete only works for messages younger than 14 days.
+const BULK_DELETE_MAX_AGE_MS = (14 * 24 * 60 - 60) * 60_000;
+const CLEANUP_MAX_PAGES = 5;
 const UNKNOWN_MESSAGE = 10008;
 const UNKNOWN_CHANNEL = 10003;
 const PANEL_CUSTOM_IDS = new Set(Object.values(PANEL_IDS));
@@ -21,6 +43,8 @@ function normalizeName(value) {
 
 // Music and radio on the shared voice session (src/features/voice/sessions.js), only on its
 // musicPlayer. Commands and the control panel live in one text channel per server ("voice").
+// Actions that change what plays are announced there publicly; once nothing plays the channel
+// is cleaned up so only the panel is left.
 function createMusicFeature({
   client,
   env,
@@ -28,22 +52,31 @@ function createMusicFeature({
   voiceSessions,
   voice = require('@discordjs/voice'),
   sources = createMusicSources({ ytdlpPath: env.YTDLP_PATH }),
+  playlists = createPlaylistStore({ filePath: env.PLAYLISTS_FILE_PATH || null }),
+  resumeStore = createResumeStore({ filePath: env.MUSIC_RESUME_FILE_PATH || null }),
   lookup = dns.promises.lookup,
-  panelDelayMs = 2_000
+  panelDelayMs = 2_000,
+  cleanupDelayMs = 30_000,
+  now = Date.now,
+  random = Math.random
 }) {
-  // guildId -> { session, queue, current, paused, child, resource }; `paused` is what the user asked for.
+  // guildId -> { session, queue, current, paused, loop, child, resource, offset, failed };
+  // `paused` is what the user asked for, `offset` where the current track started (seconds).
   const states = new Map();
   const panelTimers = new Map();
+  const cleanupTimers = new Map();
   const panelChains = new Map();
   const lookupGuilds = new Set();
 
-  voiceSessions.onEnd((session) => {
+  voiceSessions.onEnd((session, reason) => {
     const state = states.get(session.guildId);
     if (state?.session === session) {
+      saveSnapshot(state, { reason: reason || 'session ended' });
       stopProcess(state);
       states.delete(session.guildId);
     }
     schedulePanel(session.guildId);
+    scheduleCleanup(session.guildId);
   });
 
   function getMusicConfig(guildId) {
@@ -58,10 +91,20 @@ function createMusicFeature({
     return states.get(state.session.guildId) === state && voiceSessions.get(state.session.guildId) === state.session;
   }
 
+  function activeState(guildId) {
+    const session = voiceSessions.get(guildId);
+    const state = session ? states.get(guildId) : null;
+    return state?.session === session ? state : null;
+  }
+
+  function isIdle(guildId) {
+    return !activeState(guildId)?.current;
+  }
+
   function getState(session) {
     let state = states.get(session.guildId);
     if (state?.session !== session) {
-      state = { session, queue: [], current: null, paused: false, child: null, resource: null };
+      state = { session, queue: [], current: null, paused: false, loop: 'off', child: null, resource: null, offset: 0, failed: false };
       states.set(session.guildId, state);
       // Only the end of the resource that is playing right now advances the queue; skip/stop clear it first.
       session.musicPlayer.on(voice.AudioPlayerStatus.Idle, (oldState) => {
@@ -72,6 +115,9 @@ function createMusicFeature({
       // loading or auto-paused for TTS is applied as soon as it plays again.
       session.musicPlayer.on(voice.AudioPlayerStatus.Playing, () => {
         if (isActive(state) && state.paused && state.resource) session.musicPlayer.pause(true);
+      });
+      session.musicPlayer.on('error', (error) => {
+        if (isActive(state) && error?.resource && error.resource === state.resource) state.failed = true;
       });
     }
     return state;
@@ -84,9 +130,31 @@ function createMusicFeature({
     state.resource = null;
   }
 
-  function startItem(state, item) {
+  // Seconds into the current track (0 for radio and live streams).
+  function currentPosition(state) {
+    if (!state.current || state.current.kind === 'radio' || state.current.isLive) return 0;
+    return state.offset + Math.floor((state.resource?.playbackDuration || 0) / 1000);
+  }
+
+  // Remembers an interrupted session for /music continue; a finished queue leaves nothing to keep.
+  function saveSnapshot(state, { savedBy = null, reason = null } = {}) {
+    if (!state.current && !state.queue.length) return;
+    resumeStore.set(state.session.guildId, {
+      current: state.current,
+      position: currentPosition(state),
+      queue: state.queue,
+      loop: state.loop,
+      savedBy,
+      reason
+    });
+  }
+
+  function startItem(state, item, { startAt = 0 } = {}) {
     stopProcess(state);
-    const child = item.kind === 'radio' ? sources.spawnRadio(item.url) : sources.spawnTrack(item.url);
+    const seek = item.kind === 'track' && !item.isLive && startAt > 0 ? Math.floor(startAt) : 0;
+    const child = item.kind === 'radio'
+      ? sources.spawnRadio(item.url)
+      : seek ? sources.spawnTrack(item.url, { startAt: seek }) : sources.spawnTrack(item.url);
     const resource = voice.createAudioResource(child.stdout, {
       inputType: voice.StreamType.Raw,
       inlineVolume: true,
@@ -102,15 +170,27 @@ function createMusicFeature({
     state.current = item;
     state.child = child;
     state.resource = resource;
+    state.offset = seek;
+    state.failed = false;
     state.paused = false;
+    cancelCleanup(state.session.guildId);
     state.session.musicPlayer.play(resource);
     schedulePanel(state.session.guildId);
   }
 
-  function playNext(state) {
+  // Next item after the current one ended (or was skipped), following the loop mode.
+  function playNext(state, { skipped = false } = {}) {
+    const finished = state.current;
+    const failed = !skipped && (state.failed || (state.resource?.playbackDuration || 0) < MIN_LOOP_PLAY_MS);
+    const loopable = finished?.kind === 'track' && !finished.isLive && !failed;
     stopProcess(state);
     state.current = null;
     state.paused = false;
+    if (isActive(state) && loopable && !skipped && state.loop === 'track') {
+      startItem(state, finished);
+      return;
+    }
+    if (loopable && state.loop === 'queue') state.queue.push(finished);
     const next = state.queue.shift();
     if (next && isActive(state)) {
       startItem(state, next);
@@ -118,30 +198,42 @@ function createMusicFeature({
     }
     state.session.musicPlayer.stop(true);
     schedulePanel(state.session.guildId);
+    scheduleCleanup(state.session.guildId);
   }
 
-  function stopAll(state) {
+  function stopAll(state, savedBy = null) {
+    saveSnapshot(state, { savedBy, reason: 'stopped' });
     state.queue = [];
     stopProcess(state);
     state.current = null;
     state.paused = false;
     state.session.musicPlayer.stop(true);
     schedulePanel(state.session.guildId);
+    scheduleCleanup(state.session.guildId);
   }
 
   // --- control panel -------------------------------------------------------------------------
 
+  function resumableCount(guildId) {
+    const snapshot = resumeStore.get(guildId);
+    return snapshot ? (snapshot.current ? 1 : 0) + snapshot.queue.length : 0;
+  }
+
   function getPanelState(guildId) {
     const session = voiceSessions.get(guildId);
-    const state = session ? states.get(guildId) : null;
+    const state = activeState(guildId);
     const config = getMusicConfig(guildId);
+    const current = state?.current || null;
     return {
-      current: state?.session === session ? state?.current || null : null,
-      queue: state?.session === session ? state?.queue || [] : [],
+      current,
+      queue: state?.queue || [],
       paused: Boolean(state?.paused),
+      loop: state?.loop || 'off',
       volume: config.volume,
       channelId: session?.channelId || null,
-      stations: listStations(config.stations)
+      stations: listStations(config.stations),
+      playlists: playlists.listPublic(guildId).slice(0, 25),
+      resumable: current ? 0 : resumableCount(guildId)
     };
   }
 
@@ -192,14 +284,18 @@ function createMusicFeature({
     updateMusicConfig(guildId, { panelMessageId: posted.id });
   }
 
-  // Panel writes per guild run one after another so a deleted panel is only re-posted once.
-  function refreshPanel(guildId) {
+  // Panel writes and cleanups per guild run one after another so a deleted panel is only re-posted once.
+  function enqueue(guildId, task, label) {
     const previous = panelChains.get(guildId) || Promise.resolve();
     const next = previous
-      .then(() => writePanel(guildId))
-      .catch((error) => console.error(`Music panel update failed in guild ${guildId}:`, error.message));
+      .then(task)
+      .catch((error) => console.error(`${label} failed in guild ${guildId}:`, error.message));
     panelChains.set(guildId, next);
     return next;
+  }
+
+  function refreshPanel(guildId) {
+    return enqueue(guildId, () => writePanel(guildId), 'Music panel update');
   }
 
   function schedulePanel(guildId) {
@@ -212,9 +308,92 @@ function createMusicFeature({
     panelTimers.set(guildId, timer);
   }
 
-  // Uses the stored channel; otherwise sets one up once per server (one named MUSIC_CHANNEL_NAME,
-  // else a new one) and then posts the panel. After that first setup a channel that admins cleared
-  // or deleted stays unset, and /music says so.
+  // --- channel cleanup -----------------------------------------------------------------------
+
+  async function fetchRecentMessages(channel) {
+    const messages = [];
+    let before = null;
+    for (let page = 0; page < CLEANUP_MAX_PAGES; page += 1) {
+      const batch = [...(await channel.messages.fetch({ limit: 100, ...(before ? { before } : {}) })).values()];
+      messages.push(...batch);
+      if (batch.length < 100) break;
+      before = batch.reduce((oldest, message) => (message.createdTimestamp < oldest.createdTimestamp ? message : oldest)).id;
+    }
+    return messages;
+  }
+
+  // Deletes every message of the control channel except the panel while nothing plays. Failures
+  // are ignored. If an older message survives, the panel is posted again unless it already is the newest.
+  async function cleanChannel(guildId) {
+    if (!isIdle(guildId)) return;
+    const guild = client.guilds.cache.get(guildId);
+    const channel = guild ? await fetchChannel(guild, getMusicConfig(guildId).controlChannelId) : null;
+    if (!channel?.messages?.fetch) return;
+
+    const messages = await fetchRecentMessages(channel);
+    if (!isIdle(guildId)) return;
+    const { panelMessageId } = getMusicConfig(guildId);
+    const panel = messages.find((message) => message.id === panelMessageId) || null;
+    const others = messages.filter((message) => message.id !== panelMessageId);
+    const cutoff = now() - BULK_DELETE_MAX_AGE_MS;
+    const recent = others.filter((message) => message.createdTimestamp > cutoff);
+    const old = others.filter((message) => message.createdTimestamp <= cutoff);
+    const deleted = new Set();
+
+    for (let index = 0; index < recent.length; index += 100) {
+      const chunk = recent.slice(index, index + 100);
+      if (chunk.length === 1 || !channel.bulkDelete) {
+        for (const message of chunk) {
+          if (await message.delete().then(() => true, () => false)) deleted.add(message.id);
+        }
+        continue;
+      }
+      try {
+        const result = await channel.bulkDelete(chunk.map((message) => message.id));
+        for (const id of result?.keys?.() || []) deleted.add(id);
+      } catch {
+        // Missing Manage Messages or already deleted: leave them.
+      }
+    }
+    for (const message of old) {
+      if (await message.delete().then(() => true, () => false)) deleted.add(message.id);
+    }
+
+    const remaining = others.filter((message) => !deleted.has(message.id));
+    const olderLeft = panel && remaining.some((message) => message.createdTimestamp < panel.createdTimestamp);
+    const newerLeft = panel && remaining.some((message) => message.createdTimestamp > panel.createdTimestamp);
+    if (!panel || (olderLeft && newerLeft)) {
+      if (panel) {
+        updateMusicConfig(guildId, { panelMessageId: null });
+        await panel.delete().catch(() => {});
+      }
+      await writePanel(guildId);
+    }
+  }
+
+  function cancelCleanup(guildId) {
+    clearTimeout(cleanupTimers.get(guildId));
+    cleanupTimers.delete(guildId);
+  }
+
+  // Debounced: every new idle event or message restarts the wait; new playback cancels it.
+  function scheduleCleanup(guildId) {
+    cancelCleanup(guildId);
+    const timer = setTimeout(() => {
+      cleanupTimers.delete(guildId);
+      if (isIdle(guildId)) void enqueue(guildId, () => cleanChannel(guildId), 'Music channel cleanup');
+    }, cleanupDelayMs);
+    timer.unref?.();
+    cleanupTimers.set(guildId, timer);
+  }
+
+  async function refreshAndClean(guildId) {
+    await refreshPanel(guildId);
+    if (isIdle(guildId)) await enqueue(guildId, () => cleanChannel(guildId), 'Music channel cleanup');
+  }
+
+  // --- control channel and role setup --------------------------------------------------------
+
   // Creates or finds the Voice role once; afterwards a role an admin cleared or deleted stays gone.
   async function ensureVoiceRole(guild) {
     const config = getMusicConfig(guild.id);
@@ -278,6 +457,9 @@ function createMusicFeature({
     }
   }
 
+  // Uses the stored channel; otherwise sets one up once per server (one named MUSIC_CHANNEL_NAME,
+  // else a new one) and then posts the panel. After that first setup a channel that admins cleared
+  // or deleted stays unset, and /music says so. While nothing plays the channel is cleaned up.
   async function ensureControlChannel(guild) {
     const role = await ensureVoiceRole(guild);
     const config = getMusicConfig(guild.id);
@@ -291,7 +473,7 @@ function createMusicFeature({
     if (channel) {
       if (!getMusicConfig(guild.id).autoSetupDone) updateMusicConfig(guild.id, { autoSetupDone: true });
       if (!getMusicConfig(guild.id).accessSetupDone) await applyChannelAccess(guild, channel);
-      await refreshPanel(guild.id);
+      await refreshAndClean(guild.id);
       return channel;
     }
     if (config.autoSetupDone) return null;
@@ -303,7 +485,7 @@ function createMusicFeature({
         channel = await guild.channels.create({
           name: env.MUSIC_CHANNEL_NAME,
           type: ChannelType.GuildText,
-          topic: 'Music and radio: use /music here. The panel below shows what is playing.',
+          topic: 'Music and radio: use /music and /playlist here. The panel shows what is playing.',
           permissionOverwrites: controlChannelOverwrites(guild, role?.id || null),
           reason: 'Control channel for the music and radio player (/music).'
         });
@@ -318,7 +500,7 @@ function createMusicFeature({
     const latest = getMusicConfig(guild.id);
     if (latest.controlChannelId && latest.controlChannelId !== config.controlChannelId) {
       updateMusicConfig(guild.id, { autoSetupDone: true });
-      await refreshPanel(guild.id);
+      await refreshAndClean(guild.id);
       return fetchChannel(guild, latest.controlChannelId).catch(() => null);
     }
     updateMusicConfig(guild.id, {
@@ -326,7 +508,7 @@ function createMusicFeature({
       ...(channel.id !== latest.controlChannelId ? { controlChannelId: channel.id, panelMessageId: null } : {})
     });
     if (!getMusicConfig(guild.id).accessSetupDone) await applyChannelAccess(guild, channel);
-    await refreshPanel(guild.id);
+    await refreshAndClean(guild.id);
     return channel;
   }
 
@@ -339,11 +521,35 @@ function createMusicFeature({
     }
   }
 
+  // A message in the control channel while nothing plays is cleaned up after the idle delay.
+  async function handleMessageCreate(message) {
+    if (!message.guildId) return;
+    const config = getMusicConfig(message.guildId);
+    if (!config.controlChannelId || message.channelId !== config.controlChannelId || message.id === config.panelMessageId) return;
+    if (isIdle(message.guildId)) scheduleCleanup(message.guildId);
+  }
+
   // --- actions shared by commands and panel --------------------------------------------------
 
   function isManager(member) {
     return env.PRIVILEGED_USER_IDS.has(String(member.id))
       || member.permissions?.has?.(PermissionsBitField.Flags.ManageGuild) === true;
+  }
+
+  function actorOf(ctx) {
+    return { id: String(ctx.member.id), isManager: isManager(ctx.member) };
+  }
+
+  function who(ctx) {
+    return `**${escapeMarkdown(shorten(ctx.member.displayName || ctx.member.user?.username || 'Someone', 64))}**`;
+  }
+
+  function titleOf(item) {
+    return `**${escapeMarkdown(shorten(item.title, 100))}**`;
+  }
+
+  function plural(count, word) {
+    return `${count} ${word}${count === 1 ? '' : 's'}`;
   }
 
   // Playback controls need a listener of the bot's channel; managers may always use them.
@@ -382,73 +588,108 @@ function createMusicFeature({
   }
 
   // Runs one yt-dlp lookup with the per-server and global limits.
-  async function lookupTrack(guildId, query) {
+  async function withLookup(guildId, task) {
     if (lookupGuilds.has(guildId) || lookupGuilds.size >= MAX_LOOKUPS) {
       throw new MusicError('⏳ I am busy looking up another track. Try again in a moment.');
     }
     lookupGuilds.add(guildId);
     try {
-      return await sources.resolveTrack(query);
+      return await task();
     } finally {
       lookupGuilds.delete(guildId);
     }
   }
 
-  async function play(ctx, query) {
+  function lookupTrack(guildId, query) {
+    return withLookup(guildId, () => sources.resolveTrack(query));
+  }
+
+  async function play(ctx, query, { next = false } = {}) {
     checkVoiceChannel(ctx);
     const track = await lookupTrack(ctx.guild.id, query);
     const state = getState(await ensureSession(ctx));
     const item = { ...track, requesterId: ctx.member.id };
+    const label = `${titleOf(item)} (${describeLength(item)})`;
 
     if (!state.current || state.current.kind === 'radio') {
       const replacedRadio = state.current?.kind === 'radio';
       startItem(state, item);
-      return `▶️ Now playing ${describeItem(item)}${replacedRadio ? ' (stopped the radio)' : ''}`;
+      return { announce: `▶️ ${who(ctx)} started ${label}${replacedRadio ? ' and stopped the radio' : ''}` };
     }
     if (state.queue.length >= MAX_QUEUE) throw new MusicError(`The queue is full (${MAX_QUEUE} tracks).`);
-    state.queue.push(item);
+    if (next) state.queue.unshift(item);
+    else state.queue.push(item);
     schedulePanel(ctx.guild.id);
-    return `➕ Queued at position ${state.queue.length}: ${describeItem(item)}`;
+    return { announce: next ? `⏫ ${who(ctx)} added ${label} — up next` : `🎵 ${who(ctx)} added ${label} — position ${state.queue.length}` };
+  }
+
+  // Resolves a radio station and checks custom URLs again (with DNS) at play time.
+  async function stationUrl(station) {
+    if (!station.custom) return station.url;
+    try {
+      return await assertPublicStationUrl(station.url, { lookup });
+    } catch (error) {
+      throw new MusicError(`Can't play **${station.name}**: ${error.message}`);
+    }
+  }
+
+  function radioItem(station, url, requesterId) {
+    return { kind: 'radio', title: station.name, url, stationKey: station.key, source: 'Radio', isLive: true, duration: null, requesterId };
   }
 
   async function playRadio(ctx, stationKey) {
     const station = findStation(stationKey, getMusicConfig(ctx.guild.id).stations);
     if (!station) throw new MusicError('Unknown station. Pick one from the list.');
     checkVoiceChannel(ctx);
-    let url = station.url;
-    if (station.custom) {
-      try {
-        url = await assertPublicStationUrl(station.url, { lookup });
-      } catch (error) {
-        throw new MusicError(`Can't play **${station.name}**: ${error.message}`);
-      }
-    }
+    const url = await stationUrl(station);
     const state = getState(await ensureSession(ctx));
     const dropped = state.queue.length;
     state.queue = [];
-    startItem(state, {
-      kind: 'radio',
-      title: station.name,
-      url,
-      stationKey: station.key,
-      source: 'Radio',
-      isLive: true,
-      duration: null,
-      requesterId: ctx.member.id
-    });
-    return `📻 Tuned in to **${station.name}**.${dropped ? ` Cleared ${dropped} queued track${dropped === 1 ? '' : 's'}.` : ''}`;
+    startItem(state, radioItem(station, url, ctx.member.id));
+    return { announce: `📻 ${who(ctx)} switched to **${escapeMarkdown(station.name)}**${dropped ? ` and cleared ${plural(dropped, 'queued track')}` : ''}` };
+  }
+
+  // Rejoins and restores the last interrupted session; tracks continue where they were.
+  async function continueSession(ctx) {
+    if (!isIdle(ctx.guild.id)) throw new MusicError('Something is already playing. Stop it first to continue the last session.');
+    const snapshot = resumeStore.get(ctx.guild.id);
+    if (!snapshot) throw new MusicError('There is no stopped session to continue (they are kept for 24 hours).');
+    checkVoiceChannel(ctx);
+
+    let first = snapshot.current;
+    let startAt = snapshot.position;
+    if (first?.kind === 'radio') {
+      const station = findStation(first.stationKey || first.title, getMusicConfig(ctx.guild.id).stations);
+      first = station ? radioItem(station, await stationUrl(station), first.requesterId) : null;
+      startAt = 0;
+    }
+    const state = getState(await ensureSession(ctx));
+    if (!isIdle(ctx.guild.id)) throw new MusicError('Something is already playing. Stop it first to continue the last session.');
+    state.queue = snapshot.queue.slice(0, MAX_PLAYLIST_QUEUE).map((item) => ({ ...item }));
+    state.loop = snapshot.loop;
+    if (!first) {
+      first = state.queue.shift();
+      startAt = 0;
+    }
+    if (!first) throw new MusicError('There is nothing left to continue.');
+    startItem(state, { ...first }, { startAt });
+    // Used up; if this session is interrupted again, that saves a new snapshot.
+    resumeStore.clear(ctx.guild.id);
+    const count = 1 + state.queue.length;
+    const at = startAt > 0 ? ` at ${formatDuration(startAt)}` : '';
+    return { announce: `⏯️ ${who(ctx)} continued the last session (${plural(count, 'track')}) with ${titleOf(first)}${at}` };
   }
 
   function skip(ctx) {
     const state = requireControl(ctx);
     const skipped = state.current;
-    playNext(state);
-    return `⏭️ Skipped **${skipped.title}**.${state.current ? ` Now playing ${describeItem(state.current)}` : ''}`;
+    playNext(state, { skipped: true });
+    return { announce: `⏭️ ${who(ctx)} skipped ${titleOf(skipped)}${state.current ? ` · now playing ${titleOf(state.current)}` : ''}` };
   }
 
   function stop(ctx) {
-    stopAll(requireControl(ctx));
-    return '⏹️ Stopped playback and cleared the queue.';
+    stopAll(requireControl(ctx), ctx.member.id);
+    return { announce: `⏹️ ${who(ctx)} stopped playback and cleared the queue. \`/music continue\` picks it up again.` };
   }
 
   // `paused` is the user's wish; when the player can't pause right now (loading, auto-paused while
@@ -472,6 +713,48 @@ function createMusicFeature({
     return '▶️ Resumed.';
   }
 
+  function shuffleQueue(ctx) {
+    const state = requireControl(ctx);
+    if (state.queue.length < 2) throw new MusicError('There is nothing to shuffle; queue at least two tracks.');
+    state.queue = shuffled(state.queue, random);
+    schedulePanel(ctx.guild.id);
+    return { announce: `🔀 ${who(ctx)} shuffled the queue (${plural(state.queue.length, 'track')})` };
+  }
+
+  function clearQueue(ctx) {
+    const state = requireControl(ctx);
+    const count = state.queue.length;
+    if (!count) throw new MusicError('The queue is already empty.');
+    state.queue = [];
+    schedulePanel(ctx.guild.id);
+    return { announce: `🧹 ${who(ctx)} cleared the queue (${plural(count, 'track')})` };
+  }
+
+  function removeFromQueue(ctx, position) {
+    const state = requireControl(ctx);
+    const { queue, removed } = removeAt(state.queue, position);
+    state.queue = queue;
+    schedulePanel(ctx.guild.id);
+    return `🗑️ Removed ${describeItem(removed)} from position ${position}.`;
+  }
+
+  function moveInQueue(ctx, from, to) {
+    const state = requireControl(ctx);
+    const { queue, moved } = moveItem(state.queue, from, to);
+    state.queue = queue;
+    schedulePanel(ctx.guild.id);
+    return `↕️ Moved ${describeItem(moved)} to position ${to}.`;
+  }
+
+  function setLoop(ctx, mode = null) {
+    const state = requireControl(ctx);
+    const next = LOOP_MODES.includes(mode) ? mode : nextLoopMode(state.loop);
+    state.loop = next;
+    schedulePanel(ctx.guild.id);
+    const text = { off: 'turned looping **off**', track: 'set loop to **this track**', queue: 'set loop to **the whole queue**' }[next];
+    return { announce: `${next === 'track' ? '🔂' : '🔁'} ${who(ctx)} ${text}` };
+  }
+
   function setVolume(ctx, level) {
     const session = voiceSessions.get(ctx.guild.id);
     if (!session && !isManager(ctx.member)) {
@@ -488,27 +771,167 @@ function createMusicFeature({
     return `🔊 Volume set to ${volume}%.`;
   }
 
-  function showQueue(ctx) {
-    const { current, queue } = getPanelState(ctx.guild.id);
-    if (!current) return 'Nothing is playing right now.';
-    const lines = [`**Now:** ${describeItem(current)} · <@${current.requesterId}>`];
-    queue.slice(0, 10).forEach((item, index) => lines.push(`${index + 1}. ${describeItem(item)} · <@${item.requesterId}>`));
-    if (queue.length > 10) lines.push(`…and ${queue.length - 10} more`);
-    if (!queue.length) lines.push('The queue is empty.');
-    return lines.join('\n');
+  function showQueue(ctx, page = 0) {
+    const panelState = getPanelState(ctx.guild.id);
+    if (!panelState.current) return 'Nothing is playing right now.';
+    return { view: buildQueueView(panelState, page) };
   }
 
   function nowPlaying(ctx) {
     const { current, paused } = getPanelState(ctx.guild.id);
     if (!current) return 'Nothing is playing right now.';
-    const state = states.get(ctx.guild.id);
-    const elapsed = Math.floor((state?.resource?.playbackDuration || 0) / 1000);
+    const elapsed = currentPosition(states.get(ctx.guild.id));
     const position = current.isLive ? '🔴 Live' : `${formatDuration(elapsed)} / ${formatDuration(current.duration)}`;
     return [
       `${paused ? '⏸️' : '▶️'} ${describeItem(current)}`,
-      `${current.kind === 'radio' ? 'Radio station' : `YouTube${current.author ? ` · ${current.author}` : ''}`} · ${position}`,
+      `${current.kind === 'radio' ? 'Radio station' : `YouTube${current.author ? ` · ${escapeMarkdown(current.author)}` : ''}`} · ${position}`,
       `Requested by <@${current.requesterId}>`
     ].join('\n');
+  }
+
+  // --- playlists -----------------------------------------------------------------------------
+
+  // Public playlists are announced; changes to private ones are only told to their owner.
+  function playlistResult(playlist, text, reply) {
+    return playlist.visibility === 'public' ? { announce: text } : reply;
+  }
+
+  async function playPlaylist(ctx, playlist, { shuffle = false } = {}) {
+    if (!playlist.tracks.length) throw new MusicError(`**${escapeMarkdown(playlist.name)}** is empty.`);
+    checkVoiceChannel(ctx);
+    const state = getState(await ensureSession(ctx));
+    const items = (shuffle ? shuffled(playlist.tracks, random) : playlist.tracks).map((track) => ({
+      kind: 'track',
+      ...track,
+      source: 'YouTube',
+      author: null,
+      thumbnail: null,
+      requesterId: ctx.member.id
+    }));
+    const startNow = !state.current || state.current.kind === 'radio';
+    const first = startNow ? items.shift() : null;
+    const room = Math.max(0, MAX_PLAYLIST_QUEUE - state.queue.length);
+    if (!first && !room) throw new MusicError(`The queue is full (${MAX_PLAYLIST_QUEUE} tracks).`);
+    const queued = items.slice(0, room);
+    const dropped = items.length - queued.length;
+    state.queue.push(...queued);
+    if (first) startItem(state, first);
+    else schedulePanel(ctx.guild.id);
+    playlists.markUsed(ctx.guild.id, playlist.id);
+    schedulePanel(ctx.guild.id);
+
+    const count = queued.length + (first ? 1 : 0);
+    const by = playlist.ownerId !== String(ctx.member.id) ? ` by <@${playlist.ownerId}>` : '';
+    return {
+      announce: `📃 ${who(ctx)} queued playlist **${escapeMarkdown(playlist.name)}**${by} (${plural(count, 'track')}${shuffle ? ', shuffled' : ''})`
+        + (dropped ? ` — the queue is limited to ${MAX_PLAYLIST_QUEUE} tracks, ${dropped} not queued` : '')
+    };
+  }
+
+  async function addToPlaylist(ctx, name, query) {
+    const actor = actorOf(ctx);
+    playlists.resolveEditable(ctx.guild.id, actor, name);
+    let track;
+    if (query) {
+      track = await lookupTrack(ctx.guild.id, query);
+    } else {
+      track = activeState(ctx.guild.id)?.current;
+      if (!track) throw new MusicError('Nothing is playing. Give me a YouTube link or search text to add.');
+      if (track.kind === 'radio') throw new MusicError('Radio stations cannot be saved in playlists.');
+    }
+    const { playlist, added } = playlists.addTracks(ctx.guild.id, actor, name, [track]);
+    if (!added) throw new MusicError('Only single YouTube videos can be saved in a playlist.');
+    return playlistResult(playlist,
+      `➕ ${who(ctx)} added ${titleOf(track)} to playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')})`,
+      `➕ Added ${describeItem(track)} to **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')}).`);
+  }
+
+  function saveQueue(ctx, name) {
+    const state = activeState(ctx.guild.id);
+    const items = state ? [state.current, ...state.queue].filter(Boolean) : [];
+    if (!items.length) throw new MusicError('Nothing is playing, so there is no queue to save.');
+    const { playlist, created, dropped } = playlists.saveTracks(ctx.guild.id, actorOf(ctx), name, items);
+    const note = dropped ? ` (${dropped} over the limit left out)` : '';
+    return playlistResult(playlist,
+      `💾 ${who(ctx)} saved the queue as playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')})${note}`,
+      `💾 ${created ? 'Saved' : 'Replaced'} your playlist **${escapeMarkdown(playlist.name)}** with the queue (${plural(playlist.tracks.length, 'track')})${note}.`);
+  }
+
+  // Appends to the actor's playlist of that name, or creates a new private one.
+  async function importPlaylist(ctx, name, url) {
+    const actor = actorOf(ctx);
+    const existing = playlists.findOwn(ctx.guild.id, actor.id, name);
+    // Name and limits are checked before the slow lookup.
+    if (!existing) playlists.assertCanCreate(ctx.guild.id, actor, name);
+    const imported = await withLookup(ctx.guild.id, () => sources.resolvePlaylist(url));
+    let playlist;
+    let added;
+    let dropped;
+    if (existing) {
+      ({ playlist, added, dropped } = playlists.addTracks(ctx.guild.id, actor, `#${existing.id}`, imported.tracks));
+    } else {
+      playlist = playlists.create(ctx.guild.id, actor, name, imported.tracks);
+      added = playlist.tracks.length;
+      dropped = imported.tracks.length - added;
+    }
+    const notes = [
+      imported.skipped ? `${imported.skipped} unavailable skipped` : null,
+      dropped ? `${dropped} over the ${MAX_PLAYLIST_TRACKS}-track limit left out` : null
+    ].filter(Boolean).join(', ');
+    const source = `**${escapeMarkdown(shorten(imported.title, 100))}**`;
+    return playlistResult(playlist,
+      `📥 ${who(ctx)} imported ${source} into playlist **${escapeMarkdown(playlist.name)}** (${plural(added, 'track')}${notes ? `; ${notes}` : ''})`,
+      `📥 Imported ${source} into your playlist **${escapeMarkdown(playlist.name)}**: ${plural(added, 'track')}${notes ? ` (${notes})` : ''}.`);
+  }
+
+  async function runPlaylistCommand(ctx, interaction) {
+    const { guild } = ctx;
+    const actor = actorOf(ctx);
+    const name = interaction.options.getString('name') || '';
+    const ownerId = interaction.options.getUser?.('user')?.id || null;
+    switch (interaction.options.getSubcommand()) {
+      case 'create': {
+        const playlist = playlists.create(guild.id, actor, name);
+        return `📃 Created your private playlist **${escapeMarkdown(playlist.name)}**. Add tracks with \`/playlist add\`; \`/playlist visibility\` makes it public.`;
+      }
+      case 'delete': {
+        const playlist = playlists.remove(guild.id, actor, name);
+        schedulePanel(guild.id);
+        return `🗑️ Deleted the playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')}).`;
+      }
+      case 'rename': {
+        const before = playlists.resolveEditable(guild.id, actor, name);
+        const playlist = playlists.rename(guild.id, actor, name, interaction.options.getString('new_name', true));
+        schedulePanel(guild.id);
+        return `✏️ Renamed **${escapeMarkdown(before.name)}** to **${escapeMarkdown(playlist.name)}**.`;
+      }
+      case 'visibility': {
+        const playlist = playlists.setVisibility(guild.id, actor, name, interaction.options.getString('mode', true));
+        schedulePanel(guild.id);
+        return playlist.visibility === 'public'
+          ? `🌐 **${escapeMarkdown(playlist.name)}** is now public: everyone here can see and play it, only you can change it.`
+          : `🔒 **${escapeMarkdown(playlist.name)}** is now private.`;
+      }
+      case 'copy': {
+        const playlist = playlists.copy(guild.id, actor, name, ownerId, interaction.options.getString('new_name'));
+        return `📋 Copied it into your private playlist **${escapeMarkdown(playlist.name)}** (${plural(playlist.tracks.length, 'track')}).`;
+      }
+      case 'add': return addToPlaylist(ctx, name, interaction.options.getString('query'));
+      case 'remove': {
+        const { playlist, removed } = playlists.removeTrack(guild.id, actor, name, interaction.options.getInteger('position', true));
+        return `🗑️ Removed ${describeItem(removed)} from **${escapeMarkdown(playlist.name)}**.`;
+      }
+      case 'show': return { view: buildPlaylistView(playlists.resolve(guild.id, actor, name, ownerId)) };
+      case 'list': return {
+        view: ownerId
+          ? buildPlaylistListView(playlists.listByOwner(guild.id, ownerId, actor), ownerId)
+          : buildPlaylistListView(playlists.listVisible(guild.id, actor))
+      };
+      case 'play': return playPlaylist(ctx, playlists.resolve(guild.id, actor, name, ownerId), { shuffle: interaction.options.getBoolean?.('shuffle') === true });
+      case 'save': return saveQueue(ctx, name);
+      case 'import': return importPlaylist(ctx, name, interaction.options.getString('url', true));
+      default: return 'Unknown playlist command.';
+    }
   }
 
   // --- interaction entry points --------------------------------------------------------------
@@ -518,6 +941,42 @@ function createMusicFeature({
     if (interaction.deferred) await interaction.editReply(payload);
     else if (interaction.replied) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
     else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  }
+
+  async function respondView(interaction, payload) {
+    if (interaction.deferred) await interaction.editReply({ content: null, ...payload });
+    else if (interaction.replied) await interaction.followUp({ ...payload, flags: MessageFlags.Ephemeral });
+    else await interaction.reply({ ...payload, flags: MessageFlags.Ephemeral });
+  }
+
+  // Posts a public message in the control channel; false when that is not possible.
+  async function announce(ctx, content) {
+    try {
+      const channel = await fetchChannel(ctx.guild, getMusicConfig(ctx.guild.id).controlChannelId);
+      if (!channel?.send) return false;
+      await channel.send({ content: String(content).slice(0, 2000), allowedMentions: { parse: [] } });
+      return true;
+    } catch (error) {
+      console.error(`Could not post a music announcement in guild ${ctx.guild.id}:`, error.message);
+      return false;
+    }
+  }
+
+  // After a public announcement the interaction needs no visible answer of its own.
+  async function acknowledge(interaction) {
+    if (interaction.deferred || interaction.replied) await interaction.deleteReply().catch(() => {});
+    else if (interaction.isButton?.() || interaction.isStringSelectMenu?.()) await interaction.deferUpdate();
+    else await interaction.reply({ content: '✅ Done.', flags: MessageFlags.Ephemeral });
+  }
+
+  // Results: a string (ephemeral reply), { view } (ephemeral embed), or { announce, reply? }.
+  async function deliver(ctx, interaction, result) {
+    if (typeof result === 'string') return respond(interaction, result);
+    if (result.view) return respondView(interaction, result.view);
+    const posted = result.announce ? await announce(ctx, result.announce) : false;
+    if (result.reply) return respond(interaction, result.reply);
+    if (posted) return acknowledge(interaction);
+    return respond(interaction, result.announce);
   }
 
   // Resolves guild, member and the control channel check; replies and returns null when refused.
@@ -541,13 +1000,16 @@ function createMusicFeature({
     return { interaction, guild: interaction.guild, member };
   }
 
-  async function run(interaction, action) {
+  async function run(ctx, interaction, action) {
+    let result;
     try {
-      await respond(interaction, await action());
+      result = await action();
     } catch (error) {
       if (!(error instanceof MusicError)) throw error;
       await respond(interaction, error.message);
+      return;
     }
+    await deliver(ctx, interaction, result);
   }
 
   async function handleMusicCommand(interaction) {
@@ -555,24 +1017,36 @@ function createMusicFeature({
     if (!ctx) return;
 
     const subcommand = interaction.options.getSubcommand();
-    if (subcommand === 'play' || subcommand === 'radio') {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-    }
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
 
-    await run(interaction, () => {
+    await run(ctx, interaction, () => {
       switch (subcommand) {
         case 'play': return play(ctx, interaction.options.getString('query', true));
+        case 'playnext': return play(ctx, interaction.options.getString('query', true), { next: true });
         case 'radio': return playRadio(ctx, interaction.options.getString('station', true));
+        case 'continue': return continueSession(ctx);
         case 'skip': return skip(ctx);
         case 'stop': return stop(ctx);
         case 'pause': return pause(ctx);
         case 'resume': return resume(ctx);
+        case 'shuffle': return shuffleQueue(ctx);
+        case 'clear': return clearQueue(ctx);
+        case 'remove': return removeFromQueue(ctx, interaction.options.getInteger('position', true));
+        case 'move': return moveInQueue(ctx, interaction.options.getInteger('from', true), interaction.options.getInteger('to', true));
+        case 'loop': return setLoop(ctx, interaction.options.getString('mode', true));
         case 'queue': return showQueue(ctx);
         case 'nowplaying': return nowPlaying(ctx);
         case 'volume': return setVolume(ctx, interaction.options.getInteger('level', true));
         default: return 'Unknown music command.';
       }
     });
+  }
+
+  async function handlePlaylistCommand(interaction) {
+    const ctx = await getContext(interaction);
+    if (!ctx) return;
+    await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+    await run(ctx, interaction, () => runPlaylistCommand(ctx, interaction));
   }
 
   async function handleStationAutocomplete(interaction) {
@@ -584,25 +1058,87 @@ function createMusicFeature({
       .map((station) => ({ name: station.name.slice(0, 100), value: station.key })));
   }
 
-  // Panel buttons and the station select; returns false for other interactions.
-  async function handlePanelInteraction(interaction) {
-    if (!(interaction.isButton?.() || interaction.isStringSelectMenu?.()) || !PANEL_CUSTOM_IDS.has(interaction.customId)) {
-      return false;
+  const EDITING_SUBCOMMANDS = new Set(['delete', 'rename', 'visibility', 'add', 'remove', 'save', 'import']);
+
+  function ownerName(guild, ownerId) {
+    return guild?.members?.cache?.get(ownerId)?.displayName || client.users?.cache?.get(ownerId)?.username || 'someone';
+  }
+
+  // Own playlists first (by name), then public ones of others as "Name — by Owner".
+  async function handlePlaylistAutocomplete(interaction) {
+    if (!interaction.guildId) {
+      await interaction.respond([]);
+      return;
     }
+    const subcommand = interaction.options.getSubcommand();
+    const member = interaction.member || { id: interaction.user.id };
+    const actor = { id: String(interaction.user.id), isManager: isManager({ ...member, id: interaction.user.id }) };
+    const ownerId = interaction.options.get?.('user')?.value || null;
+    let suggestions = playlists.suggest(interaction.guildId, actor, interaction.options.getFocused(), { editable: EDITING_SUBCOMMANDS.has(subcommand) });
+    // save/import name the actor's own playlist; play/show/copy may filter by owner.
+    if (subcommand === 'save' || subcommand === 'import') suggestions = suggestions.filter((entry) => entry.own);
+    if (ownerId) suggestions = suggestions.filter((entry) => entry.playlist.ownerId === String(ownerId));
+    await interaction.respond(suggestions.slice(0, 25).map(({ playlist, own, value }) => ({
+      name: shorten(own ? playlist.name : `${playlist.name} — by ${ownerName(interaction.guild, playlist.ownerId)}`, 100),
+      value
+    })));
+  }
+
+  // Page buttons of the ephemeral views: music-page:<queue|playlist|list>:<arg>:<page>.
+  async function handlePageButton(interaction, ctx) {
+    const [view, arg, rawPage] = interaction.customId.slice(PAGE_PREFIX.length).split(':');
+    const page = Number.parseInt(rawPage, 10) || 0;
+    const actor = actorOf(ctx);
+    let payload = null;
+    if (view === 'queue') {
+      payload = buildQueueView(getPanelState(ctx.guild.id), page);
+    } else if (view === 'playlist') {
+      const playlist = playlists.findById(ctx.guild.id, arg);
+      if (playlist && canRead(playlist, actor)) payload = buildPlaylistView(playlist, page);
+    } else if (view === 'list') {
+      payload = arg === '-'
+        ? buildPlaylistListView(playlists.listVisible(ctx.guild.id, actor), null, page)
+        : buildPlaylistListView(playlists.listByOwner(ctx.guild.id, arg, actor), arg, page);
+    }
+    if (!payload) {
+      await respond(interaction, 'That playlist is gone or private.');
+      return;
+    }
+    await interaction.update(payload);
+  }
+
+  // Panel buttons and selects plus the page buttons; returns false for other interactions.
+  async function handlePanelInteraction(interaction) {
+    const isComponent = interaction.isButton?.() || interaction.isStringSelectMenu?.();
+    const isPage = interaction.isButton?.() && String(interaction.customId).startsWith(PAGE_PREFIX);
+    if (!isComponent || (!PANEL_CUSTOM_IDS.has(interaction.customId) && !isPage)) return false;
     const ctx = await getContext(interaction);
     if (!ctx) return true;
-
-    const { customId } = interaction;
-    if (customId === PANEL_IDS.station) {
-      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
-      await run(interaction, () => playRadio(ctx, interaction.values[0]));
+    if (isPage) {
+      await handlePageButton(interaction, ctx);
       return true;
     }
 
-    await run(interaction, () => {
+    const { customId } = interaction;
+    if (customId === PANEL_IDS.station || customId === PANEL_IDS.playlist || customId === PANEL_IDS.resume) {
+      await interaction.deferReply({ flags: MessageFlags.Ephemeral });
+      await run(ctx, interaction, () => {
+        if (customId === PANEL_IDS.station) return playRadio(ctx, interaction.values[0]);
+        if (customId === PANEL_IDS.resume) return continueSession(ctx);
+        const playlist = playlists.findById(ctx.guild.id, interaction.values[0]);
+        if (!playlist || !canRead(playlist, actorOf(ctx))) throw new MusicError('That playlist is gone or private.');
+        return playPlaylist(ctx, playlist);
+      });
+      return true;
+    }
+
+    await run(ctx, interaction, () => {
       if (customId === PANEL_IDS.pause) return states.get(ctx.guild.id)?.paused ? resume(ctx) : pause(ctx);
       if (customId === PANEL_IDS.skip) return skip(ctx);
       if (customId === PANEL_IDS.stop) return stop(ctx);
+      if (customId === PANEL_IDS.shuffle) return shuffleQueue(ctx);
+      if (customId === PANEL_IDS.loop) return setLoop(ctx);
+      if (customId === PANEL_IDS.queue) return showQueue(ctx);
       const step = customId === PANEL_IDS.volumeUp ? VOLUME_STEP : -VOLUME_STEP;
       return setVolume(ctx, getMusicConfig(ctx.guild.id).volume + step);
     });
@@ -628,10 +1164,13 @@ function createMusicFeature({
     applyConfig,
     refreshPanel,
     handleMusicCommand,
+    handlePlaylistCommand,
     handleStationAutocomplete,
+    handlePlaylistAutocomplete,
     handlePanelInteraction,
+    handleMessageCreate,
     handleMessageDelete
   };
 }
 
-module.exports = { createMusicFeature, PANEL_IDS };
+module.exports = { createMusicFeature, PANEL_IDS, MAX_QUEUE, MAX_PLAYLIST_QUEUE };

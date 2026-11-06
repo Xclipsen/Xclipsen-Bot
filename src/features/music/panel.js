@@ -6,20 +6,38 @@ const {
   StringSelectMenuBuilder
 } = require('discord.js');
 
+const { totalDuration } = require('./queue');
+
 const PANEL_IDS = {
   pause: 'music-panel:pause',
   skip: 'music-panel:skip',
   stop: 'music-panel:stop',
+  shuffle: 'music-panel:shuffle',
+  loop: 'music-panel:loop',
   volumeDown: 'music-panel:volume-down',
   volumeUp: 'music-panel:volume-up',
-  station: 'music-panel:station'
+  queue: 'music-panel:queue',
+  resume: 'music-panel:continue',
+  station: 'music-panel:station',
+  playlist: 'music-panel:playlist'
 };
+
+// Page buttons of the ephemeral queue / playlist views: music-page:<view>:<arg>:<page>.
+const PAGE_PREFIX = 'music-page:';
+const PAGE_SIZE = 10;
+const LIST_TITLE_LENGTH = 80;
+const LOOP_LABELS = { off: 'Loop: off', track: 'Loop: track', queue: 'Loop: queue' };
 
 const COMMAND_OVERVIEW = [
   '`/music play query:<link or search>` play or queue a YouTube video',
+  '`/music playnext query:<…>` play it right after the current track',
   '`/music radio station:<name>` play a lofi / chill radio station',
-  '`/music skip` · `stop` · `pause` · `resume`',
-  '`/music queue` · `nowplaying` · `volume level:<0-100>`',
+  '`/music skip` · `stop` · `pause` · `resume` · `nowplaying` · `volume`',
+  '`/music queue` · `shuffle` · `clear` · `loop mode:<off|track|queue>`',
+  '`/music remove position:<n>` · `move from:<n> to:<n>` · `continue`',
+  '`/playlist create` · `add` · `remove` · `rename` · `delete` your playlists',
+  '`/playlist play name:<playlist> [shuffle]` · `show` · `list [user]`',
+  '`/playlist save` the queue · `import url:<YouTube playlist>`',
   '`/tts join` · `leave` · `say text:<text>` read messages aloud',
   '`/tts whisper|sleepy|drunk|angry text:<text>` mood voices',
   '`/tts list` · `uservoice` · `voice` · `follow`'
@@ -35,17 +53,101 @@ function formatDuration(seconds) {
 }
 
 function escapeMarkdown(text) {
-  return String(text).replace(/([\\*_`~|[\]])/g, '\\$1');
+  return String(text).replace(/([\\*_`~|[\]<>])/g, '\\$1');
 }
 
-function describeItem(item) {
-  const title = item.kind === 'radio' ? `📻 ${escapeMarkdown(item.title)}` : `[${escapeMarkdown(item.title)}](${item.url})`;
-  const length = item.isLive ? '🔴 Live' : formatDuration(item.duration);
-  return `${title} · ${length}`;
+function shorten(text, length) {
+  const value = String(text);
+  return value.length > length ? `${value.slice(0, length - 1)}…` : value;
 }
 
-// panelState: { current, queue, paused, volume, channelId, stations }
-function buildPanelMessage({ current = null, queue = [], paused = false, volume = 50, channelId = null, stations = [] }) {
+function describeLength(item) {
+  return item.isLive ? '🔴 Live' : formatDuration(item.duration);
+}
+
+function describeItem(item, { maxTitle = 200 } = {}) {
+  const name = escapeMarkdown(shorten(item.title, maxTitle));
+  const title = item.kind === 'radio' ? `📻 ${name}` : `[${name}](${item.url})`;
+  return `${title} · ${describeLength(item)}`;
+}
+
+// "1:23:45", plus a note for items without a length (live streams).
+function describeTotal(items) {
+  const { seconds, unknown } = totalDuration(items);
+  return `${formatDuration(seconds)}${unknown ? ` + ${unknown} live` : ''}`;
+}
+
+function clampPage(page, count) {
+  const pageCount = Math.max(1, Math.ceil(count / PAGE_SIZE));
+  return { page: Math.min(pageCount - 1, Math.max(0, Number.isInteger(page) ? page : 0)), pageCount };
+}
+
+function pageRow(prefix, page, pageCount) {
+  return new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(`${prefix}:${page - 1}`).setLabel('Previous').setEmoji('◀️').setStyle(ButtonStyle.Secondary).setDisabled(page <= 0),
+    new ButtonBuilder().setCustomId(`${prefix}:${page + 1}`).setLabel('Next').setEmoji('▶️').setStyle(ButtonStyle.Secondary).setDisabled(page >= pageCount - 1)
+  );
+}
+
+function pagedView({ title, header = [], lines, empty, footer, prefix }, requestedPage) {
+  const { page, pageCount } = clampPage(requestedPage, lines.length);
+  const shown = lines.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+  const embed = new EmbedBuilder()
+    .setColor(0x8e7cc3)
+    .setTitle(shorten(title, 256))
+    .setDescription([...header, ...(shown.length ? shown : [empty])].join('\n').slice(0, 4096))
+    .setFooter({ text: shorten(`Page ${page + 1}/${pageCount} · ${footer}`, 2048) });
+  return { embeds: [embed], components: pageCount > 1 ? [pageRow(prefix, page, pageCount)] : [], allowedMentions: { parse: [] } };
+}
+
+function numbered(index, text) {
+  return `\`${index + 1}.\` ${text}`;
+}
+
+// Ephemeral /music queue view.
+function buildQueueView({ current = null, queue = [], loop = 'off' }, page = 0) {
+  return pagedView({
+    title: `🎶 Queue (${queue.length})`,
+    header: [current ? `**Now:** ${describeItem(current, { maxTitle: LIST_TITLE_LENGTH })} · <@${current.requesterId}>` : 'Nothing is playing.', ''],
+    lines: queue.map((item, index) => numbered(index, `${describeItem(item, { maxTitle: LIST_TITLE_LENGTH })} · <@${item.requesterId}>`)),
+    empty: 'The queue is empty.',
+    footer: `${queue.length} tracks · total ${describeTotal(queue)} · ${LOOP_LABELS[loop] || LOOP_LABELS.off}`,
+    prefix: `${PAGE_PREFIX}queue:-`
+  }, page);
+}
+
+function visibilityLabel(playlist) {
+  return playlist.visibility === 'public' ? '🌐 Public' : '🔒 Private';
+}
+
+// Ephemeral /playlist show view.
+function buildPlaylistView(playlist, page = 0) {
+  return pagedView({
+    title: `📃 ${playlist.name}`,
+    header: [`${visibilityLabel(playlist)} · by <@${playlist.ownerId}>`, ''],
+    lines: playlist.tracks.map((track, index) => numbered(index, describeItem(track, { maxTitle: LIST_TITLE_LENGTH }))),
+    empty: 'This playlist is empty. Add tracks with `/playlist add`.',
+    footer: `${playlist.tracks.length} tracks · ${describeTotal(playlist.tracks)}`,
+    prefix: `${PAGE_PREFIX}playlist:${playlist.id}`
+  }, page);
+}
+
+// Ephemeral /playlist list view; `ownerId` limits it to one member.
+function buildPlaylistListView(playlists, ownerId = null, page = 0) {
+  return pagedView({
+    title: `📃 Playlists (${playlists.length})`,
+    header: ownerId ? [`By <@${ownerId}>`, ''] : [],
+    lines: playlists.map((playlist, index) => numbered(index,
+      `${playlist.visibility === 'public' ? '🌐' : '🔒'} **${escapeMarkdown(playlist.name)}** · ${playlist.tracks.length} tracks · ${describeTotal(playlist.tracks)} · <@${playlist.ownerId}>`)),
+    empty: ownerId ? 'No playlists yet.' : 'No playlists yet. Create one with `/playlist create` or `/playlist save`.',
+    footer: '🔒 private · 🌐 public · play one with /playlist play',
+    prefix: `${PAGE_PREFIX}list:${ownerId || '-'}`
+  }, page);
+}
+
+// panelState: { current, queue, paused, loop, volume, channelId, stations, playlists, resumable }
+// `resumable` is the size of the last interrupted session (0 = none); it adds a Continue button while idle.
+function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', volume = 50, channelId = null, stations = [], playlists = [], resumable = 0 }) {
   const nowPlaying = current
     ? [
       describeItem(current),
@@ -54,16 +156,17 @@ function buildPanelMessage({ current = null, queue = [], paused = false, volume 
     ].join('\n')
     : 'Nothing is playing.';
 
-  const upNext = queue.slice(0, 3).map((item, index) => `${index + 1}. ${describeItem(item)}`);
+  const upNext = queue.slice(0, 3).map((item, index) => `${index + 1}. ${describeItem(item, { maxTitle: LIST_TITLE_LENGTH })}`);
   if (queue.length > 3) upNext.push(`…and ${queue.length - 3} more`);
 
   const embed = new EmbedBuilder()
     .setColor(0x8e7cc3)
     .setTitle('🎶 Music & Radio')
-    .setDescription(channelId ? `Playing in <#${channelId}>.` : 'Not in a voice channel. Join one and use `/music play` or pick a station.')
+    .setDescription(channelId ? `Playing in <#${channelId}>.` : 'Not in a voice channel. Join one and use `/music play`, pick a station or a playlist.')
     .addFields(
       { name: 'Now playing', value: nowPlaying.slice(0, 1024) },
-      { name: `Queue (${queue.length})`, value: (upNext.join('\n') || 'Empty').slice(0, 1024) },
+      { name: `Queue (${queue.length}${queue.length ? ` · ${describeTotal(queue)}` : ''})`, value: (upNext.join('\n') || 'Empty').slice(0, 1024) },
+      { name: 'Loop', value: { track: '🔂 Track', queue: '🔁 Queue' }[loop] || 'Off', inline: true },
       { name: 'Volume', value: `${volume}%`, inline: true },
       { name: 'Radio station', value: current?.kind === 'radio' ? escapeMarkdown(current.title) : '—', inline: true },
       { name: 'Commands', value: COMMAND_OVERVIEW }
@@ -81,11 +184,28 @@ function buildPanelMessage({ current = null, queue = [], paused = false, volume 
       .setDisabled(!current),
     new ButtonBuilder().setCustomId(PANEL_IDS.skip).setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary).setDisabled(!current),
     new ButtonBuilder().setCustomId(PANEL_IDS.stop).setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(!current),
-    new ButtonBuilder().setCustomId(PANEL_IDS.volumeDown).setLabel('-10').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(volume <= 0),
-    new ButtonBuilder().setCustomId(PANEL_IDS.volumeUp).setLabel('+10').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(volume >= 100)
+    new ButtonBuilder().setCustomId(PANEL_IDS.shuffle).setLabel('Shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary).setDisabled(!current || queue.length < 2),
+    new ButtonBuilder()
+      .setCustomId(PANEL_IDS.loop)
+      .setLabel(LOOP_LABELS[loop] || LOOP_LABELS.off)
+      .setEmoji(loop === 'track' ? '🔂' : '🔁')
+      .setStyle(loop === 'off' ? ButtonStyle.Secondary : ButtonStyle.Success)
+      .setDisabled(!current)
   );
+  const extras = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(PANEL_IDS.volumeDown).setLabel('-10').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(volume <= 0),
+    new ButtonBuilder().setCustomId(PANEL_IDS.volumeUp).setLabel('+10').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(volume >= 100),
+    new ButtonBuilder().setCustomId(PANEL_IDS.queue).setLabel('Queue').setEmoji('📜').setStyle(ButtonStyle.Secondary).setDisabled(!current)
+  );
+  if (!current && resumable) {
+    extras.addComponents(new ButtonBuilder()
+      .setCustomId(PANEL_IDS.resume)
+      .setLabel(`Continue (${resumable} track${resumable === 1 ? '' : 's'})`)
+      .setEmoji('▶️')
+      .setStyle(ButtonStyle.Success));
+  }
 
-  const components = [controls];
+  const components = [controls, extras];
   if (stations.length) {
     components.push(new ActionRowBuilder().addComponents(
       new StringSelectMenuBuilder()
@@ -99,8 +219,33 @@ function buildPanelMessage({ current = null, queue = [], paused = false, volume 
         })))
     ));
   }
+  if (playlists.length) {
+    components.push(new ActionRowBuilder().addComponents(
+      new StringSelectMenuBuilder()
+        .setCustomId(PANEL_IDS.playlist)
+        .setPlaceholder('📃 Play a playlist')
+        .addOptions(playlists.slice(0, 25).map((playlist) => ({
+          label: shorten(playlist.name, 100),
+          value: playlist.id,
+          description: shorten(`${playlist.tracks.length} tracks · ${describeTotal(playlist.tracks)}`, 100)
+        })))
+    ));
+  }
 
   return { embeds: [embed], components, allowedMentions: { parse: [] } };
 }
 
-module.exports = { PANEL_IDS, COMMAND_OVERVIEW, buildPanelMessage, describeItem, formatDuration };
+module.exports = {
+  PANEL_IDS,
+  PAGE_PREFIX,
+  COMMAND_OVERVIEW,
+  buildPanelMessage,
+  buildQueueView,
+  buildPlaylistView,
+  buildPlaylistListView,
+  describeItem,
+  describeLength,
+  escapeMarkdown,
+  formatDuration,
+  shorten
+};

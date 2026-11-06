@@ -361,7 +361,125 @@ const musicCommand = new SlashCommandBuilder()
       .setDescription('Volume in percent')
       .setRequired(true)
       .setMinValue(0)
-      .setMaxValue(100)));
+      .setMaxValue(100)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('playnext')
+    .setDescription('Play a YouTube video right after the current track.')
+    .addStringOption((option) => option
+      .setName('query')
+      .setDescription('YouTube link or search text')
+      .setRequired(true)
+      .setMaxLength(300)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('shuffle')
+    .setDescription('Shuffle the queue (the current track keeps playing).'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('clear')
+    .setDescription('Clear the queue (the current track keeps playing).'))
+  .addSubcommand((subcommand) => subcommand
+    .setName('remove')
+    .setDescription('Remove a track from the queue.')
+    .addIntegerOption((option) => option
+      .setName('position')
+      .setDescription('Position in /music queue')
+      .setRequired(true)
+      .setMinValue(1)
+      .setMaxValue(100)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('move')
+    .setDescription('Move a track to another position in the queue.')
+    .addIntegerOption((option) => option.setName('from').setDescription('Current position').setRequired(true).setMinValue(1).setMaxValue(100))
+    .addIntegerOption((option) => option.setName('to').setDescription('New position').setRequired(true).setMinValue(1).setMaxValue(100)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('loop')
+    .setDescription('Repeat the current track or the whole queue.')
+    .addStringOption((option) => option
+      .setName('mode')
+      .setDescription('Loop mode')
+      .setRequired(true)
+      .addChoices(
+        { name: 'off', value: 'off' },
+        { name: 'track', value: 'track' },
+        { name: 'queue', value: 'queue' }
+      )))
+  .addSubcommand((subcommand) => subcommand
+    .setName('continue')
+    .setDescription('Continue the last stopped session (kept for 24 hours) where it was.'));
+
+// Every option called `name` autocompletes playlists: your own first, then public ones.
+function playlistNameOption(option, description = 'Playlist name') {
+  return option.setName('name').setDescription(description).setRequired(true).setMaxLength(50).setAutocomplete(true);
+}
+
+function playlistOwnerOption(option) {
+  return option.setName('user').setDescription('Owner of a public playlist (default: you)').setRequired(false);
+}
+
+const playlistCommand = new SlashCommandBuilder()
+  .setName('playlist')
+  .setDescription('Your own music playlists, private or public (only in the music channel).')
+  .addSubcommand((subcommand) => subcommand
+    .setName('create')
+    .setDescription('Create an empty private playlist.')
+    .addStringOption((option) => option.setName('name').setDescription('Name (1-50 characters)').setRequired(true).setMaxLength(50)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('delete')
+    .setDescription('Delete one of your playlists.')
+    .addStringOption((option) => playlistNameOption(option)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('rename')
+    .setDescription('Rename one of your playlists.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addStringOption((option) => option.setName('new_name').setDescription('New name (1-50 characters)').setRequired(true).setMaxLength(50)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('visibility')
+    .setDescription('Make one of your playlists public or private.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addStringOption((option) => option
+      .setName('mode')
+      .setDescription('public: everyone here can see and play it')
+      .setRequired(true)
+      .addChoices({ name: 'public', value: 'public' }, { name: 'private', value: 'private' })))
+  .addSubcommand((subcommand) => subcommand
+    .setName('add')
+    .setDescription('Add a YouTube video to one of your playlists.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addStringOption((option) => option.setName('query').setDescription('YouTube link or search text; empty adds the current track').setRequired(false).setMaxLength(300)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('remove')
+    .setDescription('Remove a track from one of your playlists.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addIntegerOption((option) => option.setName('position').setDescription('Position in /playlist show').setRequired(true).setMinValue(1).setMaxValue(200)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('show')
+    .setDescription('Show the tracks of a playlist.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addUserOption((option) => playlistOwnerOption(option)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('list')
+    .setDescription('List your playlists and the public ones, or the public playlists of one member.')
+    .addUserOption((option) => option.setName('user').setDescription('Only playlists of this member').setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('play')
+    .setDescription('Queue a playlist (joins your voice channel).')
+    .addStringOption((option) => playlistNameOption(option))
+    .addUserOption((option) => playlistOwnerOption(option))
+    .addBooleanOption((option) => option.setName('shuffle').setDescription('Shuffle the tracks').setRequired(false)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('save')
+    .setDescription('Save the current track and queue as your playlist (replaces it if it exists).')
+    .addStringOption((option) => playlistNameOption(option)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('import')
+    .setDescription('Import up to 100 videos of a YouTube playlist into your playlist.')
+    .addStringOption((option) => playlistNameOption(option))
+    .addStringOption((option) => option.setName('url').setDescription('YouTube playlist link').setRequired(true).setMaxLength(300)))
+  .addSubcommand((subcommand) => subcommand
+    .setName('copy')
+    .setDescription('Copy a public playlist of someone into your own playlists.')
+    .addUserOption((option) => option.setName('user').setDescription('Owner of the playlist').setRequired(true))
+    .addStringOption((option) => playlistNameOption(option, 'Their playlist'))
+    .addStringOption((option) => option.setName('new_name').setDescription('Your copy\'s name (default: the same)').setRequired(false).setMaxLength(50)));
 
 const hideonleafCommand = new SlashCommandBuilder()
   .setName('hideonleaf')
@@ -508,6 +626,7 @@ const commands = [
   gifCommand,
   ttsCommand,
   musicCommand,
+  playlistCommand,
   hideonleafCommand,
   shitterCommand,
   linkCommand
@@ -538,6 +657,7 @@ module.exports = {
     gif: 'gif',
     tts: 'tts',
     music: 'music',
+    playlist: 'playlist',
     hideonleaf: 'hideonleaf',
     shitter: 'shitter',
     link: 'link'

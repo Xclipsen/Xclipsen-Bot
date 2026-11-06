@@ -57,6 +57,10 @@ const env = {
   STATE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'state.json'),
   MOCK_DATA_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'mock-election.json'),
   NAMEHISTORY_CACHE_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'namehistory-cache.json'),
+  // Saved music playlists per server (src/features/music/playlists.js).
+  PLAYLISTS_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'playlists.json'),
+  // The last interrupted music session per server, for /music continue (kept 24 hours).
+  MUSIC_RESUME_FILE_PATH: path.join(__dirname, '..', '..', 'data', 'music-resume.json'),
   // Isometric heads from the in-game NPC skin textures (skyblock.matdoes.dev NPC list);
   // Jerry is a villager, so he uses Mojang's MHF_Villager head.
   MAYOR_HEADS: Object.fromEntries(Object.entries({
