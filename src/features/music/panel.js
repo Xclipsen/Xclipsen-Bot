@@ -173,17 +173,19 @@ function buildPlaylistListView(playlists, ownerId = null, page = 0) {
 }
 
 // panelState: { current, queue, paused, loop, autoplay, volume, channelId, stations, playlists, resumable }
-// `autoplay` is the server's toggle; `autoplayNote` says why it is not suggesting right now.
+// `autoplay` is the server's toggle; `autoplayNote` says why it is not suggesting right now;
+// `autoplayPending` means the queue ran out and autoplay is looking for the next song (Stop and
+// the Autoplay button stay usable then).
 // `resumable` is the size of the last interrupted session (0 = none); it adds a Continue button while idle.
 // `playToken` identifies the current track; the skip button carries it so a double press skips once.
-function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', autoplay = false, autoplayNote = null, volume = 50, channelId = null, stations = [], playlists = [], resumable = 0, playToken = 0 }) {
+function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', autoplay = false, autoplayNote = null, autoplayPending = false, volume = 50, channelId = null, stations = [], playlists = [], resumable = 0, playToken = 0 }) {
   const nowPlaying = current
     ? [
       describeItem(current),
       `Source: ${describeSource(current)}`,
       `Requested by ${describeRequester(current)}${paused ? ' · ⏸️ paused' : ''}`
     ].join('\n')
-    : 'Nothing is playing.';
+    : autoplayPending ? '♾️ Autoplay is looking for the next song…' : 'Nothing is playing.';
 
   const upNext = queue.slice(0, 3).map((item, index) => `${index + 1}. ${describeItem(item, { maxTitle: LIST_TITLE_LENGTH })}`);
   if (queue.length > 3) upNext.push(`…and ${queue.length - 3} more`);
@@ -213,7 +215,7 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
       .setStyle(ButtonStyle.Primary)
       .setDisabled(!current),
     new ButtonBuilder().setCustomId(`${PANEL_IDS.skip}:${playToken}`).setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary).setDisabled(!current),
-    new ButtonBuilder().setCustomId(PANEL_IDS.stop).setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(!current),
+    new ButtonBuilder().setCustomId(PANEL_IDS.stop).setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(!current && !autoplayPending),
     new ButtonBuilder()
       .setCustomId(PANEL_IDS.loop)
       .setLabel(LOOP_LABELS[loop] || LOOP_LABELS.off)
@@ -225,7 +227,7 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
       .setLabel(`Autoplay: ${autoplay ? 'on' : 'off'}`)
       .setEmoji('♾️')
       .setStyle(autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
-      .setDisabled(!current)
+      .setDisabled(!current && !autoplayPending)
   );
   // Second row: queue tools and volume; a Continue button while nothing plays (at most 5 buttons).
   const extras = new ActionRowBuilder().addComponents(

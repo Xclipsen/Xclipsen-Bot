@@ -3,7 +3,9 @@ const { cleanTitle, normalize, VERSION_MARKERS } = require('./spotify');
 // Autoplay picks songs related to what was played from the "radio" playlist YouTube builds for a
 // video. YouTube Music's radio (list=RDAMVM<id>) keeps closer to music-only uploads (fewer lyric
 // re-uploads, EPs and "mix" videos); the plain YouTube Mix (list=RD<id>) is the fallback. Both are
-// read with one flat yt-dlp lookup of the first MIX_SIZE entries (see sources.fetchMix).
+// read with one flat yt-dlp lookup of the first MIX_SIZE entries (see sources.fetchMix). Flat
+// entries carry no reliable "verified" flag and YouTube Music radios list few "- Topic" uploads,
+// so scoring mostly trusts the order of the mix and channels named like the artist.
 const MIX_SIZE = 25;
 const HISTORY_SIZE = 50;
 const SEED_COUNT = 3;
@@ -12,15 +14,34 @@ const MAX_SECONDS = 10 * 60;
 // At most this many tracks in a row by the same artist or channel.
 const MAX_SAME_ARTIST = 2;
 
-// Uploads that are no single song (or a different version of one); skipped unless the seed has the
-// same marker. The Spotify penalty words (cover, nightcore, sped up, reaction, 8d, …) count too.
-const NO_SONG_MARKERS = [
-  /\blive\b/, /\bstream(?:ing)?\b/, /\b\d+\s*(?:hours?|hrs?)\b/, /\bmix\b/, /\bplaylist\b/, /\bcompilation\b/,
-  /\bfull (?:album|ep)\b/, /\bep\b/, /\bbest of\b/, /\bgreatest hits\b/, /\btop \d+\b/, /\bnon ?stop\b/, /\bmegamix\b/, /\bmashup\b/
+// Version tags that leave the song as it is ("Animals (Original Mix)", "Song - Radio Edit").
+const NEUTRAL_TAG = /\s*[([](?:original|extended|radio|club|album|single|main)\s+(?:mix|edit|version)[)\]]|\s+[-–—]\s+(?:original|extended|radio|club|album|single|main)\s+(?:mix|edit|version)\s*$/gi;
+// Words that are normal in song titles ("Best Of You", "Live Forever") and only mark a non-song
+// in a title's decoration: brackets, or after " | ", " / ", " // ", " ~ ", " • " or a second " - ".
+const DECORATION_MARKERS = [
+  /\blive\b/, /\bmix\b/, /\bbest of\b/, /\bplaylist\b/, /\bcompilation\b/, /\bloop\b/, /\bstream(?:ing)?\b/,
+  /\b(?:full )?(?:album|ep)\b/
 ];
-const MARKERS = [...NO_SONG_MARKERS, ...VERSION_MARKERS.map(([, pattern]) => pattern)];
+// Phrases of compilations and channels that collect songs, in the title itself (not in genre tags
+// like "[lofi hip hop beats]"); only when the channel is not the artist.
+const COMPILATION_PHRASES = [
+  /\bsongs for\b/, /\bbeats to\b/, /\bmusic for\b/, /\bstudy music\b/, /\bchill beats\b/,
+  /\b(?:lo ?fi|hip ?hop|chill|study|sleep|relaxing|jazz|piano) (?:mix|radio|playlist|beats)\b/,
+  /\bplaylist\b/, /\bcompilation\b/, /\b(?:19|20)\d\d mix\b|\bmix (?:19|20)\d\d\b/, /\bbest of (?:19|20)\d\d\b/
+];
+// In the title itself, whoever uploaded it: "Phoenix EP", "Full Album".
+const MAIN_MARKERS = [/\bep$/, /\bfull (?:album|ep)\b/];
+// Anywhere in a title: hour-long loops and the Spotify penalty words (cover, nightcore, sped up,
+// reaction, 8d, …; "live" and "loop" only as decoration, see above).
+const ANYWHERE_MARKERS = [
+  /\b\d+\s*(?:hours?|hrs?)\b/, /\bgreatest hits\b/, /\btop \d+\b/, /\bnon ?stop\b/, /\bmegamix\b/, /\bmashup\b/,
+  ...VERSION_MARKERS.filter(([name]) => name !== 'live' && name !== 'loop').map(([, pattern]) => pattern)
+];
 const DASH = /\s+[-–—]\s+/;
-const CHANNEL_NOISE = /\s+-\s+topic$|vevo$|\bofficial\b|\bmusic\b$/gi;
+const BRACKETS = /[([{【「『]([^)\]}】」』]*)[)\]}】」』]/g;
+const SEPARATOR = /\s+(?:\||\/\/?|~|•)\s+/;
+const CHANNEL_NOISE = /\s+-\s+topic$|vevo$|\bofficial\b/gi;
+const TOPIC = /\s-\s+topic$/i;
 
 function videoIdOf(url) {
   try {
@@ -41,40 +62,48 @@ function channelName(channel) {
 }
 
 function firstArtist(text) {
-  return String(text || '').split(/\s*(?:,|&|\bx\b|\bfeat\.?|\bft\.?|\bfeaturing\b|\band\b|\bwith\b)\s*/i).find(Boolean) || '';
+  return String(text || '').split(/\s*(?:,|&|\bx\b|\bvs\.?(?=\s)|\bfeat\.?|\bft\.?|\bfeaturing\b|\band\b|\bwith\b)\s*/i).find(Boolean) || '';
 }
 
-// Title without brackets, feat./prod. credits and "Official Video"-like noise.
+function stripNeutralTags(title) {
+  return String(title || '').replace(NEUTRAL_TAG, '');
+}
+
+// Title without brackets, feat./prod. credits and trailing "Official Video"-like tags.
 function songPart(text) {
-  const { title } = cleanTitle(String(text || '').replace(/\s*[([{][^)\]}]*[)\]}]/g, ' '));
+  const { title } = cleanTitle(String(text || '').replace(BRACKETS, ' '));
   return normalize(title
     .replace(/\s+\b(?:prod|produced)\.?\s+(?:by\s+)?.*$/i, '')
     .replace(/\s+\b(?:feat|ft|featuring)\.?\s+.*$/i, '')
-    .replace(/\b(?:official|music|lyrics?|video|audio|visualizer|hd|4k)\b/gi, ' '));
+    .replace(/\s+(?:official\s+)?(?:music\s+video|lyric\s+video|video|audio|visualizer|lyrics)\s*$/i, ''));
 }
 
-// { videoId, key, artist, channel, title } of a queue item or mix entry. `key` is the normalized
-// "artist - title" so re-uploads of a song count as the same song.
+// { videoId, key, artist, channel, title, artistIsChannel } of a queue item or mix entry. `key` is
+// the normalized "artist - title", so re-uploads of a song count as the same song.
 function trackIdentity(item) {
   const title = String(item?.title || '');
-  const channel = channelName(item?.author ?? item?.uploader);
+  const uploader = String(item?.author ?? item?.uploader ?? '');
+  const channel = channelName(uploader);
   let artist;
   let song;
+  let fromTitle = false;
   if (Array.isArray(item?.artists) && item.artists.length) {
-    artist = normalize(item.artists[0]);
-    song = songPart(title);
+    artist = normalize(firstArtist(item.artists[0]));
+    song = songPart(stripNeutralTags(title));
+    fromTitle = true;
   } else {
-    const parts = title.split(DASH);
+    const parts = stripNeutralTags(title).replace(BRACKETS, ' ').split(DASH);
     if (parts.length >= 2) {
       let [left, ...rest] = parts;
-      let right = rest.join(' ');
+      let right = rest.join(' - ');
       // "In The End [Official Video] - Linkin Park"
       if (channel && normalize(firstArtist(right)) === channel && normalize(firstArtist(left)) !== channel) [left, right] = [right, left];
       artist = normalize(firstArtist(left));
-      song = songPart(right);
+      song = songPart(right.split(DASH)[0]);
+      fromTitle = true;
     } else {
       artist = channel;
-      song = songPart(title);
+      song = songPart(stripNeutralTags(title));
     }
   }
   return {
@@ -82,13 +111,45 @@ function trackIdentity(item) {
     key: `${artist} - ${song || normalize(title)}`,
     artist,
     channel,
-    title
+    title,
+    artistIsChannel: TOPIC.test(uploader) || Boolean(fromTitle && artist && artist === channel)
   };
 }
 
-function hasMarker(text) {
-  const value = normalize(text);
-  return MARKERS.filter((pattern) => pattern.test(value));
+// The parts of a title that describe the upload rather than name the song.
+function decorationOf(title) {
+  const parts = [];
+  let main = stripNeutralTags(title).replace(BRACKETS, (match, inner) => {
+    parts.push(inner);
+    return ' ';
+  });
+  const [first, ...afterSeparator] = main.split(SEPARATOR);
+  parts.push(...afterSeparator);
+  main = first;
+  const dashes = main.split(DASH);
+  parts.push(...dashes.slice(2));
+  return { main: dashes.slice(0, 2).join(' - '), decoration: normalize(parts.join(' ')) };
+}
+
+// Names of the markers a title has; `strict` (the seed) also counts them anywhere in the title.
+function markersOf(title, { artistIsChannel = false, strict = false } = {}) {
+  const { main, decoration } = decorationOf(title);
+  const whole = normalize(stripNeutralTags(title));
+  const found = new Set();
+  DECORATION_MARKERS.forEach((pattern, index) => {
+    if (pattern.test(decoration) || (strict && pattern.test(whole))) found.add(`d${index}`);
+  });
+  const mainText = normalize(main);
+  COMPILATION_PHRASES.forEach((pattern, index) => {
+    if ((!artistIsChannel || strict) && pattern.test(strict ? whole : mainText)) found.add(`c${index}`);
+  });
+  MAIN_MARKERS.forEach((pattern, index) => {
+    if (pattern.test(strict ? whole : mainText)) found.add(`m${index}`);
+  });
+  ANYWHERE_MARKERS.forEach((pattern, index) => {
+    if (pattern.test(whole)) found.add(`a${index}`);
+  });
+  return found;
 }
 
 function sameArtist(a, b) {
@@ -96,16 +157,14 @@ function sameArtist(a, b) {
     || (a.channel && (a.channel === b.channel || a.channel === b.artist)));
 }
 
-// Topic channels carry the studio recording, official/verified channels come next; earlier entries
-// of the mix are closer to the seed.
+// Earlier entries of the mix are closer to the seed; uploads by the artist's own channel win.
 function score(entry, identity, index) {
   const uploader = String(entry.uploader || '');
   let value = MIX_SIZE - index;
-  if (/\s-\s+topic$/i.test(uploader)) value += 15;
-  else if (entry.verified || /vevo$/i.test(uploader.replace(/\s/g, '')) || /\bofficial\b/i.test(uploader)
-    || (identity.artist && identity.artist === identity.channel)) value += 10;
-  if (/\bofficial (?:audio|music video|video|visualizer)\b/i.test(entry.title)) value += 5;
-  if (/\blyrics?\b/i.test(entry.title)) value -= 5;
+  if (identity.artistIsChannel) value += 6;
+  else if (/vevo$/i.test(uploader.replace(/\s/g, '')) || /\bofficial\b/i.test(uploader)) value += 3;
+  if (/\bofficial (?:audio|music video|video|visualizer)\b/i.test(entry.title)) value += 2;
+  if (/\blyrics?\b/i.test(entry.title)) value -= 4;
   return value;
 }
 
@@ -118,14 +177,14 @@ function rejectReason(entry, { seed, recent = [], playedIds = new Set(), playedK
   const identity = trackIdentity(entry);
   if (playedIds.has(entry.id) || (seed && entry.id === seed.videoId)) return 'played';
   if (playedKeys.has(identity.key) || (seed && identity.key === seed.key)) return 'played';
-  const seedMarkers = new Set(hasMarker(seed?.title || ''));
-  if (hasMarker(entry.title).some((pattern) => !seedMarkers.has(pattern))) return 'keyword';
+  const seedMarkers = markersOf(seed?.title || '', { strict: true });
+  if ([...markersOf(entry.title, identity)].some((marker) => !seedMarkers.has(marker))) return 'keyword';
   const tail = recent.slice(-MAX_SAME_ARTIST);
   if (tail.length === MAX_SAME_ARTIST && tail.every((other) => sameArtist(identity, other))) return 'artist';
   return null;
 }
 
-// The best usable entry of a mix ({ id, title, uploader, duration, url, isLive, verified }), or null.
+// The best usable entry of a mix ({ id, title, uploader, duration, url, isLive }), or null.
 function pickSuggestion(entries, context) {
   let best = null;
   let bestScore = -Infinity;

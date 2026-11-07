@@ -51,6 +51,8 @@ const PANEL_CUSTOM_IDS = new Set(Object.values(PANEL_IDS));
 const SKIP_PREFIX = `${PANEL_IDS.skip}:`;
 // Autoplay tries this many seeds (each with both mix sources) before it stops for the session.
 const MAX_AUTOPLAY_ATTEMPTS = 3;
+// Suggestions that fail to play in a row (403, bot check) before autoplay stops for the session.
+const MAX_AUTOPLAY_PLAY_FAILURES = 2;
 const AUTOPLAY = 'autoplay';
 
 // A Spotify track without a usable YouTube match; `reason` is no-match or busy.
@@ -110,6 +112,10 @@ function createMusicFeature({
   // and of autoplay suggestions removed from the queue (never suggested again).
   const histories = new Map();
   const removedSuggestions = new Map();
+  // Spotify matches waiting for a background slot (guildId -> count) and the autoplay lookup that
+  // holds a guild's slot; a waiting match makes autoplay yield (Spotify items must play first).
+  const spotifyWaiting = new Map();
+  const autoplayHolders = new Map();
   // Interactions answered with deferUpdate(); their replies must be follow-ups, not edits of the panel.
   const updateDeferred = new WeakSet();
 
@@ -150,8 +156,10 @@ function createMusicFeature({
   function getState(session) {
     let state = states.get(session.guildId);
     if (state?.session !== session) {
-      // autoplayLookup: the running suggestion lookup; autoplayStopped: gave up for this session.
-      state = { session, queue: [], current: null, paused: false, loop: 'off', child: null, resource: null, offset: 0, failed: false, autoplayLookup: null, autoplayStopped: false, autoplayRotation: 0 };
+      // autoplayLookup: the running suggestion lookup; autoplayStopped: gave up for this session;
+      // autoplayHold: no prefetch after /music clear until the next track starts; played: this
+      // session's tracks (the autoplay seeds).
+      state = { session, queue: [], current: null, paused: false, loop: 'off', child: null, resource: null, offset: 0, failed: false, autoplayLookup: null, autoplayStopped: false, autoplayRotation: 0, autoplayPlayFailures: 0, autoplayHold: false, played: [] };
       states.set(session.guildId, state);
       // Only the end of the resource that is playing right now advances the queue; skip/stop clear it first.
       session.musicPlayer.on(voice.AudioPlayerStatus.Idle, (oldState) => {
@@ -221,7 +229,8 @@ function createMusicFeature({
     // `paused` is kept: a pause pressed while a Spotify track was matched applies once it plays.
     if (state.current !== item) {
       state.playToken = (state.playToken || 0) + 1;
-      rememberPlayed(state.session.guildId, item);
+      state.autoplayHold = false;
+      rememberPlayed(state, item);
     }
     state.current = item;
     state.pending = null;
@@ -249,10 +258,12 @@ function createMusicFeature({
   }
 
   // Background lookup that waits for a free background slot; stops waiting once `isCancelled()`.
-  async function withLookupWhenFree(guildId, task, isCancelled, attempts = 60) {
-    for (let attempt = 0; !hasFreeSlot(guildId, true); attempt += 1) {
+  // `canStart` can hold it back further; `onBusy` runs on every wait.
+  async function withLookupWhenFree(guildId, task, isCancelled, { attempts = 60, canStart = () => true, onBusy = null } = {}) {
+    for (let attempt = 0; !hasFreeSlot(guildId, true) || !canStart(); attempt += 1) {
       if (isCancelled()) throw new MatchCancelled();
       if (attempt >= attempts) throw new MatchError('Too many lookups are running.', 'busy');
+      onBusy?.();
       await new Promise((resolve) => setTimeout(resolve, lookupRetryMs));
     }
     if (isCancelled()) throw new MatchCancelled();
@@ -298,10 +309,24 @@ function createMusicFeature({
     const wanted = () => isActive(state) && state.current === item && state.pending === token;
     let match = null;
     let error = null;
+    let waiting = true;
+    const doneWaiting = () => {
+      if (!waiting) return;
+      waiting = false;
+      const count = (spotifyWaiting.get(guildId) || 1) - 1;
+      if (count > 0) spotifyWaiting.set(guildId, count);
+      else spotifyWaiting.delete(guildId);
+    };
+    spotifyWaiting.set(guildId, (spotifyWaiting.get(guildId) || 0) + 1);
     try {
-      match = await withLookupWhenFree(guildId, () => findYouTubeMatch(item, signal), () => !wanted());
+      match = await withLookupWhenFree(guildId, () => {
+        doneWaiting();
+        return findYouTubeMatch(item, signal);
+      }, () => !wanted(), { onBusy: () => yieldAutoplayFor(guildId) });
     } catch (caught) {
       error = caught;
+    } finally {
+      doneWaiting();
     }
     if (match) applyMatch(guildId, item, match);
     if (!wanted()) return;
@@ -342,6 +367,11 @@ function createMusicFeature({
     const repeatable = (finished?.kind === 'track' || finished?.kind === 'spotify') && !finished.isLive;
     // A track that failed gets one more try in the next loop round; failing again drops it.
     if (repeatable) finished.loopFailures = failed ? (finished.loopFailures || 0) + 1 : 0;
+    // Suggestions that cannot be streamed (403, bot check) would otherwise follow each other forever.
+    if (isAutoplayItem(finished) && !skipped) {
+      state.autoplayPlayFailures = failed ? state.autoplayPlayFailures + 1 : 0;
+      if (state.autoplayPlayFailures >= MAX_AUTOPLAY_PLAY_FAILURES) stopAutoplayForSession(state, 'the suggested songs could not be played');
+    }
     stopProcess(state);
     state.current = null;
     state.paused = false;
@@ -381,13 +411,16 @@ function createMusicFeature({
   }
 
   // Tracks with a YouTube video (Spotify items by their match); radio and live streams are left out.
-  function rememberPlayed(guildId, item) {
+  // The server history (last HISTORY_SIZE, across sessions) only prevents repeats; seeds come from
+  // this session's tracks.
+  function rememberPlayed(state, item) {
     if (item.kind === 'radio' || item.isLive || !item.url) return;
     const identity = trackIdentity(item);
     if (!identity.videoId) return;
-    const history = histories.get(guildId) || [];
-    history.push({ ...identity, auto: isAutoplayItem(item) });
-    histories.set(guildId, history.slice(-HISTORY_SIZE));
+    const entry = { ...identity, auto: isAutoplayItem(item) };
+    const { guildId } = state.session;
+    histories.set(guildId, [...(histories.get(guildId) || []), entry].slice(-HISTORY_SIZE));
+    state.played = [...state.played, entry].slice(-HISTORY_SIZE);
   }
 
   function rememberRemoved(guildId, item) {
@@ -398,8 +431,8 @@ function createMusicFeature({
 
   // Seeds, newest first: the last SEED_COUNT tracks members picked; autoplay picks only fill up
   // missing seeds, so the suggestions don't drift away from what people asked for.
-  function autoplaySeeds(guildId) {
-    const history = [...(histories.get(guildId) || [])].reverse();
+  function autoplaySeeds(state) {
+    const history = [...state.played].reverse();
     const seeds = [];
     for (const entry of [...history.filter((item) => !item.auto), ...history.filter((item) => item.auto)]) {
       if (seeds.length >= SEED_COUNT) break;
@@ -426,13 +459,38 @@ function createMusicFeature({
     state.autoplayLookup = null;
   }
 
+  // Gives up for this session with one public note; queued suggestions are dropped.
+  function stopAutoplayForSession(state, reason) {
+    if (state.autoplayStopped) return;
+    state.autoplayStopped = true;
+    cancelAutoplay(state);
+    state.queue = state.queue.filter((item) => !isAutoplayItem(item));
+    schedulePanel(state.session.guildId);
+    void announceIn(state.session.guildId, `⚠️ Autoplay stopped for this session: ${reason}. \`/music autoplay\` turns it on again.`);
+  }
+
+  // A Spotify match waits: the autoplay lookup holding this guild's slot (or, with all background
+  // slots taken, any one) gives it up and waits until the match is done.
+  function yieldAutoplayFor(guildId) {
+    const holder = autoplayHolders.get(guildId)
+      || (backgroundGuilds.size >= MAX_BACKGROUND_LOOKUPS ? autoplayHolders.values().next().value : null);
+    holder?.yield();
+  }
+
+  // Autoplay waits while a Spotify match of this guild waits, and leaves the last free slot to one elsewhere.
+  function autoplayMayStart(guildId) {
+    if (spotifyWaiting.has(guildId)) return false;
+    return !spotifyWaiting.size || backgroundGuilds.size < MAX_BACKGROUND_LOOKUPS - 1;
+  }
+
   // Keeps one suggestion ahead: starts a lookup when the queue is empty behind a playing track
   // (or, with `whenIdle`, after the queue ran out). Radio and live streams never trigger it.
   function maybeAutoplay(state, { whenIdle = false } = {}) {
     if (!autoplayEnabled(state) || state.autoplayLookup || state.queue.length) return;
     const { current } = state;
     if (current ? current.kind === 'radio' || current.isLive : !whenIdle) return;
-    if (!autoplaySeeds(state.session.guildId).length) return;
+    if (state.autoplayHold && !whenIdle) return;
+    if (!autoplaySeeds(state).length) return;
     const lookup = { abort: new AbortController() };
     state.autoplayLookup = lookup;
     void runAutoplay(state, lookup).catch((error) => {
@@ -488,7 +546,7 @@ function createMusicFeature({
   async function runAutoplay(state, lookup) {
     const { guildId } = state.session;
     const wanted = () => isActive(state) && state.autoplayLookup === lookup;
-    const seeds = autoplaySeeds(guildId);
+    const seeds = autoplaySeeds(state);
     const start = state.autoplayRotation % seeds.length;
     let suggestion = null;
     let lastError = null;
@@ -499,14 +557,31 @@ function createMusicFeature({
       let index = (start + attempt) % seeds.length;
       while (exhausted.has(index)) index = (index + 1) % seeds.length;
       const seed = seeds[index];
+      const attemptAbort = new AbortController();
+      const holder = { yielded: false, yield() { this.yielded = true; attemptAbort.abort(); } };
+      const signal = AbortSignal.any([lookup.abort.signal, attemptAbort.signal]);
       try {
-        suggestion = await withLookupWhenFree(guildId, () => findSuggestion(state, seed, lookup.abort.signal), () => !wanted());
+        // Waiting for a slot is no attempt, so it may take as long as it needs (it can be cancelled).
+        suggestion = await withLookupWhenFree(guildId, async () => {
+          autoplayHolders.set(guildId, holder);
+          try {
+            return await findSuggestion(state, seed, signal);
+          } finally {
+            if (autoplayHolders.get(guildId) === holder) autoplayHolders.delete(guildId);
+          }
+        }, () => !wanted(), { attempts: Infinity, canStart: () => autoplayMayStart(guildId) });
         if (!suggestion) {
           exhausted.add(index);
           lastError = null;
         }
       } catch (error) {
-        if (error instanceof MatchCancelled || error?.code === 'ABORTED' || !wanted()) return;
+        if (error instanceof MatchCancelled || !wanted()) return;
+        // Gave the slot to a Spotify match or found it busy: not an attempt, try the seed again.
+        if (holder.yielded || error?.reason === 'busy') {
+          attempt -= 1;
+          continue;
+        }
+        if (error?.code === 'ABORTED') return;
         if (!(error instanceof MusicError)) console.error(`Autoplay lookup failed in guild ${guildId}:`, error);
         lastError = error;
       }
@@ -514,10 +589,7 @@ function createMusicFeature({
     }
     state.autoplayLookup = null;
     if (!suggestion) {
-      state.autoplayStopped = true;
-      schedulePanel(guildId);
-      const reason = lastError ? matchFailureReason(lastError) : 'no fitting songs were found';
-      await announceIn(guildId, `⚠️ Autoplay stopped for this session: ${reason}. \`/music autoplay\` turns it on again.`);
+      stopAutoplayForSession(state, lastError ? matchFailureReason(lastError) : 'no fitting songs were found');
       return;
     }
     state.autoplayRotation = start + 1;
@@ -564,6 +636,7 @@ function createMusicFeature({
       loop: state?.loop || 'off',
       autoplay: config.autoplay === true,
       autoplayNote: autoplayNote(state),
+      autoplayPending: Boolean(state?.autoplayLookup) && !current,
       playToken: state?.playToken || 0,
       volume: config.volume,
       channelId: session?.channelId || null,
@@ -917,10 +990,12 @@ function createMusicFeature({
   }
 
   // Playback controls need a listener of the bot's channel; managers may always use them.
-  function requireControl(ctx) {
+  // `pending`: also while autoplay looks for the next song after the queue ran out (stop, autoplay off).
+  function requireControl(ctx, { pending = false } = {}) {
     const session = voiceSessions.get(ctx.guild.id);
     const state = session ? states.get(ctx.guild.id) : null;
-    if (!session || state?.session !== session || !state.current) throw new MusicError('Nothing is playing right now.');
+    const busy = state?.current || (pending && state?.autoplayLookup);
+    if (!session || state?.session !== session || !busy) throw new MusicError('Nothing is playing right now.');
     if (ctx.member.voice?.channelId !== session.channelId && !isManager(ctx.member)) {
       throw new MusicError(`Join <#${session.channelId}> to control the music.`);
     }
@@ -1138,7 +1213,7 @@ function createMusicFeature({
   }
 
   function stop(ctx) {
-    stopAll(requireControl(ctx), ctx.member.id);
+    stopAll(requireControl(ctx, { pending: true }), ctx.member.id);
     return { announce: `⏹️ ${who(ctx)} stopped playback and cleared the queue. \`/music continue\` picks it up again.` };
   }
 
@@ -1175,9 +1250,12 @@ function createMusicFeature({
     const state = requireControl(ctx);
     const count = state.queue.length;
     if (!count) throw new MusicError('The queue is already empty.');
+    // Cleared suggestions are not suggested again, and nothing is refilled until the next track starts.
+    for (const item of state.queue) if (isAutoplayItem(item)) rememberRemoved(ctx.guild.id, item);
     state.queue = [];
+    cancelAutoplay(state);
+    state.autoplayHold = true;
     schedulePanel(ctx.guild.id);
-    maybeAutoplay(state);
     return { announce: `🧹 ${who(ctx)} cleared the queue (${plural(count, 'track')})` };
   }
 
@@ -1214,12 +1292,14 @@ function createMusicFeature({
 
   // `mode` on/off, or null to toggle; saved per server. Same rules as loop and shuffle.
   function setAutoplay(ctx, mode = null) {
-    const state = requireControl(ctx);
+    const state = requireControl(ctx, { pending: true });
     const enabled = mode === 'on' ? true : mode === 'off' ? false : getMusicConfig(ctx.guild.id).autoplay !== true;
     updateMusicConfig(ctx.guild.id, { autoplay: enabled });
     let note = '';
     if (enabled) {
       state.autoplayStopped = false;
+      state.autoplayPlayFailures = 0;
+      state.autoplayHold = false;
       maybeAutoplay(state);
       if (state.loop !== 'off') note = ' (it waits until looping is off)';
     } else {

@@ -218,7 +218,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
 
   // The first entries of the radio playlist YouTube builds for a video, for autoplay: `source`
   // 'music' is YouTube Music's radio (list=RDAMVM<id>), 'youtube' the YouTube Mix (list=RD<id>).
-  // Returns [{ id, title, uploader, duration, url, isLive, verified }]; `signal` kills yt-dlp.
+  // Returns [{ id, title, uploader, duration, url, isLive }]; `signal` kills yt-dlp.
   async function fetchMix(videoId, { source = 'music', count = 25, signal = null } = {}) {
     const id = String(videoId || '');
     if (!/^[\w-]{1,20}$/.test(id)) throw new MusicError('Not a YouTube video.');
@@ -248,8 +248,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
         uploader: entry.channel || entry.uploader || '',
         duration: Number.isFinite(entry.duration) ? Math.round(entry.duration) : null,
         url: `https://www.youtube.com/watch?v=${entry.id}`,
-        isLive: ['is_live', 'is_upcoming', 'post_live'].includes(entry.live_status),
-        verified: entry.channel_is_verified === true
+        isLive: ['is_live', 'is_upcoming', 'post_live'].includes(entry.live_status)
       }));
   }
 
