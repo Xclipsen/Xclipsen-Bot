@@ -216,6 +216,42 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
       }));
   }
 
+  // The first entries of the radio playlist YouTube builds for a video, for autoplay: `source`
+  // 'music' is YouTube Music's radio (list=RDAMVM<id>), 'youtube' the YouTube Mix (list=RD<id>).
+  // Returns [{ id, title, uploader, duration, url, isLive }]; `signal` kills yt-dlp.
+  async function fetchMix(videoId, { source = 'music', count = 25, signal = null } = {}) {
+    const id = String(videoId || '');
+    if (!/^[\w-]{1,20}$/.test(id)) throw new MusicError('Not a YouTube video.');
+    const url = source === 'youtube'
+      ? `https://www.youtube.com/watch?v=${id}&list=RD${id}`
+      : `https://music.youtube.com/watch?v=${id}&list=RDAMVM${id}`;
+    let output;
+    try {
+      output = await run(ytdlpPath, ['--flat-playlist', '--dump-single-json', '--playlist-items', `1:${count}`, '--no-warnings', '--js-runtimes', 'node', '--', url], RESOLVE_TIMEOUT_MS,
+        'Loading related songs took too long.', signal);
+    } catch (error) {
+      if (error instanceof MusicError) throw error;
+      console.error('yt-dlp mix lookup failed:', error.message.slice(0, 500));
+      throw Object.assign(new MusicError('Could not load related songs from YouTube.'), { code: 'YOUTUBE' });
+    }
+    let info;
+    try {
+      info = JSON.parse(output);
+    } catch {
+      throw new MusicError('Could not read the related songs from yt-dlp.');
+    }
+    return (Array.isArray(info?.entries) ? info.entries : [])
+      .filter((entry) => typeof entry?.id === 'string' && /^[\w-]{1,20}$/.test(entry.id))
+      .map((entry) => ({
+        id: entry.id,
+        title: String(entry.title || ''),
+        uploader: entry.channel || entry.uploader || '',
+        duration: Number.isFinite(entry.duration) ? Math.round(entry.duration) : null,
+        url: `https://www.youtube.com/watch?v=${entry.id}`,
+        isLive: ['is_live', 'is_upcoming', 'post_live'].includes(entry.live_status)
+      }));
+  }
+
   function attachLogging(child, label) {
     let stderr = '';
     child.stderr?.on('data', (chunk) => { stderr = (stderr + chunk).slice(-2000); });
@@ -283,7 +319,7 @@ function createMusicSources({ ytdlpPath = 'yt-dlp', ffmpegPath = 'ffmpeg', spawn
     };
   }
 
-  return { resolveTrack, resolvePlaylist, searchCandidates, spawnTrack, spawnRadio };
+  return { resolveTrack, resolvePlaylist, searchCandidates, fetchMix, spawnTrack, spawnRadio };
 }
 
 module.exports = { createMusicSources, isYouTubeUrl, isYouTubeVideoUrl, getYouTubePlaylistId, MusicError, MAX_TRACK_SECONDS, MAX_IMPORT_TRACKS };

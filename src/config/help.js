@@ -98,8 +98,8 @@ const helpSections = [
         adminOnly: true
       },
       {
-        command: '/music play | playnext | radio | continue | skip | stop | pause | resume | queue | shuffle | clear | remove | move | loop | nowplaying | volume',
-        description: 'YouTube, Spotify links (played from YouTube) and lofi radio in your voice channel, only in the #voice channel (with a control panel). Queue tools, loop off/track/queue, continue a stopped session (24 h). Controls need you in the bot channel. Actions are announced there; when idle the bot cleans its channel up so the panel is on top.',
+        command: '/music play | playnext | radio | continue | skip | stop | pause | resume | queue | shuffle | clear | remove | move | loop | autoplay | nowplaying | volume',
+        description: 'YouTube, Spotify links (played from YouTube) and lofi radio in your voice channel, only in the #voice channel (with a control panel). Queue tools, loop off/track/queue, autoplay (queues one similar song from YouTube Music when the queue runs out), continue a stopped session (24 h). Controls need you in the bot channel. Actions are announced there; when idle the bot cleans its channel up so the panel is on top.',
         example: '/music play query:lofi beats'
       },
       {

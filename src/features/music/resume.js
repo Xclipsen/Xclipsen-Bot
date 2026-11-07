@@ -1,6 +1,7 @@
 // The last interrupted music session per server (data/music-resume.json), for /music continue:
 // { guilds: { <guildId>: { current, position, queue, loop, savedAt, savedBy, reason } } }
 // `current` and `queue` hold queue items ({ kind, title, url, duration, isLive, requesterId, … });
+// autoplay suggestions keep addedBy: 'autoplay' so they are never taken for a member's pick;
 // `position` is where the current track was, in seconds. Snapshots expire after 24 hours.
 const RESUME_TTL_MS = 24 * 60 * 60 * 1000;
 const MAX_RESUME_QUEUE = 100;
@@ -8,7 +9,7 @@ const { isYouTubeVideoUrl } = require('./sources');
 const { parseSpotifyLink } = require('./spotify');
 const { findStation } = require('./stations');
 
-const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'album', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId', 'spotifyUrl', 'artists'];
+const ITEM_KEYS = ['kind', 'title', 'url', 'source', 'author', 'album', 'duration', 'isLive', 'thumbnail', 'stationKey', 'requesterId', 'spotifyUrl', 'artists', 'addedBy'];
 
 // The file could have been edited by hand: tracks must be single YouTube videos, Spotify items
 // Spotify track links (their YouTube URL may still be missing), radio items a station that exists.
@@ -33,6 +34,8 @@ function normalizeItem(item) {
   const clean = Object.fromEntries(ITEM_KEYS.filter((key) => item[key] !== undefined).map((key) => [key, item[key]]));
   clean.kind = ['radio', 'spotify'].includes(item.kind) ? item.kind : 'track';
   clean.url = valid.url;
+  // Only autoplay suggestions are marked; everything else was picked by a member.
+  if (clean.addedBy !== 'autoplay') delete clean.addedBy;
   if (clean.artists !== undefined) clean.artists = (Array.isArray(clean.artists) ? clean.artists : []).map(String).slice(0, 10);
   return clean;
 }
