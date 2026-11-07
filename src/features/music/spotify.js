@@ -519,6 +519,8 @@ module.exports = {
   pickBestMatch,
   scoreCandidate,
   cleanTitle,
+  normalize,
+  VERSION_MARKERS,
   SpotifyError,
   EMBED_TRACK_CAP
 };

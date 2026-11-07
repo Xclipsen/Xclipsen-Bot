@@ -403,6 +403,17 @@ const musicCommand = new SlashCommandBuilder()
         { name: 'queue', value: 'queue' }
       )))
   .addSubcommand((subcommand) => subcommand
+    .setName('autoplay')
+    .setDescription('Queue similar songs when the queue runs out (saved per server).')
+    .addStringOption((option) => option
+      .setName('mode')
+      .setDescription('on or off (default: toggle)')
+      .setRequired(false)
+      .addChoices(
+        { name: 'on', value: 'on' },
+        { name: 'off', value: 'off' }
+      )))
+  .addSubcommand((subcommand) => subcommand
     .setName('continue')
     .setDescription('Continue the last stopped session (kept for 24 hours) where it was.'));
 

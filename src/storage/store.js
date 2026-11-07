@@ -71,7 +71,7 @@ function normalizeGuildConfig(config) {
         .filter(([userId, voice]) => /^\d{16,20}$/.test(userId) && typeof voice === 'string' && voice))
     },
     // Music and radio (src/features/music): the "voice" text channel with its control panel,
-    // admin-added radio stations and the playback volume in percent.
+    // admin-added radio stations, the playback volume in percent and the autoplay toggle.
     music: {
       controlChannelId: config?.music?.controlChannelId || null,
       panelMessageId: config?.music?.panelMessageId || null,
@@ -87,7 +87,9 @@ function normalizeGuildConfig(config) {
           .filter((station) => station && typeof station.name === 'string' && /^https?:\/\//i.test(String(station.url || '')))
           .map((station) => ({ name: station.name.trim().slice(0, 50), url: String(station.url).trim() }))
         : [],
-      volume: Number.isFinite(config?.music?.volume) ? Math.min(100, Math.max(0, Math.round(config.music.volume))) : 50
+      volume: Number.isFinite(config?.music?.volume) ? Math.min(100, Math.max(0, Math.round(config.music.volume))) : 50,
+      // Autoplay: related songs are queued when the queue runs out (/music autoplay).
+      autoplay: config?.music?.autoplay === true
     },
     shitterPermissions: {
       blockedUserIds: normalizeSnowflakeList(config?.shitterPermissions?.blockedUserIds),

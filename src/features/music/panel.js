@@ -14,6 +14,7 @@ const PANEL_IDS = {
   stop: 'music-panel:stop',
   shuffle: 'music-panel:shuffle',
   loop: 'music-panel:loop',
+  autoplay: 'music-panel:autoplay',
   volumeDown: 'music-panel:volume-down',
   volumeUp: 'music-panel:volume-up',
   queue: 'music-panel:queue',
@@ -34,6 +35,7 @@ const COMMAND_OVERVIEW = [
   '`/music radio station:<name>` play a lofi / chill radio station',
   '`/music skip` · `stop` · `pause` · `resume` · `nowplaying` · `volume`',
   '`/music queue` · `shuffle` · `clear` · `loop mode:<off|track|queue>`',
+  '`/music autoplay [mode:<on|off>]` similar songs once the queue runs out',
   '`/music remove position:<n>` · `move from:<n> to:<n>` · `continue`',
   '`/playlist create` · `add` · `remove` · `rename` · `delete` your playlists',
   '`/playlist play name:<playlist> [shuffle]` · `show` · `list [user]`',
@@ -73,6 +75,11 @@ function isSpotifyItem(item) {
 function displayTitle(item) {
   const artists = isSpotifyItem(item) && Array.isArray(item.artists) ? item.artists.slice(0, 3).join(', ') : '';
   return artists ? `${artists} - ${item.title}` : String(item.title);
+}
+
+// Who asked for an item: a mention, or "Autoplay" for suggestions.
+function describeRequester(item) {
+  return item?.addedBy === 'autoplay' ? 'Autoplay' : `<@${item?.requesterId}>`;
 }
 
 // Spotify tracks link to Spotify and carry a small marker; they play their YouTube match.
@@ -128,8 +135,8 @@ function numbered(index, text) {
 function buildQueueView({ current = null, queue = [], loop = 'off' }, page = 0) {
   return pagedView({
     title: `🎶 Queue (${queue.length})`,
-    header: [current ? `**Now:** ${describeItem(current, { maxTitle: LIST_TITLE_LENGTH })} · <@${current.requesterId}>` : 'Nothing is playing.', ''],
-    lines: queue.map((item, index) => numbered(index, `${describeItem(item, { maxTitle: LIST_TITLE_LENGTH })} · <@${item.requesterId}>`)),
+    header: [current ? `**Now:** ${describeItem(current, { maxTitle: LIST_TITLE_LENGTH })} · ${describeRequester(current)}` : 'Nothing is playing.', ''],
+    lines: queue.map((item, index) => numbered(index, `${describeItem(item, { maxTitle: LIST_TITLE_LENGTH })} · ${describeRequester(item)}`)),
     empty: 'The queue is empty.',
     footer: `${queue.length} tracks · total ${describeTotal(queue)} · ${LOOP_LABELS[loop] || LOOP_LABELS.off}`,
     prefix: `${PAGE_PREFIX}queue:-`
@@ -165,15 +172,16 @@ function buildPlaylistListView(playlists, ownerId = null, page = 0) {
   }, page);
 }
 
-// panelState: { current, queue, paused, loop, volume, channelId, stations, playlists, resumable }
+// panelState: { current, queue, paused, loop, autoplay, volume, channelId, stations, playlists, resumable }
+// `autoplay` is the server's toggle; `autoplayNote` says why it is not suggesting right now.
 // `resumable` is the size of the last interrupted session (0 = none); it adds a Continue button while idle.
 // `playToken` identifies the current track; the skip button carries it so a double press skips once.
-function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', volume = 50, channelId = null, stations = [], playlists = [], resumable = 0, playToken = 0 }) {
+function buildPanelMessage({ current = null, queue = [], paused = false, loop = 'off', autoplay = false, autoplayNote = null, volume = 50, channelId = null, stations = [], playlists = [], resumable = 0, playToken = 0 }) {
   const nowPlaying = current
     ? [
       describeItem(current),
       `Source: ${describeSource(current)}`,
-      `Requested by <@${current.requesterId}>${paused ? ' · ⏸️ paused' : ''}`
+      `Requested by ${describeRequester(current)}${paused ? ' · ⏸️ paused' : ''}`
     ].join('\n')
     : 'Nothing is playing.';
 
@@ -188,6 +196,7 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
       { name: 'Now playing', value: nowPlaying.slice(0, 1024) },
       { name: `Queue (${queue.length}${queue.length ? ` · ${describeTotal(queue)}` : ''})`, value: (upNext.join('\n') || 'Empty').slice(0, 1024) },
       { name: 'Loop', value: { track: '🔂 Track', queue: '🔁 Queue' }[loop] || 'Off', inline: true },
+      { name: 'Autoplay', value: autoplay ? `On${autoplayNote ? ` (${autoplayNote})` : ''}` : 'Off', inline: true },
       { name: 'Volume', value: `${volume}%`, inline: true },
       { name: 'Radio station', value: current?.kind === 'radio' ? escapeMarkdown(current.title) : '—', inline: true },
       { name: 'Commands', value: COMMAND_OVERVIEW }
@@ -205,15 +214,22 @@ function buildPanelMessage({ current = null, queue = [], paused = false, loop = 
       .setDisabled(!current),
     new ButtonBuilder().setCustomId(`${PANEL_IDS.skip}:${playToken}`).setLabel('Skip').setEmoji('⏭️').setStyle(ButtonStyle.Secondary).setDisabled(!current),
     new ButtonBuilder().setCustomId(PANEL_IDS.stop).setLabel('Stop').setEmoji('⏹️').setStyle(ButtonStyle.Danger).setDisabled(!current),
-    new ButtonBuilder().setCustomId(PANEL_IDS.shuffle).setLabel('Shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary).setDisabled(!current || queue.length < 2),
     new ButtonBuilder()
       .setCustomId(PANEL_IDS.loop)
       .setLabel(LOOP_LABELS[loop] || LOOP_LABELS.off)
       .setEmoji(loop === 'track' ? '🔂' : '🔁')
       .setStyle(loop === 'off' ? ButtonStyle.Secondary : ButtonStyle.Success)
+      .setDisabled(!current),
+    new ButtonBuilder()
+      .setCustomId(PANEL_IDS.autoplay)
+      .setLabel(`Autoplay: ${autoplay ? 'on' : 'off'}`)
+      .setEmoji('♾️')
+      .setStyle(autoplay ? ButtonStyle.Success : ButtonStyle.Secondary)
       .setDisabled(!current)
   );
+  // Second row: queue tools and volume; a Continue button while nothing plays (at most 5 buttons).
   const extras = new ActionRowBuilder().addComponents(
+    new ButtonBuilder().setCustomId(PANEL_IDS.shuffle).setLabel('Shuffle').setEmoji('🔀').setStyle(ButtonStyle.Secondary).setDisabled(!current || queue.length < 2),
     new ButtonBuilder().setCustomId(PANEL_IDS.volumeDown).setLabel('-10').setEmoji('🔉').setStyle(ButtonStyle.Secondary).setDisabled(volume <= 0),
     new ButtonBuilder().setCustomId(PANEL_IDS.volumeUp).setLabel('+10').setEmoji('🔊').setStyle(ButtonStyle.Secondary).setDisabled(volume >= 100),
     new ButtonBuilder().setCustomId(PANEL_IDS.queue).setLabel('Queue').setEmoji('📜').setStyle(ButtonStyle.Secondary).setDisabled(!current)
@@ -265,6 +281,7 @@ module.exports = {
   buildPlaylistView,
   buildPlaylistListView,
   describeItem,
+  describeRequester,
   describeSource,
   displayTitle,
   isSpotifyItem,

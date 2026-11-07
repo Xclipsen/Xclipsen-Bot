@@ -598,9 +598,11 @@ test('the panel embed shows playback, queue, volume, station and the command ove
   assert.match(field('Commands'), /\/tts join/);
 
   const [buttons, extras, select] = message.components.map((row) => row.toJSON().components);
-  assert.deepEqual(buttons.map((button) => button.custom_id), [PANEL_IDS.pause, `${PANEL_IDS.skip}:0`, PANEL_IDS.stop, PANEL_IDS.shuffle, PANEL_IDS.loop]);
-  assert.deepEqual(extras.map((button) => button.custom_id), [PANEL_IDS.volumeDown, PANEL_IDS.volumeUp, PANEL_IDS.queue]);
-  assert.equal(buttons[3].disabled, true, 'one queued track cannot be shuffled');
+  assert.deepEqual(buttons.map((button) => button.custom_id), [PANEL_IDS.pause, `${PANEL_IDS.skip}:0`, PANEL_IDS.stop, PANEL_IDS.loop, PANEL_IDS.autoplay]);
+  assert.deepEqual(extras.map((button) => button.custom_id), [PANEL_IDS.shuffle, PANEL_IDS.volumeDown, PANEL_IDS.volumeUp, PANEL_IDS.queue]);
+  assert.equal(buttons[4].label, 'Autoplay: off');
+  assert.equal(field('Autoplay'), 'Off');
+  assert.equal(extras[0].disabled, true, 'one queued track cannot be shuffled');
   assert.equal(buttons[0].label, 'Resume');
   assert.equal(select[0].custom_id, PANEL_IDS.station);
   assert.equal(select[0].options.length, BUILT_IN_STATIONS.length + 1);
@@ -1574,13 +1576,13 @@ test('snapshots keep Spotify items, matched or not, and continue plays them', as
 
 // --- review fixes --------------------------------------------------------------------------------
 
-// Like createFakeSpawn, but YouTube searches ("ytsearch5:…") only answer on release().
-function createHeldSpawn(videos) {
+// Like createFakeSpawn, but YouTube searches ("ytsearch5:…", or what `isHeld` picks) only answer on release().
+function createHeldSpawn(videos, isHeld = (target) => target.startsWith('ytsearch5:')) {
   const base = createFakeSpawn(videos);
   const pending = [];
   function spawn(command, args, options = {}) {
     const target = String(args[args.length - 1]);
-    if (!target.startsWith('ytsearch5:')) return base(command, args, options);
+    if (!isHeld(target)) return base(command, args, options);
     const child = new EventEmitter();
     child.stdout = new PassThrough();
     child.stderr = new PassThrough();
@@ -1844,4 +1846,310 @@ test('new playback replaces an old stopped session', async () => {
   assert.equal(resumeStore.get('g1'), null);
   musicPlayer().finish();
   assert.equal(resumeStore.get('g1'), null, 'a queue that finished leaves nothing to continue');
+});
+
+// --- autoplay ------------------------------------------------------------------------------------
+
+const { pickSuggestion, trackIdentity, rejectReason } = require('../src/features/music/autoplay');
+const { normalizeGuildConfig } = require('../src/storage/store');
+
+function mixUrl(id, source = 'music') {
+  return source === 'music' ? `https://music.youtube.com/watch?v=${id}&list=RDAMVM${id}` : `https://www.youtube.com/watch?v=${id}&list=RD${id}`;
+}
+
+function userVideo(query, id, title, channel, duration = 200) {
+  return { [`ytsearch1:${query}`]: { entries: [{ id, title, webpage_url: `https://www.youtube.com/watch?v=${id}`, duration, channel }] } };
+}
+
+function mixOf(...entries) {
+  return { title: 'Mix', entries: entries.map(([id, title, channel, duration = 210]) => ({ id, title, channel, duration })) };
+}
+
+const AP_VIDEOS = {
+  ...VIDEOS,
+  ...userVideo('ap one', 'u1', 'Alpha - One', 'Alpha'),
+  ...userVideo('ap two', 'u2', 'Beta - Two', 'Beta'),
+  ...userVideo('ap three', 'u3', 'Gamma - Three', 'Gamma'),
+  [mixUrl('u1')]: mixOf(['u1', 'Alpha - One', 'Alpha'], ['s11', 'Song A', 'Delta - Topic'], ['s12', 'Eps - Song B', 'Eps']),
+  [mixUrl('u2')]: mixOf(['u2', 'Beta - Two', 'Beta'], ['s21', 'Zeta - Song C (Official Video)', 'Zeta']),
+  // Everything in u3's YouTube Music radio is played by the time it comes round again: the YouTube Mix is the fallback.
+  [mixUrl('u3')]: mixOf(['u3', 'Gamma - Three', 'Gamma'], ['s31', 'Eta - Song D', 'Eta - Topic']),
+  [mixUrl('u3', 'youtube')]: mixOf(['s31', 'Eta - Song D', 'Eta - Topic'], ['s32', 'Theta - Song E', 'Theta - Topic'])
+};
+
+function mixCalls(spawn) {
+  return spawn.calls.map((call) => String(call.args.at(-1))).filter((target) => target.includes('list=RD'));
+}
+
+function queueOf(feature, guild, member) {
+  const view = createInteraction(guild, member, 'queue');
+  return feature.handleMusicCommand(view).then(() => view.lastReply().embeds[0].toJSON().description);
+}
+
+test('autoplay is toggled per server with the same rules as loop, persisted and shown on the panel', async () => {
+  assert.equal(normalizeGuildConfig({}).music.autoplay, false);
+  assert.equal(normalizeGuildConfig({ music: { autoplay: true } }).music.autoplay, true);
+  assert.equal(normalizeGuildConfig({ music: { autoplay: 'yes' } }).music.autoplay, false);
+
+  const spawn = createFakeSpawn(AP_VIDEOS);
+  const { feature, guild, channel, store } = createFeature({ spawn });
+  const owner = createMember('owner');
+  const early = createInteraction(guild, owner, 'autoplay');
+  await feature.handleMusicCommand(early);
+  assert.match(early.lastReply().content, /Nothing is playing/);
+
+  await playAll(feature, guild, owner, ['ap one']);
+  const outsider = createInteraction(guild, createMember('x', { channelId: null }), 'autoplay', { mode: 'on' });
+  await feature.handleMusicCommand(outsider);
+  assert.match(outsider.lastReply().content, /Join <#vc1>/);
+  assert.notEqual(store.guilds.g1.music.autoplay, true);
+
+  // Without mode it toggles.
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay'));
+  assert.equal(store.guilds.g1.music.autoplay, true);
+  assert.equal(channel.lastAnnouncement(), '♾️ **User owner** turned autoplay **on**');
+  await ticks();
+  const panel = componentsOf(latestPanel(channel)).find((component) => component.custom_id === PANEL_IDS.autoplay);
+  assert.equal(panel.label, 'Autoplay: on');
+  assert.equal(latestPanel(channel).embeds[0].toJSON().fields.find((field) => field.name === 'Autoplay').value, 'On');
+
+  // A manager outside the channel may switch it like loop; the panel button toggles it off again.
+  await feature.handleMusicCommand(createInteraction(guild, createMember('boss', { channelId: null, manageGuild: true }), 'autoplay', { mode: 'on' }));
+  assert.equal(store.guilds.g1.music.autoplay, true);
+  const button = createInteraction(guild, owner, null, {}, { customId: PANEL_IDS.autoplay });
+  await feature.handlePanelInteraction(button);
+  assert.equal(button.deferredUpdate, true);
+  assert.equal(store.guilds.g1.music.autoplay, false);
+  assert.equal(channel.lastAnnouncement(), '♾️ **User owner** turned autoplay **off** and removed 1 suggestion from the queue');
+  assert.match(await queueOf(feature, guild, owner), /The queue is empty/);
+});
+
+test('autoplay prefetches when the last track starts, rotates seeds and plays without a gap', async () => {
+  const spawn = createFakeSpawn(AP_VIDEOS);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['ap one', 'ap two', 'ap three']);
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay', { mode: 'on' }));
+  await ticks();
+  assert.deepEqual(mixCalls(spawn), [], 'nothing is looked up while the queue has tracks');
+
+  musicPlayer().finish();
+  musicPlayer().finish();
+  assert.equal(currentTitle(musicPlayer), 'Gamma - Three');
+  await ticks();
+  // The newest member pick is the first seed, through YouTube Music's radio.
+  assert.deepEqual(mixCalls(spawn), [mixUrl('u3')]);
+  assert.equal(channel.lastAnnouncement(), '🔁 Autoplay: **Eta - Song D** (3:30)');
+  const queue = await queueOf(feature, guild, owner);
+  assert.match(queue, /`1\.` \[Eta - Song D\].* · Autoplay/);
+  assert.ok(!/`2\./.test(queue), 'only one suggestion ahead');
+
+  // The suggestion starts right away when the track ends; the next one is looked up meanwhile.
+  musicPlayer().finish();
+  assert.equal(currentTitle(musicPlayer), 'Eta - Song D');
+  const nowPlaying = createInteraction(guild, owner, 'nowplaying');
+  await feature.handleMusicCommand(nowPlaying);
+  assert.match(nowPlaying.lastReply().content, /Requested by Autoplay/);
+  await ticks();
+  musicPlayer().finish();
+  assert.equal(currentTitle(musicPlayer), 'Zeta - Song C (Official Video)');
+  await ticks();
+  musicPlayer().finish();
+  assert.equal(currentTitle(musicPlayer), 'Song A');
+  await ticks();
+  musicPlayer().finish();
+  await ticks();
+  // Seeds rotate over the last three member picks (u3, u2, u1, u3 …); u3's radio is used up, so the YouTube Mix is tried.
+  assert.deepEqual(mixCalls(spawn).slice(0, 5), [mixUrl('u3'), mixUrl('u2'), mixUrl('u1'), mixUrl('u3'), mixUrl('u3', 'youtube')]);
+  assert.equal(currentTitle(musicPlayer), 'Theta - Song E');
+  assert.equal(musicPlayer().played.length, 7, 'every track followed the previous one directly');
+});
+
+test('autoplay picks skip recent songs and re-uploads, long runs of one artist, wrong lengths and non-songs', () => {
+  const entry = (id, title, uploader, duration = 200, extra = {}) => ({ id, title, uploader, duration, url: `https://www.youtube.com/watch?v=${id}`, isLive: false, verified: false, ...extra });
+  const seed = trackIdentity({ title: 'Alpha - One', author: 'Alpha', url: 'https://www.youtube.com/watch?v=u1' });
+  const context = { seed, recent: [], playedIds: new Set(), playedKeys: new Set() };
+
+  assert.equal(rejectReason(entry('short', 'Kappa - Intro', 'Kappa', 30), context), 'duration');
+  assert.equal(rejectReason(entry('long', 'Kappa - Epic', 'Kappa', 700), context), 'duration');
+  assert.equal(rejectReason(entry('live', 'Kappa - Radio', 'Kappa', null), context), 'live');
+  assert.equal(rejectReason(entry('live2', 'Kappa - Radio', 'Kappa', 200, { isLive: true }), context), 'live');
+  for (const title of ['Kappa - Song (Live at Wembley)', 'Kappa - Song 1 Hour', 'Chill Mix 2026', 'Best Songs Playlist', 'Greatest Hits Compilation',
+    'Kappa - Song (Nightcore)', 'Kappa - Song (Cover)', 'Kappa - Song (Sped Up)', 'Kappa - Song | Reaction', 'Kappa - Song 8D Audio', 'Kappa - Spaced [Full EP]']) {
+    assert.equal(rejectReason(entry('k', title, 'Kappa'), context), 'keyword', title);
+  }
+  // A seed with the marker allows it.
+  const nightcoreSeed = trackIdentity({ title: 'Alpha - One (Nightcore)', author: 'Alpha', url: 'https://www.youtube.com/watch?v=n1' });
+  assert.equal(rejectReason(entry('k', 'Kappa - Song (Nightcore)', 'Kappa'), { ...context, seed: nightcoreSeed }), null);
+
+  // Played songs count by video id and by "artist - title", so re-uploads and Spotify matches count too.
+  const played = trackIdentity({ title: 'Lambda - Hit (Official Video)', author: 'Lambda', url: 'https://www.youtube.com/watch?v=l1' });
+  const history = { ...context, playedIds: new Set(['l1']), playedKeys: new Set([played.key]) };
+  assert.equal(rejectReason(entry('l1', 'Lambda - Hit', 'Lambda'), history), 'played');
+  assert.equal(rejectReason(entry('l2', 'Lambda - Hit (Lyrics)', 'Lyrics Channel'), history), 'played');
+  assert.equal(rejectReason(entry('l3', 'Hit', 'Lambda - Topic'), history), 'played');
+  assert.equal(rejectReason(entry('u1', 'Alpha - One', 'Alpha'), context), 'played', 'the seed itself');
+  assert.equal(trackIdentity({ title: 'In The End [Official HD Music Video] - Linkin Park', uploader: 'Linkin Park' }).key, 'linkin park - in the end');
+  assert.equal(trackIdentity({ kind: 'spotify', title: 'In the End', artists: ['Linkin Park'] }).key, 'linkin park - in the end');
+
+  // At most two in a row by one artist or channel.
+  const mu = [trackIdentity({ title: 'Mu - A', author: 'Mu' }), trackIdentity({ title: 'B', author: 'Mu - Topic' })];
+  assert.equal(rejectReason(entry('m3', 'Mu - C', 'Mu'), { ...context, recent: mu }), 'artist');
+  assert.equal(rejectReason(entry('m4', 'D', 'Mu - Topic'), { ...context, recent: mu }), 'artist');
+  assert.equal(rejectReason(entry('m5', 'Mu, Nu - E', 'Nu'), { ...context, recent: mu }), 'artist');
+  assert.equal(rejectReason(entry('m6', 'Mu - C', 'Mu'), { ...context, recent: [mu[0], trackIdentity({ title: 'Xi - F', author: 'Xi' })] }), null);
+
+  // Topic and official channels win over fan uploads; otherwise the order of the mix decides.
+  assert.equal(pickSuggestion([entry('a', 'Nu - X (Lyrics)', 'Nu Fans'), entry('b', 'Y', 'Xi - Topic')], context).id, 'b');
+  assert.equal(pickSuggestion([entry('a', 'Nu - X', 'Nu'), entry('b', 'Xi - Y', 'Xi')], context).id, 'a');
+  assert.equal(pickSuggestion([entry('a', 'Nu - X', 'Nu Fans'), entry('b', 'Xi - Y', 'Xi', 200, { verified: true })], context).id, 'b');
+  assert.equal(pickSuggestion([entry('a', 'Live Stream Music', 'Lofi - Topic', 200), entry('b', 'Kappa', 'Kappa', 20)], context), null);
+});
+
+test('autoplay follows the history in the feature: no repeats and no third track of one artist in a row', async () => {
+  const videos = {
+    ...VIDEOS,
+    ...userVideo('mu one', 'v1', 'Mu - One', 'Mu'),
+    ...userVideo('mu two', 'v2', 'Mu - Two', 'Mu'),
+    [mixUrl('v2')]: mixOf(['v2', 'Mu - Two', 'Mu'], ['v1r', 'Mu - One (Official Lyric Video)', 'Mu Lyrics'], ['v3', 'Mu - Three', 'Mu'], ['x1', 'Xi - Other', 'Xi - Topic'])
+  };
+  const spawn = createFakeSpawn(videos);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['mu one', 'mu two']);
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay', { mode: 'on' }));
+  musicPlayer().finish();
+  await ticks();
+  assert.equal(channel.lastAnnouncement(), '🔁 Autoplay: **Xi - Other** (3:30)', 're-upload of One and a third Mu track are skipped');
+});
+
+test('autoplay stops for the session after three seeds gave nothing usable', async () => {
+  const junk = mixOf(['j1', 'Lofi Mix 2026', 'Mixes'], ['j2', 'Kappa - Song (Live)', 'Kappa'], ['j3', 'Kappa - Long', 'Kappa', 3600]);
+  const videos = { ...AP_VIDEOS };
+  for (const id of ['u1', 'u2', 'u3']) {
+    videos[mixUrl(id)] = junk;
+    videos[mixUrl(id, 'youtube')] = junk;
+  }
+  const spawn = createFakeSpawn(videos);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['ap one', 'ap two', 'ap three']);
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay', { mode: 'on' }));
+  musicPlayer().finish();
+  musicPlayer().finish();
+  await ticks(6);
+  assert.deepEqual(mixCalls(spawn), ['u3', 'u2', 'u1'].flatMap((id) => [mixUrl(id), mixUrl(id, 'youtube')]));
+  const notes = channel.announcements().filter((text) => text.startsWith('⚠️ Autoplay stopped'));
+  assert.deepEqual(notes, ['⚠️ Autoplay stopped for this session: no fitting songs were found. `/music autoplay` turns it on again.']);
+  assert.equal(latestPanel(channel).embeds[0].toJSON().fields.find((field) => field.name === 'Autoplay').value, 'On (stopped for this session)');
+
+  musicPlayer().finish();
+  await ticks();
+  assert.equal(mixCalls(spawn).length, 6, 'no further lookups in this session');
+  assert.equal(musicPlayer().status, 'idle');
+});
+
+test('stop and skip cancel a pending autoplay lookup, which runs in the background slot', async () => {
+  const spawn = createHeldSpawn(AP_VIDEOS, (target) => target.includes('list=RD'));
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn, store: createFakeStore({ autoplay: true }) });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['ap one']);
+  await tick();
+  const first = spawn.calls.find((call) => String(call.args.at(-1)) === mixUrl('u1'));
+  assert.ok(first, 'the lookup runs while the last track plays');
+
+  // Commands still get their own lookup slot.
+  const play = createInteraction(guild, owner, 'play', { query: 'ap two' });
+  await feature.handleMusicCommand(play);
+  assert.equal(channel.lastAnnouncement(), '🎵 **User owner** added **Beta - Two** (3:20) — position 1');
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'stop'));
+  assert.deepEqual(first.child.signals, ['SIGKILL']);
+  spawn.release();
+  await ticks();
+  assert.ok(!channel.announcements().some((text) => text.startsWith('🔁')));
+
+  // Skip kills the running lookup; with nothing left a new one starts and plays its pick once found.
+  await playAll(feature, guild, owner, ['ap one']);
+  await tick();
+  const second = spawn.calls.filter((call) => String(call.args.at(-1)) === mixUrl('u1'))[1];
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'skip'));
+  assert.deepEqual(second.child.signals, ['SIGKILL']);
+  assert.equal(musicPlayer().status, 'idle');
+  spawn.release();
+  await tick();
+  spawn.release();
+  await ticks();
+  assert.equal(currentTitle(musicPlayer), 'Song A');
+  assert.equal(channel.lastAnnouncement(), '🔁 Autoplay: **Song A** (3:30)');
+});
+
+test('loop modes pause autoplay and radio never triggers it', async () => {
+  const spawn = createFakeSpawn(AP_VIDEOS);
+  const { feature, guild, channel, musicPlayer } = createFeature({ spawn });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['ap one']);
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'loop', { mode: 'track' }));
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay', { mode: 'on' }));
+  assert.equal(channel.lastAnnouncement(), '♾️ **User owner** turned autoplay **on** (it waits until looping is off)');
+  musicPlayer().finish();
+  await ticks();
+  assert.deepEqual(mixCalls(spawn), []);
+  assert.equal(latestPanel(channel).embeds[0].toJSON().fields.find((field) => field.name === 'Autoplay').value, 'On (waits until loop is off)');
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'loop', { mode: 'off' }));
+  await ticks();
+  assert.deepEqual(mixCalls(spawn), [mixUrl('u1')]);
+
+  // Radio replaces the queue (and its suggestion); it never asks for suggestions, also not when it ends.
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'radio', { station: BUILT_IN_STATIONS[0].id }));
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'autoplay', { mode: 'on' }));
+  musicPlayer().finish();
+  await ticks();
+  assert.equal(mixCalls(spawn).length, 1);
+  assert.equal(musicPlayer().status, 'idle');
+});
+
+test('member tracks go before autoplay suggestions; snapshots and saved playlists keep the marker apart', async () => {
+  const spawn = createFakeSpawn(AP_VIDEOS);
+  const { feature, guild, channel, playlists, resumeStore } = createFeature({ spawn, store: createFakeStore({ autoplay: true }), random: () => 0 });
+  const owner = createMember('owner');
+  await playAll(feature, guild, owner, ['ap one']);
+  await ticks();
+  assert.equal(channel.lastAnnouncement(), '🔁 Autoplay: **Song A** (3:30)');
+
+  await playAll(feature, guild, owner, ['ap two']);
+  assert.equal(channel.lastAnnouncement(), '🎵 **User owner** added **Beta - Two** (3:20) — position 1');
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'playnext', { query: 'ap three' }));
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'shuffle'));
+  assert.match(await queueOf(feature, guild, owner), /`1\.` \[Beta - Two\][\s\S]*`2\.` \[Gamma - Three\][\s\S]*`3\.` \[Song A\].* · Autoplay/);
+
+  await feature.handlePlaylistCommand(createInteraction(guild, owner, 'save', { name: 'Saved' }));
+  assert.deepEqual(titles(playlists.findOwn('g1', 'owner', 'Saved').tracks), ['Alpha - One', 'Beta - Two', 'Gamma - Three', 'Song A']);
+  assert.ok(playlists.findOwn('g1', 'owner', 'Saved').tracks.every((track) => track.addedBy === undefined));
+
+  await feature.handleMusicCommand(createInteraction(guild, owner, 'stop'));
+  const snapshot = resumeStore.get('g1');
+  assert.deepEqual(snapshot.queue.map((item) => item.addedBy || 'member'), ['member', 'member', 'autoplay']);
+  assert.equal(snapshot.current.addedBy, undefined);
+});
+
+test('the panel with autoplay stays within Discord limits', () => {
+  const queue = Array.from({ length: 100 }, (_, index) => ({ kind: 'track', title: `T${index}`, url: `https://www.youtube.com/watch?v=${index}`, duration: 300, addedBy: index === 99 ? 'autoplay' : undefined }));
+  const playlistEntries = Array.from({ length: 30 }, (_, index) => ({ id: `p${index}`, name: `P${index}`, ownerId: 'u', tracks: queue }));
+  for (const state of [
+    { current: { ...queue[0], requesterId: null, addedBy: 'autoplay' }, queue, autoplay: true, autoplayNote: 'stopped for this session', stations: listStations(), playlists: playlistEntries },
+    { autoplay: true, resumable: 4, stations: listStations(), playlists: playlistEntries }
+  ]) {
+    const message = buildPanelMessage(state);
+    assert.ok(message.components.length <= 5);
+    for (const row of message.components) assert.ok(row.toJSON().components.length <= 5);
+    const embed = message.embeds[0].toJSON();
+    const total = embed.title.length + embed.description.length + embed.footer.text.length
+      + embed.fields.reduce((sum, field) => sum + field.name.length + field.value.length, 0);
+    assert.ok(total <= 6000);
+    assert.ok(embed.fields.every((field) => field.value.length <= 1024));
+  }
+  const playing = buildPanelMessage({ current: { ...queue[0], requesterId: null, addedBy: 'autoplay' }, autoplay: true });
+  assert.match(playing.embeds[0].toJSON().fields[0].value, /Requested by Autoplay/);
+  const ids = componentsOf(buildPanelMessage({ autoplay: true, resumable: 4 })).map((component) => component.custom_id);
+  assert.ok(ids.includes(PANEL_IDS.autoplay) && ids.includes(PANEL_IDS.resume));
 });
