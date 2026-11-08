@@ -42,7 +42,7 @@ Important: most event windows are currently calculated locally from the SkyBlock
 - `/season` and `/harvestfeast` for the current Harvest Feast crops.
 - `/hideonleaf` for the Hideonleaf leaderboard reported by the Xclipsen mod.
 - `/itememoji` for posting mapped SkyBlock item emojis.
-- `/gif` for converting an uploaded image into a GIF.
+- `/gif` for converting an uploaded image or video, or a Twitter/X video, into a GIF.
 
 If a Discord user has a linked Minecraft account, `/uuid`, `/namehistory`, `/cata`, `/catacombs`, `/trophyfishing`, `/trophyfrogs`, and the name-based `/shitter` subcommands use the linked (preferred) username when the player/name argument is omitted.
 
@@ -166,17 +166,20 @@ Example:
 /namehistory player:Xclipsen
 ```
 
-#### `/gif media:<image>`
+#### `/gif media:<image|video>` or `/gif link:<twitter link>`
 
-Converts an uploaded image into a GIF.
+Converts an uploaded image or video, or the video of a Twitter/X post, into a GIF.
 
-- `media` is required.
-- Expects an image attachment.
+- Use exactly one of `media` or `link`.
+- `media` expects an image or a video attachment (MP4, MOV, WebM, MKV).
+- `link` expects a post on twitter.com or x.com (fxtwitter/vxtwitter/fixupx links work too). The bot downloads the post's first video or Twitter GIF with yt-dlp (at most 100 MB); private or age-restricted posts do not work.
+- Videos are converted with ffmpeg, cut to the first 30 seconds and shrunk step by step (frame rate, width, colors) until the GIF fits the server's upload limit.
 
 Example:
 
 ```text
 /gif media:<upload>
+/gif link:https://x.com/user/status/123
 ```
 
 #### `/cata [player:<ign>] [profile:<name>]`
@@ -596,7 +599,7 @@ The full list is in `src/config/env.js`; `.env.example` contains a template.
 - `MOD_BACKEND_URL`: Xclipsen mod backend (links, `/hideonleaf` stats), default `https://api.xclipsen.de`
 - `MOD_BACKEND_AUTH_TOKEN`: token for the mod backend, falls back to `IRC_BRIDGE_AUTH_TOKEN`
 - `CRAFTY_API_KEY`: optional Bearer token for the Crafty.gg name history fallback
-- `MAGICK_PATH`: ImageMagick binary for `/gif`, default `magick` (the Docker image installs ImageMagick)
+- `MAGICK_PATH`: ImageMagick binary for image uploads to `/gif`, default `magick` (the Docker image installs ImageMagick)
 - `IRC_BRIDGE_ENABLED`, `IRC_BRIDGE_HOST`, `IRC_BRIDGE_PORT`, `IRC_BRIDGE_AUTH_TOKEN` (the bridge stays off without a real token), `IRC_BRIDGE_CHANNEL_ID` (falls back to `DISCORD_CHANNEL_ID`), `IRC_BRIDGE_MAX_BUFFERED_MESSAGES`
 
 ### Optional Defaults

@@ -61,9 +61,9 @@ const helpSections = [
         example: '/namehistory'
       },
       {
-        command: '/gif media:<image>',
-        description: 'Convert an uploaded image into a GIF file.',
-        example: '/gif media:<upload>'
+        command: '/gif media:<image|video> | link:<twitter link>',
+        description: 'Convert an uploaded image or video (MP4, MOV, WebM), or the video of a Twitter/X post, into a GIF file. Videos are cut to 30 seconds and shrunk until the GIF fits the upload limit.',
+        example: '/gif link:https://x.com/user/status/123'
       },
       {
         command: '/tts join | leave | say text:<text>',
