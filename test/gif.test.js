@@ -9,6 +9,7 @@ const test = require('node:test');
 
 const {
   convertVideoToGif,
+  getTweetId,
   isSupportedImageAttachment,
   isSupportedVideoAttachment
 } = require('../src/utils/media');
@@ -28,6 +29,19 @@ test('video attachments are recognized by content type or extension', () => {
   assert.equal(isSupportedVideoAttachment({ name: 'clip', contentType: 'video/webm' }), true);
   assert.equal(isSupportedVideoAttachment({ name: 'cat.png', contentType: 'image/png' }), false);
   assert.equal(isSupportedImageAttachment({ name: 'clip.mp4', contentType: 'video/mp4' }), false);
+});
+
+test('getTweetId accepts Twitter/X post links only', () => {
+  assert.equal(getTweetId('https://x.com/someone/status/1234567890'), '1234567890');
+  assert.equal(getTweetId('https://twitter.com/someone/status/1234567890?s=20&t=abc'), '1234567890');
+  assert.equal(getTweetId('https://mobile.twitter.com/someone/status/1234567890/video/1'), '1234567890');
+  assert.equal(getTweetId('https://fxtwitter.com/i/status/1234567890'), '1234567890');
+  assert.equal(getTweetId(' https://www.x.com/someone/status/1234567890 '), '1234567890');
+  assert.equal(getTweetId('https://x.com/someone'), null);
+  assert.equal(getTweetId('https://example.com/someone/status/1234567890'), null);
+  assert.equal(getTweetId('https://x.com.evil.example/someone/status/1234567890'), null);
+  assert.equal(getTweetId('file:///x.com/someone/status/1'), null);
+  assert.equal(getTweetId('not a link'), null);
 });
 
 test('convertVideoToGif writes a looping GIF under the size limit', { skip: !hasFfmpeg() && 'ffmpeg not installed' }, async (t) => {

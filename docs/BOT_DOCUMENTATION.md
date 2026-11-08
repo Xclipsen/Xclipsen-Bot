@@ -42,7 +42,7 @@ Important: most event windows are currently calculated locally from the SkyBlock
 - `/season` and `/harvestfeast` for the current Harvest Feast crops.
 - `/hideonleaf` for the Hideonleaf leaderboard reported by the Xclipsen mod.
 - `/itememoji` for posting mapped SkyBlock item emojis.
-- `/gif` for converting an uploaded image or video into a GIF.
+- `/gif` for converting an uploaded image or video, or a Twitter/X video, into a GIF.
 
 If a Discord user has a linked Minecraft account, `/uuid`, `/namehistory`, `/cata`, `/catacombs`, `/trophyfishing`, `/trophyfrogs`, and the name-based `/shitter` subcommands use the linked (preferred) username when the player/name argument is omitted.
 
@@ -166,18 +166,20 @@ Example:
 /namehistory player:Xclipsen
 ```
 
-#### `/gif media:<image|video>`
+#### `/gif media:<image|video>` or `/gif link:<twitter link>`
 
-Converts an uploaded image or video into a GIF.
+Converts an uploaded image or video, or the video of a Twitter/X post, into a GIF.
 
-- `media` is required.
-- Expects an image or a video attachment (MP4, MOV, WebM, MKV).
+- Use exactly one of `media` or `link`.
+- `media` expects an image or a video attachment (MP4, MOV, WebM, MKV).
+- `link` expects a post on twitter.com or x.com (fxtwitter/vxtwitter/fixupx links work too). The bot downloads the post's first video or Twitter GIF with yt-dlp (at most 100 MB); private or age-restricted posts do not work.
 - Videos are converted with ffmpeg, cut to the first 30 seconds and shrunk step by step (frame rate, width, colors) until the GIF fits the server's upload limit.
 
 Example:
 
 ```text
 /gif media:<upload>
+/gif link:https://x.com/user/status/123
 ```
 
 #### `/cata [player:<ign>] [profile:<name>]`

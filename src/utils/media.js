@@ -12,6 +12,12 @@ const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bm
 const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.m4v']);
 const MAGICK_BINARY = env.MAGICK_PATH || 'magick';
 const FFMPEG_BINARY = 'ffmpeg';
+const TWITTER_HOSTS = new Set([
+  'twitter.com', 'www.twitter.com', 'mobile.twitter.com',
+  'x.com', 'www.x.com', 'mobile.x.com',
+  'fxtwitter.com', 'vxtwitter.com', 'fixupx.com', 'fixvx.com'
+]);
+const MAX_LINK_VIDEO_BYTES = '100M';
 
 // Longer clips are cut; each step trades quality for size until the GIF fits the upload limit.
 const MAX_VIDEO_GIF_SECONDS = 30;
@@ -119,7 +125,7 @@ async function downloadAttachment(attachment, tempDirectoryPath, fileNamePrefix 
 
 async function runCommand(command, args, options = {}) {
   try {
-    await execFileAsync(command, args, {
+    return await execFileAsync(command, args, {
       maxBuffer: 20 * 1024 * 1024,
       timeout: options.timeout || 120000
     });
@@ -144,6 +150,51 @@ async function convertImageToGif(inputPath, outputPath) {
     '-loop', '0',
     outputPath
   ]);
+}
+
+// A link to one tweet (/<user>/status/<id> or /i/status/<id>) on Twitter, X or an embed fixer.
+function getTweetId(value) {
+  let url;
+  try {
+    url = new URL(String(value || '').trim());
+  } catch {
+    return null;
+  }
+
+  if ((url.protocol !== 'https:' && url.protocol !== 'http:') || !TWITTER_HOSTS.has(url.hostname.toLowerCase())) {
+    return null;
+  }
+
+  const match = url.pathname.match(/^\/(?:i|[A-Za-z0-9_]{1,15})\/status(?:es)?\/(\d{1,25})(?:\/|$)/);
+  return match ? match[1] : null;
+}
+
+// Downloads the first video (or Twitter "GIF", which is an MP4) of a tweet through yt-dlp.
+async function downloadTweetVideo(tweetId, tempDirectoryPath) {
+  const args = [
+    '--no-playlist',
+    '--no-warnings',
+    '--playlist-items', '1',
+    '--max-filesize', MAX_LINK_VIDEO_BYTES,
+    '-f', 'best[ext=mp4]/best',
+    '-o', path.join(tempDirectoryPath, 'input.%(ext)s'),
+    '--print', 'after_move:filepath',
+    `https://x.com/i/status/${tweetId}`
+  ];
+
+  let result;
+  try {
+    result = await runCommand(env.YTDLP_PATH, args, { timeout: 120000 });
+  } catch {
+    throw new Error('Could not get a video from that tweet. It may have no video, be private or age-restricted.');
+  }
+
+  const filePath = String(result?.stdout || '').trim().split('\n').filter(Boolean).pop();
+  if (!filePath) {
+    throw new Error('That tweet has no video, or the video is larger than 100 MB.');
+  }
+
+  return filePath;
 }
 
 function buildVideoGifArgs(inputPath, outputPath, { fps, width, colors }) {
@@ -184,7 +235,9 @@ module.exports = {
   convertVideoToGif,
   createTempDirectory,
   downloadAttachment,
+  downloadTweetVideo,
   getOutputBasename,
+  getTweetId,
   isSupportedImageAttachment,
   isSupportedVideoAttachment
 };

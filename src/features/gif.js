@@ -7,7 +7,9 @@ const {
   convertVideoToGif,
   createTempDirectory,
   downloadAttachment,
+  downloadTweetVideo,
   getOutputBasename,
+  getTweetId,
   isSupportedImageAttachment,
   isSupportedVideoAttachment
 } = require('../utils/media');
@@ -16,15 +18,28 @@ const {
 const DEFAULT_ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024;
 
 function createGifFeature() {
-  async function handleGifCommand(interaction) {
-    const media = interaction.options.getAttachment('media', true);
-    const isVideo = isSupportedVideoAttachment(media);
+  async function replyEphemeral(interaction, content) {
+    await interaction.reply({ content, flags: MessageFlags.Ephemeral });
+  }
 
-    if (!isVideo && !isSupportedImageAttachment(media)) {
-      await interaction.reply({
-        content: 'Please upload an image or a video for `/gif`.',
-        flags: MessageFlags.Ephemeral
-      });
+  async function handleGifCommand(interaction) {
+    const media = interaction.options.getAttachment('media');
+    const link = interaction.options.getString('link');
+
+    if (Boolean(media) === Boolean(link)) {
+      await replyEphemeral(interaction, 'Use `/gif` with either `media` (an image or video) or `link` (a Twitter/X post), not both.');
+      return;
+    }
+
+    const tweetId = link ? getTweetId(link) : null;
+    if (link && !tweetId) {
+      await replyEphemeral(interaction, 'Please paste a link to a Twitter/X post, like `https://x.com/user/status/123`.');
+      return;
+    }
+
+    const isVideo = Boolean(tweetId) || isSupportedVideoAttachment(media);
+    if (media && !isVideo && !isSupportedImageAttachment(media)) {
+      await replyEphemeral(interaction, 'Please upload an image or a video for `/gif`.');
       return;
     }
 
@@ -35,8 +50,10 @@ function createGifFeature() {
     try {
       tempDirectoryPath = await createTempDirectory('xclipsen-gif-');
 
-      const inputPath = await downloadAttachment(media, tempDirectoryPath, 'input');
-      const outputName = `${getOutputBasename(media)}.gif`;
+      const inputPath = tweetId
+        ? await downloadTweetVideo(tweetId, tempDirectoryPath)
+        : await downloadAttachment(media, tempDirectoryPath, 'input');
+      const outputName = tweetId ? `tweet-${tweetId}.gif` : `${getOutputBasename(media)}.gif`;
       const outputPath = path.join(tempDirectoryPath, outputName);
 
       if (isVideo) {
@@ -52,7 +69,7 @@ function createGifFeature() {
       });
     } catch (error) {
       await interaction.editReply({
-        content: error.message || 'Failed to convert that file into a GIF.'
+        content: error.message || 'Failed to convert that into a GIF.'
       });
     } finally {
       await cleanupTempDirectory(tempDirectoryPath);

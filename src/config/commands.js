@@ -221,11 +221,15 @@ const nameHistoryCommand = new SlashCommandBuilder()
 
 const gifCommand = new SlashCommandBuilder()
   .setName('gif')
-  .setDescription('Convert an uploaded image or video into a GIF.')
+  .setDescription('Convert an uploaded image or video, or a Twitter/X video, into a GIF.')
   .addAttachmentOption((option) => option
     .setName('media')
     .setDescription('Image or video (MP4, MOV, WebM) to convert')
-    .setRequired(true));
+    .setRequired(false))
+  .addStringOption((option) => option
+    .setName('link')
+    .setDescription('Link to a Twitter/X post with a video')
+    .setRequired(false));
 
 const ttsCommand = new SlashCommandBuilder()
   .setName('tts')

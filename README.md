@@ -31,7 +31,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
 - Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link and manage event pings for the Minecraft mod.
-- Includes `/gif` to convert an uploaded image or video into a GIF.
+- Includes `/gif` to convert an uploaded image or video, or a Twitter/X video, into a GIF.
 - Includes `/tts` to read messages aloud in a voice channel with a local text-to-speech service (no cloud API).
 - Includes `/music` to play YouTube videos and lofi / chill radio stations in a voice channel, controlled from a `#voice` channel with a live control panel.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
@@ -226,7 +226,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Media Tools
 
-- Use `/gif media:<image|video>` to convert an uploaded image or video (MP4, MOV, WebM) into a GIF file.
+- Use `/gif media:<image|video>` to convert an uploaded image or video (MP4, MOV, WebM) into a GIF file, or `/gif link:<twitter link>` to turn the video of a Twitter/X post into a GIF.
 
 ## Text-to-Speech
 
