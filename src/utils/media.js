@@ -9,7 +9,18 @@ const { env } = require('../config/env');
 const execFileAsync = promisify(execFile);
 
 const IMAGE_EXTENSIONS = new Set(['.png', '.jpg', '.jpeg', '.webp', '.gif', '.bmp', '.avif']);
+const VIDEO_EXTENSIONS = new Set(['.mp4', '.mov', '.webm', '.mkv', '.m4v']);
 const MAGICK_BINARY = env.MAGICK_PATH || 'magick';
+const FFMPEG_BINARY = 'ffmpeg';
+
+// Longer clips are cut; each step trades quality for size until the GIF fits the upload limit.
+const MAX_VIDEO_GIF_SECONDS = 30;
+const VIDEO_GIF_STEPS = [
+  { fps: 15, width: 480, colors: 256 },
+  { fps: 12, width: 360, colors: 192 },
+  { fps: 10, width: 320, colors: 128 },
+  { fps: 8, width: 240, colors: 96 }
+];
 
 function getAttachmentExtension(attachment) {
   const attachmentName = String(attachment?.name || '').trim();
@@ -40,6 +51,18 @@ function getAttachmentExtension(attachment) {
     return '.jpg';
   }
 
+  if (contentType === 'video/mp4') {
+    return '.mp4';
+  }
+
+  if (contentType === 'video/quicktime') {
+    return '.mov';
+  }
+
+  if (contentType === 'video/webm') {
+    return '.webm';
+  }
+
   return '.bin';
 }
 
@@ -48,6 +71,13 @@ function isSupportedImageAttachment(attachment) {
   const extension = getAttachmentExtension(attachment);
 
   return contentType.startsWith('image/') || IMAGE_EXTENSIONS.has(extension);
+}
+
+function isSupportedVideoAttachment(attachment) {
+  const contentType = String(attachment?.contentType || '').toLowerCase();
+  const extension = getAttachmentExtension(attachment);
+
+  return contentType.startsWith('video/') || VIDEO_EXTENSIONS.has(extension);
 }
 
 function getOutputBasename(attachment) {
@@ -116,11 +146,45 @@ async function convertImageToGif(inputPath, outputPath) {
   ]);
 }
 
+function buildVideoGifArgs(inputPath, outputPath, { fps, width, colors }) {
+  const filter = [
+    `fps=${fps},scale='min(${width},iw)':-1:flags=lanczos,split[a][b]`,
+    `[a]palettegen=max_colors=${colors}:stats_mode=diff[p]`,
+    '[b][p]paletteuse=dither=bayer:bayer_scale=5:diff_mode=rectangle'
+  ].join(';');
+
+  return [
+    '-v', 'error',
+    '-y',
+    '-t', String(MAX_VIDEO_GIF_SECONDS),
+    '-i', inputPath,
+    '-filter_complex', filter,
+    '-loop', '0',
+    outputPath
+  ];
+}
+
+async function convertVideoToGif(inputPath, outputPath, { maxBytes = Infinity } = {}) {
+  for (const step of VIDEO_GIF_STEPS) {
+    await runCommand(FFMPEG_BINARY, buildVideoGifArgs(inputPath, outputPath, step), { timeout: 180000 });
+
+    const { size } = await fs.stat(outputPath);
+    if (size <= maxBytes) {
+      return;
+    }
+  }
+
+  throw new Error('That video is too long to fit into a GIF under the upload limit. Try a shorter clip.');
+}
+
 module.exports = {
+  buildVideoGifArgs,
   cleanupTempDirectory,
   convertImageToGif,
+  convertVideoToGif,
   createTempDirectory,
   downloadAttachment,
   getOutputBasename,
-  isSupportedImageAttachment
+  isSupportedImageAttachment,
+  isSupportedVideoAttachment
 };

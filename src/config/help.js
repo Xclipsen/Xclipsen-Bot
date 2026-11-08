@@ -61,8 +61,8 @@ const helpSections = [
         example: '/namehistory'
       },
       {
-        command: '/gif media:<image>',
-        description: 'Convert an uploaded image into a GIF file.',
+        command: '/gif media:<image|video>',
+        description: 'Convert an uploaded image or video (MP4, MOV, WebM) into a GIF file. Videos are cut to 30 seconds and shrunk until the GIF fits the upload limit.',
         example: '/gif media:<upload>'
       },
       {

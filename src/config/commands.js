@@ -221,10 +221,10 @@ const nameHistoryCommand = new SlashCommandBuilder()
 
 const gifCommand = new SlashCommandBuilder()
   .setName('gif')
-  .setDescription('Convert an uploaded image into a GIF.')
+  .setDescription('Convert an uploaded image or video into a GIF.')
   .addAttachmentOption((option) => option
     .setName('media')
-    .setDescription('Image to convert')
+    .setDescription('Image or video (MP4, MOV, WebM) to convert')
     .setRequired(true));
 
 const ttsCommand = new SlashCommandBuilder()

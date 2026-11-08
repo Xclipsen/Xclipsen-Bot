@@ -4,19 +4,25 @@ const { AttachmentBuilder, MessageFlags } = require('discord.js');
 const {
   cleanupTempDirectory,
   convertImageToGif,
+  convertVideoToGif,
   createTempDirectory,
   downloadAttachment,
   getOutputBasename,
-  isSupportedImageAttachment
+  isSupportedImageAttachment,
+  isSupportedVideoAttachment
 } = require('../utils/media');
+
+// Discord's upload limit without boosts; interactions report the real one for their guild.
+const DEFAULT_ATTACHMENT_SIZE_LIMIT = 10 * 1024 * 1024;
 
 function createGifFeature() {
   async function handleGifCommand(interaction) {
     const media = interaction.options.getAttachment('media', true);
+    const isVideo = isSupportedVideoAttachment(media);
 
-    if (!isSupportedImageAttachment(media)) {
+    if (!isVideo && !isSupportedImageAttachment(media)) {
       await interaction.reply({
-        content: 'Please upload an image for `/gif`.',
+        content: 'Please upload an image or a video for `/gif`.',
         flags: MessageFlags.Ephemeral
       });
       return;
@@ -33,14 +39,20 @@ function createGifFeature() {
       const outputName = `${getOutputBasename(media)}.gif`;
       const outputPath = path.join(tempDirectoryPath, outputName);
 
-      await convertImageToGif(inputPath, outputPath);
+      if (isVideo) {
+        await convertVideoToGif(inputPath, outputPath, {
+          maxBytes: interaction.attachmentSizeLimit || DEFAULT_ATTACHMENT_SIZE_LIMIT
+        });
+      } else {
+        await convertImageToGif(inputPath, outputPath);
+      }
 
       await interaction.editReply({
         files: [new AttachmentBuilder(outputPath, { name: outputName })]
       });
     } catch (error) {
       await interaction.editReply({
-        content: error.message || 'Failed to convert that image into a GIF.'
+        content: error.message || 'Failed to convert that file into a GIF.'
       });
     } finally {
       await cleanupTempDirectory(tempDirectoryPath);

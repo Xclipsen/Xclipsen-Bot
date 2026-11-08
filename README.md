@@ -31,7 +31,7 @@ Detailed project documentation lives in `docs/BOT_DOCUMENTATION.md`.
 - Includes `/uuid` to fetch a player's Minecraft UUID from their IGN, with linked-account fallback when no player is provided.
 - Includes `/namehistory` to show a player's known Minecraft name history, with linked-account fallback when no player is provided.
 - Includes `/link` to verify Minecraft usernames through the Hypixel Discord social link and manage event pings for the Minecraft mod.
-- Includes `/gif` to convert an uploaded image into a GIF.
+- Includes `/gif` to convert an uploaded image or video into a GIF.
 - Includes `/tts` to read messages aloud in a voice channel with a local text-to-speech service (no cloud API).
 - Includes `/music` to play YouTube videos and lofi / chill radio stations in a voice channel, controlled from a `#voice` channel with a live control panel.
 - Includes `/shitter add`, `/shitter query`, `/shitter remove`, and `/shitter list` for a guild-local IGN watchlist with reasons and optional screenshots, with linked-account fallback when no IGN is provided.
@@ -67,7 +67,7 @@ All variables are read in `src/config/env.js`; `.env.example` is a template.
 - `MOD_BACKEND_AUTH_TOKEN` - token used by the bot when reading/writing mod backend links and stats (falls back to `IRC_BRIDGE_AUTH_TOKEN`)
 - `GITHUB_TOKEN` - optional GitHub token for higher rate limits on mod update checks
 - `CRAFTY_API_KEY` - optional Bearer token for the Crafty.gg name history fallback
-- `MAGICK_PATH` - optional path to the ImageMagick binary used by `/gif` (default `magick`)
+- `MAGICK_PATH` - optional path to the ImageMagick binary used by `/gif` for images (default `magick`)
 - `TTS_URL` - base URL of the text-to-speech service; set by `docker-compose.yml`, `/tts` is disabled without it
 - `TTS_ROLE_NAME` - role that may use `/tts`, created by the bot when missing (default `TTS`)
 - `TTS_MAX_QUEUE` / `TTS_MAX_CHARS` - queued lines per server and characters read per message (defaults `10` / `300`)
@@ -226,7 +226,7 @@ Only members with `Manage Server` or a whitelisted `ADMIN_USER_IDS` entry can us
 
 ## Media Tools
 
-- Use `/gif media:<image>` to convert an uploaded image into a GIF file.
+- Use `/gif media:<image|video>` to convert an uploaded image or video (MP4, MOV, WebM) into a GIF file.
 
 ## Text-to-Speech
 
